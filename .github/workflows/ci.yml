@@ -1,0 +1,26 @@
+name: MBG Financial Engine & App CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies in Cloud
+        run: npm install --no-audit --no-fund
+      - name: Run TypeScript Typecheck
+        run: npm run typecheck --if-present
+      - name: Run Financial Invariant Unit Tests
+        run: npm test --if-present
+      - name: Verify Production Build
+        run: npm run build --if-present
