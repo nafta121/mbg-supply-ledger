@@ -3,8 +3,70 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+    font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
+  }
+
   body {
-    @apply bg-slate-950 text-slate-900 antialiased;
+    @apply bg-[#070A10] text-slate-100 font-sans antialiased selection:bg-emerald-500/30 selection:text-emerald-200;
+  }
+
+  /* Enforce tabular numerals on all monospace and numeric inputs (industrial-brutalist-ui & redesign-skill) */
+  .font-mono,
+  input[type='number'],
+  table td,
+  table th,
+  code {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Accessible keyboard focus indicator (frontend-ui-engineering WCAG 2.1 AA) */
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible,
+  a:focus-visible {
+    @apply outline-none ring-2 ring-emerald-400 ring-offset-2 ring-offset-[#070A10];
+  }
+}
+
+@layer components {
+  /* Double-Bezel / Nested Hardware Architecture (high-end-visual-design) */
+  .bezel-shell {
+    @apply rounded-[1.5rem] bg-white/[0.025] p-1.5 ring-1 ring-white/[0.08] shadow-[0_16px_40px_-12px_rgba(0,0,0,0.65)];
+  }
+
+  .bezel-core {
+    @apply rounded-[1.15rem] bg-[#0D131F] p-4 ring-1 ring-white/[0.06] shadow-[inset_0_1px_0_rgba(255,255,255,0.08)];
+  }
+
+  .bezel-shell-emerald {
+    @apply rounded-[1.5rem] bg-emerald-500/[0.06] p-1.5 ring-1 ring-emerald-500/25 shadow-[0_16px_40px_-12px_rgba(6,78,59,0.45)];
+  }
+
+  .bezel-core-emerald {
+    @apply rounded-[1.15rem] bg-[#091915] p-4 ring-1 ring-emerald-400/20 shadow-[inset_0_1px_0_rgba(16,185,129,0.2)];
+  }
+
+  .bezel-shell-amber {
+    @apply rounded-[1.5rem] bg-amber-500/[0.06] p-1.5 ring-1 ring-amber-500/25 shadow-[0_16px_40px_-12px_rgba(120,53,15,0.4)];
+  }
+
+  .bezel-core-amber {
+    @apply rounded-[1.15rem] bg-[#191309] p-4 ring-1 ring-amber-400/20 shadow-[inset_0_1px_0_rgba(245,158,11,0.2)];
+  }
+
+  .bezel-shell-rose {
+    @apply rounded-[1.5rem] bg-rose-500/[0.06] p-1.5 ring-1 ring-rose-500/30 shadow-[0_16px_40px_-12px_rgba(136,19,55,0.45)];
+  }
+
+  .bezel-core-rose {
+    @apply rounded-[1.15rem] bg-[#1A0B11] p-4 ring-1 ring-rose-400/25 shadow-[inset_0_1px_0_rgba(244,63,94,0.2)];
+  }
+
+  /* Tactile Field Input */
+  .field-input {
+    @apply min-h-[44px] w-full rounded-xl border border-slate-800 bg-[#070A10] px-3.5 py-2.5 text-xs text-slate-100 placeholder-slate-500 transition-all duration-300 ease-spring focus:border-emerald-500/70;
   }
 }
 

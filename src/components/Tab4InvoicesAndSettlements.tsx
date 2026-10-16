@@ -2,6 +2,16 @@
 
 import React, { useState } from 'react';
 import { formatIdr, formatKg, useMbgStore } from '../lib/mbg-store';
+import {
+  ArrowUpRightIcon,
+  CheckBadgeIcon,
+  InvoiceReceiptIcon,
+  LockClosedIcon,
+  LockOpenIcon,
+  PackageBatchIcon,
+  PrinterDocIcon,
+  ShareCopyIcon,
+} from './Icons';
 
 type PrintDocMode =
   | { type: 'INVOICE'; invoiceId: string }
@@ -35,24 +45,30 @@ export function Tab4InvoicesAndSettlements() {
 
   if (isFieldTeam) {
     return (
-      <div className="space-y-4">
-        <div className="rounded-2xl border border-rose-500/40 bg-rose-950/40 p-4 text-rose-100 shadow-lg">
-          <div className="text-sm font-bold uppercase tracking-wider text-rose-300">
-            🔒 Akses Invoice & Tagihan Supplier Dibatasi (Invariant 5)
+      <section aria-label="Akses Invoice Terbatas" className="space-y-4">
+        <div className="bezel-shell-rose">
+          <div className="bezel-core-rose space-y-3 text-rose-100">
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-rose-300">
+              <LockClosedIcon className="h-4 w-4 text-rose-400" />
+              <span>Akses Invoice & Tagihan Supplier Dibatasi (Invariant 5)</span>
+            </div>
+            <p className="text-xs leading-relaxed text-rose-200/90">
+              Role <strong>FIELD_TEAM</strong> hanya diizinkan mengakses kuantitas berat (
+              <code>kg</code>) dan Surat Jalan / BAST tanpa harga.
+            </p>
+            <button
+              type="button"
+              onClick={() => setActiveTab('bast')}
+              className="group flex min-h-[44px] w-full items-center justify-between rounded-full bg-rose-600 pl-5 pr-2 py-1.5 text-xs font-bold text-white transition hover:bg-rose-500 active:scale-[0.98]"
+            >
+              <span>Kembali ke Layar BAST Timbang Terima</span>
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-black/20">
+                <ArrowUpRightIcon className="h-4 w-4" />
+              </span>
+            </button>
           </div>
-          <p className="mt-2 text-xs leading-relaxed text-rose-200/90">
-            Role <strong>FIELD_TEAM</strong> hanya diizinkan mengakses kuantitas berat (<code>kg</code>)
-            dan Surat Jalan / BAST tanpa harga.
-          </p>
-          <button
-            type="button"
-            onClick={() => setActiveTab('bast')}
-            className="mt-3 w-full rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-rose-500"
-          >
-            Kembali ke Layar BAST Timbang Terima →
-          </button>
         </div>
-      </div>
+      </section>
     );
   }
 
@@ -61,9 +77,9 @@ export function Tab4InvoicesAndSettlements() {
       if (typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(text);
       }
-      setToastMsg(`✓ Ringkasan WhatsApp (${label}) berhasil disalin ke Clipboard!`);
+      setToastMsg(`Ringkasan WhatsApp (${label}) berhasil disalin ke Clipboard.`);
     } catch {
-      setToastMsg(`✓ Ringkasan WhatsApp (${label}): ${text.slice(0, 80)}...`);
+      setToastMsg(`Ringkasan WhatsApp (${label}): ${text.slice(0, 80)}...`);
     }
   };
 
@@ -88,42 +104,54 @@ export function Tab4InvoicesAndSettlements() {
     .reduce((s, i) => s + i.total_invoice_amount, 0);
 
   return (
-    <div className="space-y-4">
+    <section aria-label="Invoice Dapur dan Rekonsiliasi Supplier" className="space-y-5">
       {/* Main Screen (Hidden during @media print when printDoc is active) */}
-      <div className="no-print space-y-4">
-        {/* Sub-Navigation Switcher */}
-        <div className="grid grid-cols-2 gap-1.5 rounded-2xl border border-slate-800 bg-slate-900 p-1.5">
+      <div className="no-print space-y-5">
+        {/* Sub-Navigation Switcher (Double-Bezel) */}
+        <div
+          role="group"
+          aria-label="Pilih Modul Tagihan"
+          className="grid grid-cols-2 gap-1.5 rounded-2xl bg-white/[0.03] p-1.5 ring-1 ring-white/[0.08]"
+        >
           <button
             type="button"
+            aria-pressed={subView === 'INVOICES'}
             onClick={() => setSubView('INVOICES')}
-            className={`rounded-xl py-2 text-xs font-bold transition ${
+            className={`min-h-[42px] inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-all duration-300 ease-spring active:scale-[0.98] ${
               subView === 'INVOICES'
-                ? 'bg-emerald-600 text-white shadow'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-emerald-500 text-slate-950 shadow-[0_4px_16px_rgba(16,185,129,0.35)]'
+                : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'
             }`}
           >
-            🧾 Invoice Dapur ({invoices.length})
+            <InvoiceReceiptIcon className="h-4 w-4" />
+            <span>Invoice Dapur ({invoices.length})</span>
           </button>
           <button
             type="button"
+            aria-pressed={subView === 'SUPPLIER_SETTLEMENTS'}
             onClick={() => setSubView('SUPPLIER_SETTLEMENTS')}
-            className={`rounded-xl py-2 text-xs font-bold transition ${
+            className={`min-h-[42px] inline-flex items-center justify-center gap-2 rounded-xl px-3 py-2 text-xs font-bold transition-all duration-300 ease-spring active:scale-[0.98] ${
               subView === 'SUPPLIER_SETTLEMENTS'
-                ? 'bg-amber-600 text-white shadow'
-                : 'text-slate-400 hover:text-white'
+                ? 'bg-amber-500 text-slate-950 shadow-[0_4px_16px_rgba(245,158,11,0.35)]'
+                : 'text-slate-400 hover:bg-white/[0.04] hover:text-white'
             }`}
           >
-            🚛 Settlement Supplier ({supplierSettlements.length})
+            <PackageBatchIcon className="h-4 w-4" />
+            <span>Settlement Supplier ({supplierSettlements.length})</span>
           </button>
         </div>
 
         {toastMsg && (
-          <div className="rounded-xl border border-emerald-500/40 bg-emerald-950/70 px-3 py-2 text-xs text-emerald-200 flex items-center justify-between">
+          <div
+            role="status"
+            className="flex items-center justify-between rounded-xl border border-emerald-500/40 bg-emerald-950/70 px-3.5 py-2.5 text-xs text-emerald-200"
+          >
             <span>{toastMsg}</span>
             <button
               type="button"
+              aria-label="Tutup notifikasi"
               onClick={() => setToastMsg(null)}
-              className="ml-2 text-[11px] font-bold text-emerald-300"
+              className="ml-3 rounded px-1.5 py-0.5 font-mono text-xs font-bold text-emerald-300 hover:bg-emerald-900/50"
             >
               ✕
             </button>
@@ -131,41 +159,46 @@ export function Tab4InvoicesAndSettlements() {
         )}
 
         {subView === 'INVOICES' ? (
-          <div className="space-y-3">
+          <div className="space-y-4">
             {/* Summary Cards */}
-            <div className="grid grid-cols-2 gap-2.5">
-              <div className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3">
-                <div className="text-[10px] uppercase text-slate-400">
-                  Total Tagihan Dapur MBG
-                </div>
-                <div className="mt-1 font-mono text-xs font-bold text-white">
-                  {formatIdr(totalInvoicedAmount)}
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bezel-shell">
+                <div className="bezel-core p-3.5">
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                    Total Tagihan Dapur
+                  </div>
+                  <div className="mt-1 font-mono text-sm font-bold text-white">
+                    {formatIdr(totalInvoicedAmount)}
+                  </div>
                 </div>
               </div>
-              <div className="rounded-2xl border border-emerald-500/30 bg-emerald-950/30 p-3">
-                <div className="text-[10px] uppercase text-emerald-300">
-                  Total Terverifikasi PAID
-                </div>
-                <div className="mt-1 font-mono text-xs font-bold text-emerald-400">
-                  {formatIdr(totalPaidAmount)}
+              <div className="bezel-shell-emerald">
+                <div className="bezel-core-emerald p-3.5">
+                  <div className="font-mono text-[10px] uppercase tracking-wider text-emerald-300">
+                    Terverifikasi PAID
+                  </div>
+                  <div className="mt-1 font-mono text-sm font-bold text-emerald-400">
+                    {formatIdr(totalPaidAmount)}
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Filter Pills */}
-            <div className="flex items-center gap-1.5">
+            <div role="group" aria-label="Filter Status Invoice" className="flex items-center gap-2">
               {(['ALL', 'UNPAID', 'PAID'] as const).map((f) => (
                 <button
                   key={f}
                   type="button"
+                  aria-pressed={statusFilter === f}
                   onClick={() => setStatusFilter(f)}
-                  className={`rounded-lg px-3 py-1 text-[11px] font-bold transition ${
+                  className={`min-h-[38px] rounded-xl px-3.5 py-1.5 text-xs font-bold transition-all duration-300 ease-spring ${
                     statusFilter === f
-                      ? 'bg-slate-200 text-slate-900'
-                      : 'bg-slate-900 text-slate-400 border border-slate-800'
+                      ? 'bg-emerald-500 text-slate-950 shadow'
+                      : 'border border-white/10 bg-[#0D131F] text-slate-400 hover:text-white'
                   }`}
                 >
-                  {f === 'ALL' ? 'Semua' : f === 'PAID' ? '✓ Sudah PAID' : '⏳ Belum Lunas'}
+                  {f === 'ALL' ? 'Semua' : f === 'PAID' ? 'Sudah PAID' : 'Belum Lunas'}
                 </button>
               ))}
             </div>
@@ -207,142 +240,162 @@ export function Tab4InvoicesAndSettlements() {
               ].join('\n');
 
               return (
-                <div
-                  key={inv.id}
-                  className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 shadow-lg space-y-3"
-                >
-                  <div className="flex items-start justify-between gap-2 border-b border-slate-800 pb-2.5">
-                    <div>
-                      <span className="inline-block rounded bg-slate-800 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-300">
-                        {inv.invoice_number}
+                <article key={inv.id} className="bezel-shell">
+                  <div className="bezel-core space-y-3.5">
+                    <div className="flex items-start justify-between gap-2 border-b border-white/[0.07] pb-3">
+                      <div>
+                        <span className="inline-block rounded bg-emerald-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-emerald-300 ring-1 ring-emerald-500/25">
+                          {inv.invoice_number}
+                        </span>
+                        <h3 className="mt-1.5 text-sm font-bold text-white">{kitchen?.name}</h3>
+                        <p className="mt-0.5 text-xs text-slate-400">
+                          {item?.name} • BAST Terima:{' '}
+                          <strong className="font-mono text-white">
+                            {formatKg(ditem?.qty_accepted_kg ?? 0)}
+                          </strong>
+                          {(ditem?.qty_shrinkage_kg ?? 0) > 0 && (
+                            <span className="ml-1 font-mono text-amber-400">
+                              (Susut -{formatKg(ditem?.qty_shrinkage_kg ?? 0)})
+                            </span>
+                          )}
+                        </p>
+                      </div>
+
+                      <span
+                        className={`shrink-0 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold ${
+                          inv.payment_status === 'PAID'
+                            ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/35'
+                            : inv.payment_status === 'PARTIALLY_PAID'
+                            ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/35'
+                            : 'bg-rose-500/20 text-rose-300 ring-1 ring-rose-500/35'
+                        }`}
+                      >
+                        {inv.payment_status}
                       </span>
-                      <h4 className="mt-1 text-xs font-bold text-white">{kitchen?.name}</h4>
-                      <p className="text-[11px] text-slate-400">
-                        {item?.name} • BAST Terima:{' '}
-                        <strong className="font-mono text-white">
-                          {formatKg(ditem?.qty_accepted_kg ?? 0)}
-                        </strong>
-                        {(ditem?.qty_shrinkage_kg ?? 0) > 0 && (
-                          <span className="ml-1 text-amber-400">
-                            (Susut -{formatKg(ditem?.qty_shrinkage_kg ?? 0)})
-                          </span>
+                    </div>
+
+                    {/* Rincian Angka Invoice */}
+                    <div className="grid grid-cols-2 gap-3 rounded-xl border border-white/[0.05] bg-[#070A10] p-3 text-xs">
+                      <div>
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                          Harga Dapur / kg
+                        </div>
+                        <div className="mt-1 font-mono font-semibold text-slate-200">
+                          {formatIdr(ditem?.kitchen_unit_price_snapshot ?? 0)}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
+                          Total Tagihan Dapur
+                        </div>
+                        <div className="mt-1 font-mono text-sm font-bold text-emerald-400">
+                          {formatIdr(inv.total_invoice_amount)}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Info Trigger Bagi Hasil */}
+                    <div className="flex items-center justify-between gap-2 rounded-xl border border-white/[0.05] bg-[#070A10]/70 px-3 py-2.5 text-xs">
+                      <span className="text-slate-400">
+                        Hak Tim {formatIdr(teamProfit)} • Kop {formatIdr(coopProfit)}
+                      </span>
+                      <span
+                        className={`inline-flex items-center gap-1 font-mono text-[10px] font-bold ${
+                          inv.payment_status === 'PAID' ? 'text-emerald-400' : 'text-amber-400'
+                        }`}
+                      >
+                        {inv.payment_status === 'PAID' ? (
+                          <>
+                            <LockOpenIcon className="h-3.5 w-3.5" />
+                            <span>AVAILABLE_FOR_PAYOUT</span>
+                          </>
+                        ) : (
+                          <>
+                            <LockClosedIcon className="h-3.5 w-3.5" />
+                            <span>LOCKED_UNPAID</span>
+                          </>
                         )}
-                      </p>
+                      </span>
                     </div>
 
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                        inv.payment_status === 'PAID'
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                          : inv.payment_status === 'PARTIALLY_PAID'
-                          ? 'bg-amber-500/20 text-amber-300 border border-amber-500/40'
-                          : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
-                      }`}
-                    >
-                      {inv.payment_status}
-                    </span>
-                  </div>
+                    {/* Tombol Tandai Lunas (PAID) */}
+                    {isOwnerOrFinance && inv.payment_status !== 'PAID' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          markInvoicePaid(inv.id);
+                          setToastMsg(
+                            `Invoice ${inv.invoice_number} ditandai PAID. Saldo bagi hasil Tim (${formatIdr(teamProfit)}) & Koperasi (${formatIdr(coopProfit)}) otomatis terbuka (AVAILABLE_FOR_PAYOUT).`
+                          );
+                        }}
+                        className="group flex min-h-[44px] w-full items-center justify-between rounded-full bg-emerald-500 pl-5 pr-2 py-1.5 text-xs font-extrabold text-slate-950 shadow-[0_6px_20px_-4px_rgba(16,185,129,0.45)] transition-all duration-300 ease-spring hover:bg-emerald-400 active:scale-[0.98]"
+                      >
+                        <span>Tandai Lunas (PAID) & Buka Kunci Bagi Hasil</span>
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-950/15">
+                          <CheckBadgeIcon className="h-4 w-4 text-slate-950" />
+                        </span>
+                      </button>
+                    )}
 
-                  {/* Rincian Angka Invoice */}
-                  <div className="grid grid-cols-2 gap-2 rounded-xl bg-slate-950/90 p-2.5 text-xs">
-                    <div>
-                      <div className="text-[10px] text-slate-400">Harga Dapur / kg</div>
-                      <div className="font-mono font-semibold text-slate-200">
-                        {formatIdr(ditem?.kitchen_unit_price_snapshot ?? 0)}
-                      </div>
+                    {/* Baris Tombol Cetak PDF & Salin WA */}
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => triggerPdfPrint({ type: 'INVOICE', invoiceId: inv.id })}
+                        className="min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/[0.08]"
+                      >
+                        <PrinterDocIcon className="h-3.5 w-3.5 text-slate-300" />
+                        <span>Print PDF Invoice</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyWhatsAppText(waInvoiceSummary, `Invoice ${inv.invoice_number}`)
+                        }
+                        className="min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-500/35 bg-emerald-500/10 px-3 py-2 text-xs font-semibold text-emerald-300 transition hover:bg-emerald-500/20"
+                      >
+                        <ShareCopyIcon className="h-3.5 w-3.5" />
+                        <span>WA Ringkasan Invoice</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          triggerPdfPrint({
+                            type: 'BAST',
+                            deliveryId: inv.delivery_id,
+                          })
+                        }
+                        className="min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-200 transition hover:bg-white/[0.08]"
+                      >
+                        <PrinterDocIcon className="h-3.5 w-3.5 text-slate-300" />
+                        <span>Print PDF Surat Jalan</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyWhatsAppText(waBastSummary, `BAST ${deliv?.delivery_number}`)
+                        }
+                        className="min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-slate-300 transition hover:bg-white/[0.08]"
+                      >
+                        <ShareCopyIcon className="h-3.5 w-3.5" />
+                        <span>WA Ringkasan BAST</span>
+                      </button>
                     </div>
-                    <div className="text-right">
-                      <div className="text-[10px] text-slate-400">Total Tagihan Dapur</div>
-                      <div className="font-mono font-bold text-emerald-400">
-                        {formatIdr(inv.total_invoice_amount)}
-                      </div>
-                    </div>
                   </div>
-
-                  {/* Info Trigger Bagi Hasil */}
-                  <div className="rounded-xl border border-slate-800/80 bg-slate-950/60 px-2.5 py-2 text-[11px] flex items-center justify-between">
-                    <span className="text-slate-400">
-                      Status Ledger Bagi Hasil (Tim {formatIdr(teamProfit)} | Kop{' '}
-                      {formatIdr(coopProfit)}):
-                    </span>
-                    <span
-                      className={`font-mono text-[10px] font-bold ${
-                        inv.payment_status === 'PAID' ? 'text-emerald-400' : 'text-amber-400'
-                      }`}
-                    >
-                      {inv.payment_status === 'PAID'
-                        ? '🔓 AVAILABLE_FOR_PAYOUT'
-                        : '🔒 LOCKED_UNPAID'}
-                    </span>
-                  </div>
-
-                  {/* Tombol Tandai Lunas (PAID) */}
-                  {isOwnerOrFinance && inv.payment_status !== 'PAID' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        markInvoicePaid(inv.id);
-                        setToastMsg(
-                          `✓ Invoice ${inv.invoice_number} ditandai PAID! Saldo bagi hasil Tim (${formatIdr(teamProfit)}) & Koperasi (${formatIdr(coopProfit)}) otomatis terbuka (AVAILABLE_FOR_PAYOUT).`
-                        );
-                      }}
-                      className="w-full rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white shadow transition hover:bg-emerald-500"
-                    >
-                      ✓ Tandai Lunas (PAID) & Buka Kunci Bagi Hasil
-                    </button>
-                  )}
-
-                  {/* Baris Tombol Cetak PDF & Salin WA */}
-                  <div className="grid grid-cols-2 gap-1.5 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => triggerPdfPrint({ type: 'INVOICE', invoiceId: inv.id })}
-                      className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-700"
-                    >
-                      🖨️ Print PDF Invoice
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyWhatsAppText(waInvoiceSummary, `Invoice ${inv.invoice_number}`)
-                      }
-                      className="rounded-lg border border-emerald-500/40 bg-emerald-950/50 px-2.5 py-1.5 text-[11px] font-semibold text-emerald-300 hover:bg-emerald-900/50"
-                    >
-                      📲 WA Ringkasan Invoice
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        triggerPdfPrint({
-                          type: 'BAST',
-                          deliveryId: inv.delivery_id,
-                        })
-                      }
-                      className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-semibold text-sky-300 hover:bg-slate-700"
-                    >
-                      🖨️ Print PDF Surat Jalan
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyWhatsAppText(waBastSummary, `BAST ${deliv?.delivery_number}`)
-                      }
-                      className="rounded-lg border border-sky-500/40 bg-sky-950/50 px-2.5 py-1.5 text-[11px] font-semibold text-sky-300 hover:bg-sky-900/50"
-                    >
-                      📲 WA Ringkasan BAST
-                    </button>
-                  </div>
-                </div>
+                </article>
               );
             })}
           </div>
         ) : (
           /* Daftar Tagihan Bersih Supplier (Setelah Dipotong Susut Dapur) */
-          <div className="space-y-3">
-            <div className="rounded-2xl border border-amber-500/30 bg-amber-950/30 p-3 text-xs text-amber-200">
-              <strong>Invariant 2 (Zero-Shrinkage Risk):</strong> Kewajiban bayar ke Supplier
-              dihitung murni dari <code>total_accepted_by_kitchens_kg × supplier_actual_cost_per_kg</code>.
-              Seluruh susut/reject saat BAST di dapur memotong tagihan Supplier 100%.
+          <div className="space-y-4">
+            <div className="bezel-shell-amber">
+              <div className="bezel-core-amber text-xs leading-relaxed text-amber-100/90">
+                <strong>Invariant 2 (Zero-Shrinkage Risk):</strong> Kewajiban bayar ke Supplier
+                dihitung murni dari{' '}
+                <code>total_accepted_by_kitchens_kg × supplier_actual_cost_per_kg</code>. Seluruh
+                susut/reject saat BAST di dapur memotong tagihan Supplier 100%.
+              </div>
             </div>
 
             {supplierSettlements.map((stl) => {
@@ -364,95 +417,99 @@ export function Tab4InvoicesAndSettlements() {
               ].join('\n');
 
               return (
-                <div
-                  key={stl.id}
-                  className="rounded-2xl border border-slate-800 bg-slate-900/90 p-3.5 shadow-lg space-y-3"
-                >
-                  <div className="flex items-start justify-between gap-2 border-b border-slate-800 pb-2.5">
-                    <div>
-                      <span className="inline-block rounded bg-slate-800 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300">
-                        {stl.settlement_number}
+                <article key={stl.id} className="bezel-shell">
+                  <div className="bezel-core space-y-3.5">
+                    <div className="flex items-start justify-between gap-2 border-b border-white/[0.07] pb-3">
+                      <div>
+                        <span className="inline-block rounded bg-amber-500/10 px-2 py-0.5 font-mono text-[10px] font-bold text-amber-300 ring-1 ring-amber-500/25">
+                          {stl.settlement_number}
+                        </span>
+                        <h3 className="mt-1.5 text-sm font-bold text-white">
+                          {supplier?.name} ({supplier?.supplier_code})
+                        </h3>
+                        <p className="mt-0.5 text-xs text-slate-400">
+                          Batch:{' '}
+                          <span className="font-mono text-slate-300">{batch?.batch_code}</span> •{' '}
+                          {item?.name}
+                        </p>
+                      </div>
+                      <span
+                        className={`rounded-full px-2.5 py-1 font-mono text-[10px] font-bold ${
+                          stl.status === 'PAID'
+                            ? 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/35'
+                            : 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/35'
+                        }`}
+                      >
+                        {stl.status}
                       </span>
-                      <h4 className="mt-1 text-xs font-bold text-white">
-                        {supplier?.name} ({supplier?.supplier_code})
-                      </h4>
-                      <p className="text-[11px] text-slate-400">
-                        Batch: <span className="font-mono text-slate-300">{batch?.batch_code}</span>{' '}
-                        • {item?.name}
-                      </p>
                     </div>
-                    <span
-                      className={`rounded-full px-2.5 py-0.5 text-[10px] font-bold ${
-                        stl.status === 'PAID'
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : 'bg-amber-500/20 text-amber-300'
-                      }`}
-                    >
-                      {stl.status}
-                    </span>
-                  </div>
 
-                  {/* Tabel Rincian Potongan Susut Supplier */}
-                  <div className="space-y-1.5 rounded-xl bg-slate-950/90 p-3 text-xs">
-                    <div className="flex justify-between text-slate-300">
-                      <span>Bobot Kirim Awal ({formatKg(stl.total_dispatched_kg)}):</span>
-                      <span className="font-mono">{formatIdr(stl.gross_payable_amount)}</span>
+                    {/* Tabel Rincian Potongan Susut Supplier */}
+                    <div className="space-y-2 rounded-xl border border-white/[0.05] bg-[#070A10] p-3.5 text-xs">
+                      <div className="flex justify-between text-slate-300">
+                        <span>Bobot Kirim Awal ({formatKg(stl.total_dispatched_kg)}):</span>
+                        <span className="font-mono">{formatIdr(stl.gross_payable_amount)}</span>
+                      </div>
+                      <div className="flex justify-between font-semibold text-rose-400">
+                        <span>
+                          Potongan Susut/Reject Dapur (-{formatKg(stl.total_shrinkage_claim_kg)}):
+                        </span>
+                        <span className="font-mono">
+                          -{formatIdr(stl.shrinkage_claim_deduction_amount)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between border-t border-white/[0.07] pt-2 font-bold text-emerald-400">
+                        <span>
+                          Tagihan Bersih Supplier ({formatKg(stl.total_accepted_by_kitchens_kg)}):
+                        </span>
+                        <span className="font-mono text-sm">
+                          {formatIdr(stl.net_payable_amount)}
+                        </span>
+                      </div>
                     </div>
-                    <div className="flex justify-between text-rose-400 font-semibold">
-                      <span>
-                        Potongan Susut/Reject Dapur (-{formatKg(stl.total_shrinkage_claim_kg)}):
-                      </span>
-                      <span className="font-mono">
-                        -{formatIdr(stl.shrinkage_claim_deduction_amount)}
-                      </span>
-                    </div>
-                    <div className="border-t border-slate-800 pt-1.5 flex justify-between font-bold text-emerald-400">
-                      <span>
-                        Tagihan Bersih Supplier ({formatKg(stl.total_accepted_by_kitchens_kg)}):
-                      </span>
-                      <span className="font-mono">{formatIdr(stl.net_payable_amount)}</span>
+
+                    {isOwnerOrFinance && stl.status !== 'PAID' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          markSupplierSettlementPaid(stl.id);
+                          setToastMsg(
+                            `Settlement Supplier ${stl.settlement_number} ditandai LUNAS (${formatIdr(stl.net_payable_amount)}).`
+                          );
+                        }}
+                        className="min-h-[44px] w-full rounded-full bg-amber-500 px-4 py-2 text-xs font-extrabold text-slate-950 transition hover:bg-amber-400 active:scale-[0.98]"
+                      >
+                        Verifikasi Bayar Bersih ke Supplier ({formatIdr(stl.net_payable_amount)})
+                      </button>
+                    )}
+
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          triggerPdfPrint({
+                            type: 'SUPPLIER_CLAIM',
+                            settlementId: stl.id,
+                          })
+                        }
+                        className="min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-xs font-semibold text-white transition hover:bg-white/[0.08]"
+                      >
+                        <PrinterDocIcon className="h-3.5 w-3.5 text-slate-300" />
+                        <span>Print PDF Nota Susut</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() =>
+                          copyWhatsAppText(waClaimText, `Nota Klaim ${stl.settlement_number}`)
+                        }
+                        className="min-h-[40px] inline-flex items-center justify-center gap-1.5 rounded-xl border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20"
+                      >
+                        <ShareCopyIcon className="h-3.5 w-3.5" />
+                        <span>WA Nota Klaim Susut</span>
+                      </button>
                     </div>
                   </div>
-
-                  {isOwnerOrFinance && stl.status !== 'PAID' && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        markSupplierSettlementPaid(stl.id);
-                        setToastMsg(
-                          `✓ Settlement Supplier ${stl.settlement_number} ditandai LUNAS (${formatIdr(stl.net_payable_amount)}).`
-                        );
-                      }}
-                      className="w-full rounded-xl bg-amber-600 px-3 py-2 text-xs font-bold text-white hover:bg-amber-500"
-                    >
-                      ✓ Verifikasi Bayar Bersih ke Supplier ({formatIdr(stl.net_payable_amount)})
-                    </button>
-                  )}
-
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        triggerPdfPrint({
-                          type: 'SUPPLIER_CLAIM',
-                          settlementId: stl.id,
-                        })
-                      }
-                      className="rounded-lg border border-slate-700 bg-slate-800 px-2.5 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-700"
-                    >
-                      🖨️ Print PDF Nota Susut
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyWhatsAppText(waClaimText, `Nota Klaim ${stl.settlement_number}`)
-                      }
-                      className="rounded-lg border border-amber-500/40 bg-amber-950/50 px-2.5 py-1.5 text-[11px] font-semibold text-amber-300 hover:bg-amber-900/50"
-                    >
-                      📲 WA Nota Klaim Susut
-                    </button>
-                  </div>
-                </div>
+                </article>
               );
             })}
           </div>
@@ -460,23 +517,24 @@ export function Tab4InvoicesAndSettlements() {
 
         {/* Preview Dokumen Cetak di Layar (bila dipilih) */}
         {printDoc && (
-          <div className="rounded-2xl border-2 border-emerald-500/50 bg-white p-4 text-slate-900 shadow-xl space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+          <div className="rounded-2xl border-2 border-emerald-500/50 bg-white p-4 text-slate-900 shadow-2xl space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2.5">
+              <span className="font-mono text-xs font-bold uppercase tracking-wider text-emerald-700">
                 Pratinjau Dokumen Siap Cetak PDF (@media print)
               </span>
               <div className="flex gap-2">
                 <button
                   type="button"
                   onClick={() => window.print()}
-                  className="rounded-lg bg-emerald-600 px-3 py-1 text-xs font-bold text-white"
+                  className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"
                 >
-                  🖨️ Cetak / Simpan PDF
+                  <PrinterDocIcon className="h-3.5 w-3.5" />
+                  <span>Cetak / Simpan PDF</span>
                 </button>
                 <button
                   type="button"
                   onClick={() => setPrintDoc(null)}
-                  className="rounded-lg bg-slate-200 px-2.5 py-1 text-xs font-bold text-slate-700"
+                  className="min-h-[36px] rounded-lg bg-slate-200 px-3 py-1.5 text-xs font-bold text-slate-700"
                 >
                   Tutup
                 </button>
@@ -499,7 +557,7 @@ export function Tab4InvoicesAndSettlements() {
           )
         )}
       </div>
-    </div>
+    </section>
   );
 }
 
@@ -546,7 +604,9 @@ function PrintableDocumentContent({ doc }: { doc: PrintDocMode }) {
             <div className="font-bold uppercase text-slate-500">Ditagihkan Kepada:</div>
             <div className="font-bold text-sm">{kitchen?.name}</div>
             <div>{kitchen?.address}</div>
-            <div>PIC Dapur: {kitchen?.pic_name} ({kitchen?.pic_phone})</div>
+            <div>
+              PIC Dapur: {kitchen?.pic_name} ({kitchen?.pic_phone})
+            </div>
           </div>
           <div className="text-right">
             <div className="font-bold uppercase text-slate-500">Referensi BAST:</div>
@@ -625,7 +685,9 @@ function PrintableDocumentContent({ doc }: { doc: PrintDocMode }) {
         <div>
           <div className="font-bold">Dapur Tujuan: {kitchen?.name}</div>
           <div>Alamat: {kitchen?.address}</div>
-          <div>PIC Penerima: {kitchen?.pic_name} ({kitchen?.pic_phone})</div>
+          <div>
+            PIC Penerima: {kitchen?.pic_name} ({kitchen?.pic_phone})
+          </div>
         </div>
 
         <table className="w-full border-collapse border border-slate-300 text-xs">
