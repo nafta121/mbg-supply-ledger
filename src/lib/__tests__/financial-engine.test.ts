@@ -4,6 +4,7 @@ import {
   reconcileKitchenDeliveryItem,
   sanitizeDeliveryForFieldTeam,
 } from '../financial-engine';
+import { createInitialSeedState } from '../mbg-store';
 import type { InvoicePaymentStatus } from '../../types/mbg';
 
 describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs/01)', () => {
@@ -296,4 +297,21 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
     expect('line_supplier_payable_amount' in safeRecord).toBe(false);
     expect('line_total_markup_amount' in safeRecord).toBe(false);
   });
+
+  it('seeds 25 MBG kitchens, 3 suppliers, 5 kg commodities, and exact docs/01 transactions in mbg-store', () => {
+    const seed = createInitialSeedState();
+    expect(seed.kitchens).toHaveLength(25);
+    expect(seed.suppliers).toHaveLength(3);
+    expect(seed.items).toHaveLength(5);
+    expect(seed.items.every((i) => i.base_unit === 'kg')).toBe(true);
+
+    // Check supplier settlements match SUP-A (5,355,000 net) and SUP-B (3,635,250 net)
+    const supASettlement = seed.supplierSettlements.find((s) => s.supplier_id === 'sup-a');
+    const supBSettlement = seed.supplierSettlements.find((s) => s.supplier_id === 'sup-b');
+    expect(supASettlement?.net_payable_amount).toBe(5355000.0);
+    expect(supASettlement?.shrinkage_claim_deduction_amount).toBe(45000.0);
+    expect(supBSettlement?.net_payable_amount).toBe(3635250.0);
+    expect(supBSettlement?.shrinkage_claim_deduction_amount).toBe(64750.0);
+  });
 });
+
