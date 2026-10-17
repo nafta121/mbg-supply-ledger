@@ -45,15 +45,32 @@ describe('MBG Financial Engine — Stage 8 order-driven invariants', () => {
     expect(full.line_invoice_amount).toBe(250000);
     expect(full.line_margin_amount).toBe(37500);
     expect(full.qty_shrinkage_kg).toBe(0);
+
+    // Decimal kg cases: 12.5 kg × Rp 14.000 = Rp 175.000; 0.2 kg × Rp 50.000 = Rp 10.000
+    const dec1 = reconcileKitchenOrderLine({
+      qty_ordered_kg: 12.5,
+      qty_accepted_kg: 12.5,
+      kitchen_unit_price_rp: 14000,
+      margin_per_kg_rp: 2000,
+    });
+    expect(dec1.line_invoice_amount).toBe(175000);
+    expect(dec1.line_margin_amount).toBe(25000);
+
+    const dec2 = reconcileKitchenOrderLine({
+      qty_ordered_kg: 0.2,
+      qty_accepted_kg: 0.2,
+      kitchen_unit_price_rp: 50000,
+      margin_per_kg_rp: 5000,
+    });
+    expect(dec2.line_invoice_amount).toBe(10000);
+    expect(dec2.line_margin_amount).toBe(1000);
   });
 
-  it('rejects invalid order lines (whole kg, accepted ≤ ordered, 0 ≤ margin ≤ price)', () => {
+  it('rejects invalid order lines (qty <= 0, accepted > ordered, 0 <= margin <= price)', () => {
     const base = { qty_ordered_kg: 35, qty_accepted_kg: 35, kitchen_unit_price_rp: 14000, margin_per_kg_rp: 2000 };
     expect(() => reconcileKitchenOrderLine({ ...base, qty_ordered_kg: 0, qty_accepted_kg: 0 })).toThrow(/greater than 0/);
     expect(() => reconcileKitchenOrderLine({ ...base, qty_accepted_kg: 36 })).toThrow(/cannot exceed/);
     expect(() => reconcileKitchenOrderLine({ ...base, qty_accepted_kg: -1 })).toThrow(/negative/);
-    expect(() => reconcileKitchenOrderLine({ ...base, qty_accepted_kg: 34.5 })).toThrow(/kilogram bulat/);
-    expect(() => reconcileKitchenOrderLine({ ...base, qty_ordered_kg: 35.25 })).toThrow(/kilogram bulat/);
     expect(() => reconcileKitchenOrderLine({ ...base, kitchen_unit_price_rp: 0 })).toThrow(/greater than 0/);
     expect(() => reconcileKitchenOrderLine({ ...base, margin_per_kg_rp: -1 })).toThrow(/negative/);
     expect(() => reconcileKitchenOrderLine({ ...base, margin_per_kg_rp: 15000 })).toThrow(/cannot exceed/);

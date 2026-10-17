@@ -112,4 +112,32 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
       expect(serialized).not.toContain(forbidden);
     }
   });
+
+  it('supports decimal kilogram quantities (e.g. 12.5 kg and 0.2 kg) in fromSupabaseRows and fromCourierViewRows', () => {
+    const seed = createInitialSeedState();
+    const rows = toSupabaseRows(seed);
+    rows.orderItems[0]!.qty_ordered_kg = 12.5;
+    rows.orderItems[0]!.qty_accepted_kg = 12;
+    rows.orderItems[1]!.qty_ordered_kg = 0.2;
+    rows.orderItems[1]!.qty_accepted_kg = 0.2;
+
+    const restored = fromSupabaseRows({
+      kitchens: rows.kitchens,
+      products: rows.products,
+      orders: rows.orders,
+      orderItems: rows.orderItems,
+      invoices: rows.invoices,
+      ledgerEntries: rows.ledgerEntries,
+      splitConfigs: [rows.splitConfig],
+      payoutBatches: rows.payoutBatches,
+    });
+
+    expect(restored.deliveryItems[0]!.qty_dispatched_kg).toBe(12.5);
+    expect(restored.deliveryItems[0]!.qty_accepted_kg).toBe(12);
+    expect(restored.deliveryItems[0]!.qty_shrinkage_kg).toBe(0.5);
+    expect(restored.deliveryItems[1]!.qty_dispatched_kg).toBe(0.2);
+    expect(restored.deliveryItems[1]!.qty_accepted_kg).toBe(0.2);
+    expect(restored.deliveryItems[1]!.qty_shrinkage_kg).toBe(0);
+  });
 });
+

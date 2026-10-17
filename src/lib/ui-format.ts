@@ -6,8 +6,14 @@
  * the store already produced (Invariant 1: no raw float accumulation).
  */
 import type { InvoicePaymentStatus, LedgerPayoutStatus, OrderProgress, UserRole } from '../types/mbg';
-import { gramsToKg, idrToSen, kgToGrams, senToIdr, toWholeKg } from './financial-engine';
+import { gramsToKg, idrToSen, kgToGrams, roundKg, senToIdr } from './financial-engine';
 import { formatIdr } from './mbg-store';
+
+const ID_KG_FORMATTER = new Intl.NumberFormat('id-ID', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 3,
+  useGrouping: false,
+});
 
 // ---------- Exact aggregation (grams / sen BigInt) ----------
 
@@ -31,18 +37,39 @@ export function addIdr(a: number, b: number): number {
   return senToIdr(idrToSen(a) + idrToSen(b));
 }
 
-/** Parse a user-typed kg string into a safe WHOLE-kg number (invalid / ≤ 0 → 0). */
-export function parseKgInput(raw: string | undefined): number {
-  const n = Number(raw);
-  if (!raw || !Number.isFinite(n) || n <= 0) return 0;
-  return toWholeKg(n);
+/**
+ * Parse a user-typed kg string (with `,` or `.` decimal separator, e.g. `"12,5"`, `"12.5"`, `"0,2"`)
+ * into a 3-decimal number (`Math.round(val * 1000) / 1000`).
+ * Invalid or `<= 0` → `0`.
+ */
+export function parseKgInput(raw: string | number | null | undefined): number {
+  if (raw === null || raw === undefined) return 0;
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw <= 0) return 0;
+    return Math.round(raw * 1000) / 1000;
+  }
+  const cleaned = raw.trim().replace(/\s*kg$/i, '').trim().replace(/,/g, '.');
+  if (!cleaned || !/^[+]?(\d+(\.\d*)?|\.\d+)$/.test(cleaned)) return 0;
+  const val = Number(cleaned);
+  if (!Number.isFinite(val) || val <= 0) return 0;
+  return Math.round(val * 1000) / 1000;
 }
 
-/** Whole-kg text input only (Invariant 1): "35" ok, "35.5" / "-1" / "" → null. */
+/**
+ * Parse a courier/order decimal kg text input (`>= 0`, supports `,` or `.` and intermediate `"12,"` / `"0,"`).
+ * Returns `null` when empty or invalid (`"-1"`, `"abc"`, `""`).
+ */
+export function parseAcceptedKgInput(raw: string): number | null {
+  const cleaned = raw.trim().replace(/\s*kg$/i, '').trim().replace(/,/g, '.');
+  if (!cleaned || !/^\d+(\.\d*)?$/.test(cleaned)) return null;
+  const val = Number(cleaned);
+  if (!Number.isFinite(val) || val < 0) return null;
+  return Math.round(val * 1000) / 1000;
+}
+
+/** Backward-compatible alias for `parseAcceptedKgInput` (supports decimal kg `>= 0`). */
 export function parseWholeKgInput(raw: string): number | null {
-  const t = raw.trim();
-  if (!/^\d+$/.test(t)) return null;
-  return Number(t);
+  return parseAcceptedKgInput(raw);
 }
 
 /** Typed rupiah text → whole rupiah: "14.000" / "Rp 14.000" → 14000, "" → 0. */
@@ -65,23 +92,30 @@ export function formatRp(idr: number): string {
 }
 
 /**
- * `50` — kg number without unit as a WHOLE number (Stage 7 Invariant 1).
- * Never prints decimals or thousand separators: in Indonesia `50.000 kg`
- * reads as "fifty thousand kg".
+ * Indonesian smart decimal kg number without unit:
+ * - `50` → `"50"` (never `"50.000"` or `"50,000"`)
+ * - `12.5` → `"12,5"`
+ * - `0.2` → `"0,2"`
+ * - `1.25` → `"1,25"`
+ * - `-0.5` → `"-0,5"`
  */
-export function formatKgNum(kg: number): string {
-  return String(toWholeKg(kg));
+export function formatKgNum(value: number): string {
+  const clean = roundKg(value);
+  return ID_KG_FORMATTER.format(clean).replace(/\u2212/g, '-');
 }
 
-/** `50 kg`, `-3 kg` — whole-kg weight with unit. */
-export function formatKg(kg: number): string {
-  return `${formatKgNum(kg)} kg`;
+/**
+ * Indonesian smart decimal kg with unit:
+ * `50` → `"50 kg"`, `12.5` → `"12,5 kg"`, `0.2` → `"0,2 kg"`, `1.25` → `"1,25 kg"`, `-0.5` → `"-0,5 kg"`.
+ */
+export function formatKg(value: number): string {
+  return `${formatKgNum(value)} kg`;
 }
 
-/** Shrinkage shown as a deduction: 1 → `-1`, 0 → `0` (whole kg, no unit). */
+/** Shrinkage shown as a deduction: `1` → `"-1"`, `0.5` → `"-0,5"`, `0` → `"0"` (no unit). */
 export function formatShrinkKgNum(shrinkKg: number): string {
-  const whole = toWholeKg(shrinkKg);
-  return whole > 0 ? `-${whole}` : String(whole);
+  const clean = roundKg(shrinkKg);
+  return clean > 0 ? `-${formatKgNum(clean)}` : formatKgNum(clean);
 }
 
 /** "SPPG Dapur 01 - Tebet (Dapur A)" → "Tebet" */

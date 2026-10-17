@@ -24,13 +24,20 @@ import type {
   SafeCourierBastItem,
 } from '../types/mbg';
 import { composeShrinkReason, parseShrinkReason, type ShrinkReason } from './courier-view';
-import { idrToSen, senToIdr, toWholeKg } from './financial-engine';
+import {
+  gramsToKg,
+  idrToSen,
+  kgToGrams,
+  multiplyWeightGramsByPriceSen,
+  roundKg,
+  senToIdr,
+} from './financial-engine';
 import type { MbgData, UpdateBastInput } from './order-engine';
 
 const DEFAULT_DATE = '2026-10-16';
 const DEFAULT_ISO = '2026-10-16T06:00:00.000Z';
 
-// ---------- Row interfaces matching 0005 & 0006 migrations ----------
+// ---------- Row interfaces matching 0005, 0006 & 0007 migrations ----------
 
 export interface KitchenRow {
   id: string;
@@ -73,8 +80,8 @@ export interface KitchenOrderItemRow {
   order_id: string;
   product_id: string;
   product_name_snapshot: string;
-  qty_ordered_kg: number;
-  qty_accepted_kg: number | null;
+  qty_ordered_kg: number | string;
+  qty_accepted_kg: number | string | null;
   kitchen_unit_price_rp: number | string;
   margin_per_kg_rp: number | string;
   is_weighed: boolean;
@@ -171,9 +178,9 @@ export interface CourierKitchenOrderViewRow {
   product_name_snapshot?: string;
   product_name?: string;
   base_unit?: 'kg';
-  qty_ordered_kg: number;
-  qty_accepted_kg: number | null;
-  qty_shrinkage_kg?: number;
+  qty_ordered_kg: number | string;
+  qty_accepted_kg: number | string | null;
+  qty_shrinkage_kg?: number | string;
   is_weighed: boolean;
   shrinkage_reason: string | null;
   shrinkage_note: string | null;
@@ -251,8 +258,8 @@ export function toSupabaseRows(data: MbgData): {
       order_id: di.delivery_id,
       product_id: di.item_id,
       product_name_snapshot: prod?.name ?? di.item_id,
-      qty_ordered_kg: toWholeKg(di.qty_dispatched_kg),
-      qty_accepted_kg: isWeighed ? toWholeKg(di.qty_accepted_kg) : null,
+      qty_ordered_kg: roundKg(di.qty_dispatched_kg),
+      qty_accepted_kg: isWeighed ? roundKg(di.qty_accepted_kg) : null,
       kitchen_unit_price_rp: di.kitchen_unit_price_snapshot,
       margin_per_kg_rp: di.margin_per_kg_snapshot,
       is_weighed: isWeighed,
@@ -429,13 +436,14 @@ export function fromSupabaseRows(rows: {
   }));
 
   const deliveryItems: KitchenDeliveryItem[] = rows.orderItems.map((oi) => {
-    const orderedKg = toWholeKg(oi.qty_ordered_kg);
-    const acceptedKg = oi.is_weighed && oi.qty_accepted_kg !== null ? toWholeKg(oi.qty_accepted_kg) : orderedKg;
-    const shrinkKg = Math.max(0, orderedKg - acceptedKg);
+    const orderedKg = roundKg(oi.qty_ordered_kg);
+    const acceptedKg = oi.is_weighed && oi.qty_accepted_kg !== null ? roundKg(oi.qty_accepted_kg) : orderedKg;
+    const shrinkKg = Math.max(0, gramsToKg(kgToGrams(orderedKg) - kgToGrams(acceptedKg)));
     const unitPrice = num(oi.kitchen_unit_price_rp);
     const marginPerKg = num(oi.margin_per_kg_rp);
-    const lineInvoice = senToIdr(BigInt(acceptedKg) * idrToSen(unitPrice));
-    const lineMargin = senToIdr(BigInt(acceptedKg) * idrToSen(marginPerKg));
+    const acceptedGrams = kgToGrams(acceptedKg);
+    const lineInvoice = senToIdr(multiplyWeightGramsByPriceSen(acceptedGrams, idrToSen(unitPrice)));
+    const lineMargin = senToIdr(multiplyWeightGramsByPriceSen(acceptedGrams, idrToSen(marginPerKg)));
     const rejectionReason = oi.shrinkage_reason
       ? composeShrinkReason((oi.shrinkage_reason as ShrinkReason) ?? 'Susut', oi.shrinkage_note ?? '')
       : null;
@@ -577,9 +585,9 @@ export function fromSupabaseRows(rows: {
 /** Converts rows from `v_courier_kitchen_orders` into `SafeCourierBastItem[]` (Invariant 5 — zero prices). */
 export function fromCourierViewRows(rows: CourierKitchenOrderViewRow[]): SafeCourierBastItem[] {
   return rows.map((r) => {
-    const orderedKg = toWholeKg(r.qty_ordered_kg);
-    const acceptedKg = r.is_weighed && r.qty_accepted_kg !== null ? toWholeKg(r.qty_accepted_kg) : orderedKg;
-    const shrinkKg = Math.max(0, orderedKg - acceptedKg);
+    const orderedKg = roundKg(r.qty_ordered_kg);
+    const acceptedKg = r.is_weighed && r.qty_accepted_kg !== null ? roundKg(r.qty_accepted_kg) : orderedKg;
+    const shrinkKg = Math.max(0, gramsToKg(kgToGrams(orderedKg) - kgToGrams(acceptedKg)));
     const rejectionReason = r.shrinkage_reason
       ? composeShrinkReason((r.shrinkage_reason as ShrinkReason) ?? 'Susut', r.shrinkage_note ?? '')
       : null;
@@ -647,7 +655,7 @@ export async function submitCourierWeighingBatchRpc(
       const parsed = parseShrinkReason(line.rejection_reason ?? null);
       const { error } = await supabase.rpc('submit_courier_weighing', {
         p_item_id: line.delivery_item_id,
-        p_qty_accepted_kg: toWholeKg(line.qty_accepted_kg),
+        p_qty_accepted_kg: roundKg(line.qty_accepted_kg),
         p_shrinkage_reason: parsed.reason,
         p_shrinkage_note: parsed.note || null,
       });

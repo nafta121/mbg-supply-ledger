@@ -25,18 +25,22 @@ export function gramsToKg(grams: bigint): number {
 }
 
 /**
- * Stage 7 (Invariant 1): operational weights are WHOLE kilograms (no decimals).
- * Rounds half away from zero (49.5 → 50, -1.5 → -2) and never returns `-0`.
- * Invalid input → 0.
+ * Rounds a kilogram quantity to at most 3 decimal places (`NUMERIC(12,3)` / gram precision)
+ * to prevent IEEE-754 floating-point drift (e.g. `0.1 + 0.2 = 0.3`).
+ * Accepts numbers or strings with `.` or `,` as decimal separator.
+ * Never returns `-0`; invalid input → `0`.
  */
+export function roundKg(kg: number | string): number {
+  const normalized =
+    typeof kg === 'string' ? Number(kg.trim().replace(/\s*kg$/i, '').replace(/,/g, '.')) : kg;
+  if (!Number.isFinite(normalized)) return 0;
+  const rounded = Math.round(normalized * 1000) / 1000;
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+/** Backward-compatible alias for `roundKg` (3-decimal dynamic kg precision). */
 export function toWholeKg(kg: number | string): number {
-  const num = typeof kg === 'string' ? Number(kg) : kg;
-  if (!Number.isFinite(num)) return 0;
-  const grams = kgToGrams(num);
-  const abs = grams < 0n ? -grams : grams;
-  const whole = (abs + 500n) / 1000n;
-  if (whole === 0n) return 0;
-  return Number(grams < 0n ? -whole : whole);
+  return roundKg(kg);
 }
 
 export function idrToSen(idr: number | string): bigint {
@@ -81,16 +85,10 @@ export function multiplyWeightGramsByPriceSen(grams: bigint, unitPriceSen: bigin
   return divideHalfUp(grams * unitPriceSen, 1000n);
 }
 
-function assertWholeKgGrams(grams: bigint, field: string): void {
-  if (grams % 1000n !== 0n) {
-    throw new Error(`Invariant 1 Violation: ${field} wajib kilogram bulat (tanpa desimal)`);
-  }
-}
-
 export interface ReconcileOrderLineInput {
-  /** Berat Order = Berat Kirim (whole kg). */
+  /** Berat Order = Berat Kirim (kg, supports decimals up to 3 places e.g. 12.5 or 0.2). */
   qty_ordered_kg: number;
-  /** Berat diterima dapur saat BAST (whole kg). */
+  /** Berat diterima dapur saat BAST (kg, supports decimals up to 3 places). */
   qty_accepted_kg: number;
   /** Harga Dapur / kg (sudah termasuk markup). */
   kitchen_unit_price_rp: number;
@@ -111,7 +109,7 @@ export interface ReconcileOrderLineResult {
 /**
  * a) reconcileKitchenOrderLine
  * Stage 8 Order-Driven Flow. Enforces:
- * - Invariant 1: whole-kg weights, exact sen arithmetic.
+ * - Invariant 1: 3-decimal gram precision (`NUMERIC(12,3)`), exact sen arithmetic.
  * - Invariant 2: the kitchen is billed ONLY for `qty_accepted_kg`; the
  *   difference (selisih/reject) is never invoiced.
  * - Invariant 3: price & margin snapshots are validated (0 ≤ margin ≤ price).
@@ -119,8 +117,6 @@ export interface ReconcileOrderLineResult {
 export function reconcileKitchenOrderLine(input: ReconcileOrderLineInput): ReconcileOrderLineResult {
   const orderedGrams = kgToGrams(input.qty_ordered_kg);
   const acceptedGrams = kgToGrams(input.qty_accepted_kg);
-  assertWholeKgGrams(orderedGrams, 'qty_ordered_kg');
-  assertWholeKgGrams(acceptedGrams, 'qty_accepted_kg');
 
   if (orderedGrams <= 0n) {
     throw new Error('Invariant 1 Violation: qty_ordered_kg must be greater than 0');

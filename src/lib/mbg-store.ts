@@ -2,7 +2,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { BeneficiaryType, Item, Kitchen, ProfitSplitConfig, SafeCourierBastItem, UserRole } from '../types/mbg';
-import { idrToSen, senToIdr, toWholeKg } from './financial-engine';
+import { idrToSen, roundKg, senToIdr } from './financial-engine';
 import {
   applyBastWeights,
   buildSafeCourierItems,
@@ -185,9 +185,15 @@ export function upsertItemRecord(list: Item[], input: ItemMasterInput, nowIso: s
   ];
 }
 
-/** `35 kg` — whole kilograms only, never `35.000 kg` (Invariant 1). */
+const ID_KG_FORMATTER = new Intl.NumberFormat('id-ID', {
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 3,
+  useGrouping: false,
+});
+
+/** `35 kg`, `12,5 kg`, `0,2 kg` — smart Indonesian decimal kg without trailing zeros (Invariant 1). */
 export function formatKg(kg: number): string {
-  return `${toWholeKg(kg)} kg`;
+  return `${ID_KG_FORMATTER.format(roundKg(kg)).replace(/\u2212/g, '-')} kg`;
 }
 
 export function formatIdr(idr: number): string {
@@ -531,12 +537,12 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         const row = currentMap.get(l.delivery_item_id);
         if (!row) return { ok: false, error: 'Barang pengiriman tidak ditemukan.' };
         if (row.is_locked) return { ok: false, error: 'Invoice dapur sudah lunas — timbangan terkunci.' };
-        const kg = toWholeKg(l.qty_accepted_kg);
+        const kg = roundKg(l.qty_accepted_kg);
         if (kg < 0) return { ok: false, error: 'Berat diterima tidak boleh negatif.' };
-        if (kg > row.qty_dispatched_kg) {
+        if (kg > roundKg(row.qty_dispatched_kg)) {
           return {
             ok: false,
-            error: `${row.item_name}: berat diterima (${kg} kg) melebihi berat order (${row.qty_dispatched_kg} kg).`,
+            error: `${row.item_name}: berat diterima (${formatKg(kg)}) melebihi berat order (${formatKg(row.qty_dispatched_kg)}).`,
           };
         }
       }
@@ -546,8 +552,8 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const updatedCourier = courierItemsRef.current.map((item) => {
         const p = patchById.get(item.delivery_item_id);
         if (!p) return item;
-        const acceptedKg = toWholeKg(p.qty_accepted_kg);
-        const shrinkKg = Math.max(0, item.qty_dispatched_kg - acceptedKg);
+        const acceptedKg = roundKg(p.qty_accepted_kg);
+        const shrinkKg = Math.max(0, roundKg(item.qty_dispatched_kg - acceptedKg));
         return {
           ...item,
           qty_accepted_kg: acceptedKg,

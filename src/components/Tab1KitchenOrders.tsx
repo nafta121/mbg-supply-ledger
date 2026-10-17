@@ -4,13 +4,14 @@ import React, { useRef, useState } from 'react';
 import { BUSINESS_DATE, type OrderLineInput, useMbgStore } from '../lib/mbg-store';
 import { findOpenOrder, linesForDelivery, orderProgress, summarizeOrderDraft } from '../lib/order-engine';
 import {
+  formatKg,
   formatKgNum,
   formatRp,
   formatThousands,
   ORDER_PROGRESS_LABEL,
   orderProgressTone,
+  parseKgInput,
   parseRpInput,
-  parseWholeKgInput,
   shortKitchenName,
   sumIdr,
 } from '../lib/ui-format';
@@ -71,7 +72,7 @@ export function Tab1KitchenOrders() {
 
   const orderLines: OrderLineInput[] = lines.map((l) => ({
     item_id: l.item_id,
-    qty_ordered_kg: parseWholeKgInput(l.kgStr) ?? 0,
+    qty_ordered_kg: parseKgInput(l.kgStr),
     kitchen_unit_price_rp: parseRpInput(l.priceStr),
     margin_per_kg_rp: parseRpInput(l.marginStr),
   }));
@@ -241,9 +242,9 @@ export function Tab1KitchenOrders() {
             <span className="block text-xs font-semibold text-slate-700">Daftar Barang Pesanan</span>
             {lines.map((l, idx) => {
               const chosenElsewhere = new Set(lines.filter((o) => o.key !== l.key).map((o) => o.item_id));
-              const kg = parseWholeKgInput(l.kgStr);
+              const kg = parseKgInput(l.kgStr);
               const price = parseRpInput(l.priceStr);
-              const lineTotal = kg && price ? summarizeOrderDraft([orderLines[idx]!]).estimated_invoice : 0;
+              const lineTotal = kg > 0 && price > 0 ? summarizeOrderDraft([orderLines[idx]!]).estimated_invoice : 0;
               const idp = `ol-${l.key}`;
               return (
                 <div key={l.key} className="space-y-2 rounded-lg bg-slate-50 p-2.5 ring-1 ring-inset ring-slate-200">
@@ -288,11 +289,10 @@ export function Tab1KitchenOrders() {
                       </label>
                       <input
                         id={`${idp}-kg`}
-                        type="number"
-                        inputMode="numeric"
-                        step="1"
-                        min="1"
-                        placeholder="0"
+                        type="text"
+                        inputMode="decimal"
+                        step="any"
+                        placeholder="Contoh: 12,5 atau 0,2"
                         value={l.kgStr}
                         onChange={(e) => patchLine(l.key, { kgStr: e.target.value })}
                         className="field-input mt-0.5 text-right font-bold tabular-nums"
@@ -329,7 +329,7 @@ export function Tab1KitchenOrders() {
                   </div>
                   {lineTotal > 0 && (
                     <p className="text-right text-[11px] tabular-nums text-slate-600">
-                      {formatKgNum(kg ?? 0)} kg × {formatRp(price)} = <span className="font-semibold">{formatRp(lineTotal)}</span>
+                      {formatKg(kg)} × {formatRp(price)} = <span className="font-semibold">{formatRp(lineTotal)}</span>
                     </p>
                   )}
                 </div>

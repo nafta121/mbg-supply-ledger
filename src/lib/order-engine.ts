@@ -31,11 +31,12 @@ import {
   gramsToKg,
   idrToSen,
   kgToGrams,
+  multiplyWeightGramsByPriceSen,
   pctToBasisPoints,
   reconcileKitchenOrderLine,
+  roundKg,
   sanitizeDeliveryForFieldTeam,
   senToIdr,
-  toWholeKg,
 } from './financial-engine';
 
 export interface MbgData {
@@ -132,15 +133,15 @@ export function summarizeOrderDraft(lines: OrderLineInput[]): OrderDraftSummary 
   let marginSen = 0n;
   let count = 0;
   for (const l of lines) {
-    const kg = toWholeKg(l.qty_ordered_kg);
+    const kg = roundKg(l.qty_ordered_kg);
     if (!l.item_id || kg <= 0) continue;
     count += 1;
     const g = kgToGrams(kg);
     grams += g;
     const price = Number.isFinite(l.kitchen_unit_price_rp) ? l.kitchen_unit_price_rp : 0;
     const margin = Number.isFinite(l.margin_per_kg_rp) ? l.margin_per_kg_rp : 0;
-    invoiceSen += (g * idrToSen(price)) / 1000n;
-    marginSen += (g * idrToSen(margin)) / 1000n;
+    invoiceSen += multiplyWeightGramsByPriceSen(g, idrToSen(price));
+    marginSen += multiplyWeightGramsByPriceSen(g, idrToSen(margin));
   }
   return {
     item_count: count,
@@ -176,10 +177,10 @@ export function validateOrderLines(
     const name = item.name;
     if (seen.has(item.id)) return `${name} sudah ada di order dapur ini.`;
     seen.add(item.id);
-    if (!Number.isFinite(l.qty_ordered_kg) || l.qty_ordered_kg <= 0) {
-      return `${name}: isi berat order (kg bulat).`;
+    const qty = roundKg(l.qty_ordered_kg);
+    if (!Number.isFinite(l.qty_ordered_kg) || qty <= 0) {
+      return `${name}: isi berat order (kg).`;
     }
-    if (!Number.isInteger(l.qty_ordered_kg)) return `${name}: berat wajib kilogram bulat.`;
     if (!Number.isFinite(l.kitchen_unit_price_rp) || l.kitchen_unit_price_rp <= 0) {
       return `${name}: isi Harga Dapur / kg.`;
     }
@@ -296,7 +297,7 @@ function buildLine(
   id: string,
   nowIso: string
 ): KitchenDeliveryItem {
-  const qty = toWholeKg(input.qty_ordered_kg);
+  const qty = roundKg(input.qty_ordered_kg);
   // Accepted defaults to the ordered weight (estimate) until the courier weighs it.
   const r = reconcileKitchenOrderLine({
     qty_ordered_kg: qty,
@@ -348,7 +349,7 @@ export function createKitchenOrder<T extends MbgData>(
 
   const lines = input.lines.map((l) => ({
     ...l,
-    qty_ordered_kg: Number.isFinite(l.qty_ordered_kg) ? l.qty_ordered_kg : 0,
+    qty_ordered_kg: Number.isFinite(l.qty_ordered_kg) ? roundKg(l.qty_ordered_kg) : 0,
     kitchen_unit_price_rp: senToIdr(idrToSen(Number.isFinite(l.kitchen_unit_price_rp) ? l.kitchen_unit_price_rp : 0)),
     margin_per_kg_rp: senToIdr(idrToSen(Number.isFinite(l.margin_per_kg_rp) ? l.margin_per_kg_rp : 0)),
   }));
@@ -428,10 +429,10 @@ export function applyBastWeights<T extends MbgData>(
       return { ok: false, error: `${itemName}: invoice dapur sudah lunas, timbangan terkunci.` };
     }
     if (!Number.isFinite(input.qty_accepted_kg) || input.qty_accepted_kg < 0) {
-      return { ok: false, error: `${itemName}: isi berat diterima (kg bulat).` };
+      return { ok: false, error: `${itemName}: isi berat diterima (kg).` };
     }
-    const accepted = toWholeKg(input.qty_accepted_kg);
-    if (accepted > line.qty_dispatched_kg) {
+    const accepted = roundKg(input.qty_accepted_kg);
+    if (accepted > roundKg(line.qty_dispatched_kg)) {
       return { ok: false, error: `${itemName}: berat diterima melebihi berat order.` };
     }
     const r = reconcileKitchenOrderLine({

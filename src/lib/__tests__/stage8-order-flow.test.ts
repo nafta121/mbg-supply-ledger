@@ -84,7 +84,7 @@ describe('Stage 8 — Order Dapur (multi-item)', () => {
     expect(s.invoices[0]!.total_invoice_amount).toBe(740000);
   });
 
-  it('validates the order form', () => {
+  it('validates the order form and supports decimal kg orders (e.g. 12,5 kg and 0,2 kg)', () => {
     const c = ctx();
     const base = emptyState();
     const err = (lines: (typeof wortel)[], kitchen_id = 'kitchen-01') => {
@@ -95,10 +95,33 @@ describe('Stage 8 — Order Dapur (multi-item)', () => {
     expect(err([])).toMatch(/minimal 1 barang/);
     expect(err([{ ...wortel, item_id: '' }])).toMatch(/Pilih nama barang/);
     expect(err([{ ...wortel, qty_ordered_kg: 0 }])).toMatch(/berat order/);
-    expect(err([{ ...wortel, qty_ordered_kg: 35.5 }])).toMatch(/kilogram bulat/);
     expect(err([{ ...wortel, kitchen_unit_price_rp: 0 }])).toMatch(/Harga Dapur/);
     expect(err([{ ...wortel, margin_per_kg_rp: 20000 }])).toMatch(/melebihi/);
     expect(err([wortel, wortel])).toMatch(/sudah ada/);
+
+    // Decimal order: Wortel 12.5 kg @ Rp 14.000 = Rp 175.000 + Kubis 0.2 kg @ Rp 50.000 = Rp 10.000
+    const decState = ok(
+      createKitchenOrder(
+        base,
+        {
+          kitchen_id: 'kitchen-01',
+          lines: [
+            { item_id: 'item-wortel', qty_ordered_kg: 12.5, kitchen_unit_price_rp: 14000, margin_per_kg_rp: 2000 },
+            { item_id: 'item-kubis', qty_ordered_kg: 0.2, kitchen_unit_price_rp: 50000, margin_per_kg_rp: 5000 },
+          ],
+        },
+        c
+      )
+    );
+    expect(decState.invoices[0]!.total_invoice_amount).toBe(185000);
+    // Margin: 12.5 * 2000 (25.000) + 0.2 * 5000 (1.000) = 26.000 -> Tim 60% = 15.600, Koperasi 40% = 10.400
+    const decProfit = buildInvoiceProfit(decState, decState.invoices[0]!.id);
+    expect(decProfit).toMatchObject({
+      total_margin: 26000,
+      team_amount: 15600,
+      coop_amount: 10400,
+      total_accepted_kg: 12.7,
+    });
   });
 
   it('removes a line (re-bills) and deletes the order when the last line goes', () => {
@@ -149,14 +172,16 @@ describe('Stage 8 — Timbang kurir & Invoice Dapur berbasis bobot terima', () =
     expect(profit.team_status).toBe('LOCKED_UNPAID');
   });
 
-  it('rejects weights above the order and whole-kg violations stay rounded', () => {
+  it('rejects weights above the order and supports decimal accepted weights (e.g. 33.4 kg)', () => {
     const c = ctx();
     const s = ok(createKitchenOrder(emptyState(), { kitchen_id: 'kitchen-02', lines: [wortel] }, c));
     const w = s.deliveryItems[0]!;
     const over = applyBastWeights(s, [{ delivery_item_id: w.id, qty_accepted_kg: 36 }], c.nowIso);
     expect(over.ok).toBe(false);
-    const rounded = ok(applyBastWeights(s, [{ delivery_item_id: w.id, qty_accepted_kg: 33.4 }], c.nowIso));
-    expect(rounded.deliveryItems[0]!.qty_accepted_kg).toBe(33);
+    const dec = ok(applyBastWeights(s, [{ delivery_item_id: w.id, qty_accepted_kg: 33.4 }], c.nowIso));
+    expect(dec.deliveryItems[0]!.qty_accepted_kg).toBe(33.4);
+    expect(dec.deliveryItems[0]!.qty_shrinkage_kg).toBe(1.6);
+    expect(dec.invoices[0]!.total_invoice_amount).toBe(467600);
   });
 });
 

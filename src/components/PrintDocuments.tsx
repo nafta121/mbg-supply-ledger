@@ -4,7 +4,7 @@ import React from 'react';
 import { describeShrinkReason, groupCourierStops, type KitchenStop, stopWeighedSummary } from '../lib/courier-view';
 import { buildInvoiceLines } from '../lib/invoice-view';
 import { buildSafeCourierItems, formatIdr, useMbgStore } from '../lib/mbg-store';
-import { formatKgNum, formatShrinkKgNum, INVOICE_LABEL } from '../lib/ui-format';
+import { formatKg, formatKgNum, formatShrinkKgNum, INVOICE_LABEL } from '../lib/ui-format';
 
 export type PrintDocMode = { type: 'INVOICE'; invoiceId: string } | { type: 'BAST'; deliveryId: string };
 
@@ -159,8 +159,8 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
                 {l.item_name}
                 {!l.weighed && <div className="text-[10px] font-normal text-slate-600">Estimasi (belum ditimbang)</div>}
               </td>
-              <td className={`${td} text-right font-mono`}>{formatKgNum(l.qty_ordered_kg)} kg</td>
-              <td className={`${td} text-right font-mono font-bold`}>{formatKgNum(l.qty_accepted_kg)} kg</td>
+              <td className={`${td} text-right font-mono`}>{formatKg(l.qty_ordered_kg)}</td>
+              <td className={`${td} text-right font-mono font-bold`}>{formatKg(l.qty_accepted_kg)}</td>
               <td className={`${td} text-right font-mono`}>{formatIdr(l.unit_price)}</td>
               <td className={`${td} text-right font-mono font-bold`}>{formatIdr(l.line_total)}</td>
             </tr>

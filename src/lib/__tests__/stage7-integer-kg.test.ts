@@ -11,47 +11,58 @@ import { toWholeKg } from '../financial-engine';
 import { buildSafeCourierItems, createInitialSeedState, formatKg as storeFormatKg } from '../mbg-store';
 import { formatKg, formatKgNum, formatShrinkKgNum, parseKgInput, parseWholeKgInput } from '../ui-format';
 
-const DECIMAL_KG = /\d[.,]\d+\s*kg/;
+const TRAILING_ZERO_KG = /\d[.,]\d*0\s*kg|\d\.000\s*kg/;
 
-describe('Stage 7 — whole-kilogram formatting (Invariant 1)', () => {
-  it('formats kg as whole numbers without .000', () => {
+describe('Stage 7/8 — dynamic Indonesian decimal kilogram formatting (Invariant 1)', () => {
+  it('formats whole and decimal kg with Indonesian comma and never prints trailing zeros (.000 / ,000)', () => {
     expect(formatKgNum(50)).toBe('50');
     expect(formatKgNum(20)).toBe('20');
     expect(formatKg(50)).toBe('50 kg');
+    expect(formatKg(12.5)).toBe('12,5 kg');
+    expect(formatKg(0.2)).toBe('0,2 kg');
+    expect(formatKg(1.25)).toBe('1,25 kg');
+    expect(formatKg(-0.5)).toBe('-0,5 kg');
     expect(formatKg(-3)).toBe('-3 kg');
     expect(`${formatKgNum(70)} / ${formatKgNum(70)} kg`).toBe('70 / 70 kg');
     expect(storeFormatKg(50)).toBe('50 kg');
+    expect(storeFormatKg(12.5)).toBe('12,5 kg');
+    expect(storeFormatKg(0.2)).toBe('0,2 kg');
     expect(storeFormatKg(125)).toBe('125 kg');
-    for (const kg of [0, 1, 20, 48, 49, 50, 70, 125, 150, 500, 1250]) {
+    for (const kg of [0, 0.2, 1, 1.25, 12.5, 20, 48, 49, 50, 70, 125, 150, 500, 1250]) {
       expect(formatKg(kg)).not.toContain('.000');
-      expect(storeFormatKg(kg)).not.toMatch(DECIMAL_KG);
+      expect(formatKg(kg)).not.toContain(',000');
+      expect(storeFormatKg(kg)).not.toMatch(TRAILING_ZERO_KG);
     }
   });
 
-  it('rounds to the nearest whole kg (half away from zero) and never prints -0', () => {
-    expect(toWholeKg(48.75)).toBe(49);
-    expect(toWholeKg(49.5)).toBe(50);
-    expect(toWholeKg(49.4)).toBe(49);
-    expect(toWholeKg(-1.5)).toBe(-2);
-    expect(toWholeKg(-0.2)).toBe(0);
-    expect(formatKgNum(-0.2)).toBe('0');
+  it('rounds to at most 3 decimal places and never prints -0', () => {
+    expect(toWholeKg(48.75)).toBe(48.75);
+    expect(toWholeKg(12.5)).toBe(12.5);
+    expect(toWholeKg(0.1 + 0.2)).toBe(0.3);
+    expect(toWholeKg(-0.5)).toBe(-0.5);
+    expect(toWholeKg(-0.0001)).toBe(0);
+    expect(formatKgNum(-0.0001)).toBe('0');
     expect(toWholeKg(Number.NaN)).toBe(0);
   });
 
   it('formats shrinkage as a negative deduction', () => {
     expect(formatShrinkKgNum(1)).toBe('-1');
+    expect(formatShrinkKgNum(0.5)).toBe('-0,5');
     expect(formatShrinkKgNum(2)).toBe('-2');
     expect(formatShrinkKgNum(0)).toBe('0');
   });
 
-  it('parses typed kg input into whole kg', () => {
+  it('parses typed kg input (comma or dot) into 3-decimal kg', () => {
     expect(parseKgInput('50')).toBe(50);
-    expect(parseKgInput('12.6')).toBe(13);
+    expect(parseKgInput('12,5')).toBe(12.5);
+    expect(parseKgInput('12.5')).toBe(12.5);
+    expect(parseKgInput('0,2')).toBe(0.2);
     expect(parseKgInput('')).toBe(0);
     expect(parseKgInput('-4')).toBe(0);
     expect(parseKgInput('abc')).toBe(0);
     expect(parseWholeKgInput('35')).toBe(35);
-    expect(parseWholeKgInput('35.5')).toBeNull();
+    expect(parseWholeKgInput('35,5')).toBe(35.5);
+    expect(parseWholeKgInput('0,2')).toBe(0.2);
     expect(parseWholeKgInput('-1')).toBeNull();
     expect(parseWholeKgInput('')).toBeNull();
   });
@@ -82,15 +93,15 @@ describe('Stage 7/8 — whole-kg seed data', () => {
     for (const le of seed.ledgerEntries) expect(Number.isInteger(le.profit_amount)).toBe(true);
   });
 
-  it('WA BAST and WA invoice texts never contain decimal kilograms', () => {
+  it('WA BAST and WA invoice texts never contain trailing-zero kilograms', () => {
     const stops = groupCourierStops(buildSafeCourierItems(seed));
     for (const s of stops) {
       const text = buildKitchenBastWaText(s);
-      expect(text).not.toMatch(DECIMAL_KG);
+      expect(text).not.toMatch(TRAILING_ZERO_KG);
       expect(text).not.toContain('.000 kg');
     }
     for (const inv of seed.invoices) {
-      expect(buildInvoiceWaText(seed, inv)).not.toMatch(DECIMAL_KG);
+      expect(buildInvoiceWaText(seed, inv)).not.toMatch(TRAILING_ZERO_KG);
     }
   });
 });

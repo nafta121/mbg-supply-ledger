@@ -13,7 +13,7 @@ Aplikasi mobile dan backend ini mengelola siklus harian **Order Dapur** dari **2
 
 - **Order per Dapur (Multi-Barang):** Admin menginput 1 Order Dapur berisi banyak barang (contoh `DPR-01 • Dapur A`: `Wortel 35 kg`, `Kubis 25 kg`) lengkap dengan **`Harga Dapur / kg (Rp)`** (harga jual ke dapur, sudah termasuk markup) dan **`Margin / Bagian Kita per kg (Rp)`** (dasar bagi hasil). Harga & margin default diambil dari master barang dan tetap bisa diedit per order.
 - **1 Order = 1 Kartu Kurir = 1 Invoice:** Setiap Order Dapur menghasilkan 1 kartu pengiriman multi-barang di layar kurir dan 1 Invoice Tagihan Dapur Gabungan. Order tambahan untuk dapur yang sama di hari yang sama (selama invoice belum lunas) digabung ke order & invoice tersebut.
-- **Satuan Kilogram Bulat:** Semua berat dalam **kilogram bulat** (`kg`, bilangan bulat tanpa desimal/koma — contoh: `35 kg`, `-2 kg`).
+- **Satuan Kilogram Desimal Dinamis:** Semua berat menggunakan satuan **kilogram (`kg`)** dengan dukungan desimal dinamis hingga 3 angka di belakang koma (`NUMERIC(12,3)` — contoh: `35 kg`, `12,5 kg`, `0,2 kg`, `-0,5 kg`, tanpa trailing zeros).
 - **Invoice Berbasis Bobot Terima:** Dapur hanya ditagih sebesar `qty_accepted_kg` hasil timbang BAST. Selisih/reject (misal kirim `35 kg`, diterima `33 kg`) tidak ditagihkan.
 - **Cash-Basis Profit Distribution:** Bagi hasil = `qty_accepted_kg × margin_per_kg`, dikunci (`LOCKED_UNPAID` — "Menunggu Dapur Bayar") dan baru siap dicairkan (`AVAILABLE_FOR_PAYOUT` — "Siap Dicairkan") setelah Invoice Dapur berstatus lunas (`PAID`).
 
@@ -21,7 +21,7 @@ Aplikasi mobile dan backend ini mengelola siklus harian **Order Dapur** dari **2
 
 - **Mobile & Tablet Client:** Next.js (App Router) + TypeScript (`strict: true`) + Tailwind CSS (Mobile-First PWA) dengan 4 tab: **Order Dapur**, **Timbang**, **Invoice Dapur**, **Bagi Hasil**.
 - **Logika Bisnis Murni:** `src/lib/financial-engine.ts` (aritmetika presisi gram/sen) dan `src/lib/order-engine.ts` (seluruh transisi state: buat order, timbang BAST, lunas, pencairan). `src/lib/mbg-store.ts` hanya membungkus engine dengan React state.
-- **Backend & Database:** Supabase (PostgreSQL 15+) dengan **Row-Level Security (RLS)**, **Security-Barrier Views**, **PL/pgSQL ACID Triggers**, dan **Immutable Price Snapshots** (lihat `supabase/migrations/0004_order_driven_flow.sql`).
+- **Backend & Database:** Supabase (PostgreSQL 15+) dengan **Row-Level Security (RLS)**, **Security-Barrier Views**, **PL/pgSQL ACID Triggers**, dan **Immutable Price Snapshots** (lihat `supabase/migrations/0007_decimal_kg_support.sql`).
 - **Autentikasi & RBAC:** Supabase Auth dengan 4 role utama: `FIELD_TEAM`, `COOPERATIVE_VIEWER`, `FINANCE`, dan `OWNER_ADMIN`.
 - **Dokumen Otomatis:** Surat Jalan/BAST multi-barang (tanpa harga), Invoice Dapur Gabungan (PDF), dan teks WhatsApp tagihan/BAST.
 
@@ -29,18 +29,18 @@ Aplikasi mobile dan backend ini mengelola siklus harian **Order Dapur** dari **2
 
 Seluruh kode backend, query SQL, state management, dan UI wajib mematuhi 5 Invariant Bisnis Utama berikut (detail di `.agents/rules/business-and-financial-invariants.md`):
 
-1. **Invariant 1 (Presisi Angka & Satuan — Kilogram Bulat):** Dilarang menggunakan `FLOAT` atau `DOUBLE` untuk uang dan berat. Wajib gunakan `NUMERIC(15,2)` untuk mata uang (IDR). Seluruh kuantitas berat menggunakan satuan **Kilogram bulat** (`35 kg`, `25 kg`, `-2 kg`; kolom DB tetap `NUMERIC(10,3)` dengan `CHECK` nilai bulat). Di Indonesia, `35.000 kg` terbaca "tiga puluh lima ribu kg" — karena itu **DILARANG** menampilkan `.000` atau desimal pada angka kilogram di UI, input, PDF, maupun pesan WhatsApp.
+1. **Invariant 1 (Presisi Angka & Satuan — Kilogram Desimal Dinamis):** Dilarang menggunakan `FLOAT` atau `DOUBLE` untuk uang dan berat. Wajib gunakan `NUMERIC(15,2)` untuk mata uang (IDR) dan `NUMERIC(12,3)` untuk kuantitas berat (`kg`). Di Indonesia, `50.000 kg` terbaca "lima puluh ribu kg" — karena itu **DILARANG** menampilkan trailing zeros seperti `50.000 kg` atau `12,500 kg` di UI, input, PDF, maupun pesan WhatsApp. Gunakan koma (`,`) sebagai pemisah desimal tanpa nol berlebih (`50 kg`, `12,5 kg`, `0,2 kg`, `1,25 kg`, `-0,5 kg`).
 2. **Invariant 2 (Tagihan Dapur Berbasis Bobot Terima):**
-   - `Tagihan per baris Invoice Dapur` = `qty_accepted_kg × kitchen_unit_price_snapshot`.
+   - `Tagihan per baris Invoice Dapur` = `ROUND(qty_accepted_kg × kitchen_unit_price_snapshot, 2)`.
    - Selisih `qty_dispatched_kg − qty_accepted_kg` (susut/reject) **tidak pernah ditagihkan** ke dapur dan ditampilkan sebagai `Selisih/Reject -2 kg (Hanya ditagih 33 kg ke Dapur)`.
    - Invoice baru boleh ditandai `PAID` setelah **semua barang** pada order tersebut ditimbang kurir (tagihan final).
 3. **Invariant 3 (Snapshot Harga & Margin Immutable):** Setiap baris order menyimpan `kitchen_unit_price_snapshot` dan `margin_per_kg_snapshot` saat order dibuat (`0 ≤ margin ≤ harga dapur`, harga dapur `> 0`). Perubahan harga default di master barang **TIDAK BOLEH** mengubah histori order, invoice, maupun bagi hasil. Order yang invoicenya sudah `PAID` terkunci (tidak bisa diubah/dihapus/ditimbang ulang).
-4. **Invariant 4 (Cash-Basis Profit Sharing):** `Total Bagi Hasil per baris = qty_accepted_kg × margin_per_kg_snapshot`, dibagi **Tim** dan **Koperasi** sesuai persentase (misal 60% : 40%; porsi Koperasi dibulatkan, porsi Tim = total − Koperasi sehingga tidak ada selisih Rp 0,01):
+4. **Invariant 4 (Cash-Basis Profit Sharing):** `Total Bagi Hasil per baris = ROUND(qty_accepted_kg × margin_per_kg_snapshot, 2)`, dibagi **Tim** dan **Koperasi** sesuai persentase (misal 60% : 40%; porsi Koperasi dibulatkan, porsi Tim = total − Koperasi sehingga tidak ada selisih Rp 0,01):
    - Saat Invoice Dapur `ISSUED` / `UNPAID` / `PARTIALLY_PAID`: ledger `LOCKED_UNPAID` (**Menunggu Dapur Bayar**).
    - Otomatis menjadi `AVAILABLE_FOR_PAYOUT` (**Siap Dicairkan**) HANYA SETELAH Invoice Dapur berstatus `PAID` (**Lunas**).
    - Baris yang sudah `PAID_OUT` tidak pernah dihitung ulang.
 5. **Invariant 5 (Strict Role-Based Access Control / Proteksi Harga):**
-   - Role `FIELD_TEAM` (**Lapangan/Kurir**): Hanya melihat daftar dapur, nama PIC, dan daftar barang beserta kilogram bulat (`Wortel 35 kg`, `Kubis 25 kg`), lalu menginput bobot terima BAST. **DILARANG** melihat harga dapur, margin, nominal invoice, maupun laporan bagi hasil. Saat role ini dipilih, aplikasi langsung membuka layar **Timbang** tanpa navigasi bawah.
+   - Role `FIELD_TEAM` (**Lapangan/Kurir**): Hanya melihat daftar dapur, nama PIC, dan daftar barang beserta kilogram (`Wortel 35 kg`, `Kubis 12,5 kg`, `Lada 0,2 kg`), lalu menginput bobot terima BAST. **DILARANG** melihat harga dapur, margin, nominal invoice, maupun laporan bagi hasil. Saat role ini dipilih, aplikasi langsung membuka layar **Timbang** tanpa navigasi bawah.
    - Role `COOPERATIVE_VIEWER` (Pihak Koperasi): Melihat rekap timbang (read-only), status pembayaran Invoice Dapur, dan perhitungan hak bagi hasil Koperasi.
    - Role `OWNER_ADMIN` / `FINANCE`: Akses penuh — input Order Dapur (harga & margin), master data, verifikasi pelunasan invoice, dan eksekusi pencairan bagi hasil (`Payout Settlement`).
 

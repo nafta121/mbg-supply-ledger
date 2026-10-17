@@ -17,10 +17,10 @@ import {
   stopWeighedSummary,
   summarizeVehicleLoad,
 } from '../lib/courier-view';
-import { kgToGrams } from '../lib/financial-engine';
+import { kgToGrams, roundKg } from '../lib/financial-engine';
 import { type UpdateBastInput, useMbgStore } from '../lib/mbg-store';
 import { shareToWhatsApp } from '../lib/share';
-import { formatKgNum, parseWholeKgInput, shortKitchenName } from '../lib/ui-format';
+import { formatKg, formatKgNum, parseAcceptedKgInput, shortKitchenName } from '../lib/ui-format';
 import type { SafeCourierBastItem } from '../types/mbg';
 import { KitchenBastDocument } from './PrintDocuments';
 import { Badge, Card, SegmentedControl, Toast, type ToastState } from './ui';
@@ -29,7 +29,7 @@ type Filter = 'pending' | 'done';
 
 interface LineDraft {
   weightStr: string;
-  /** Typed value is a valid whole kg (≥ 0). `null` = empty or invalid. */
+  /** Typed value is a valid kg (≥ 0, supports decimals e.g. 12.5 or 0.2). `null` = empty or invalid. */
   parsedKg: number | null;
   reason: ShrinkReason | null;
   note: string;
@@ -92,7 +92,7 @@ export function Tab2CourierWeighing() {
     const stored = parseShrinkReason(it.rejection_reason);
     // Pending lines start EMPTY (never pre-filled with the ordered weight).
     const weightStr = draftWeights[id] ?? (it.is_weighed ? formatKgNum(it.qty_accepted_kg) : '');
-    const parsedKg = parseWholeKgInput(weightStr);
+    const parsedKg = parseAcceptedKgInput(weightStr);
     const orderedGrams = kgToGrams(it.qty_dispatched_kg);
     const liveShrinkGrams =
       parsedKg !== null
@@ -167,17 +167,17 @@ export function Tab2CourierWeighing() {
     for (const it of targets) {
       const d = getDraft(it);
       if (d.parsedKg === null) {
-        setToast({ kind: 'error', text: `${it.item_name}: isi berat diterima dengan angka bulat (kg).` });
+        setToast({ kind: 'error', text: `${it.item_name}: isi berat diterima (contoh: 12,5 atau 0,2 kg).` });
         return;
       }
-      const orderedKg = Number(formatKgNum(it.qty_dispatched_kg));
+      const orderedKg = roundKg(it.qty_dispatched_kg);
       if (d.parsedKg > orderedKg) {
         setToast({ kind: 'error', text: `${it.item_name}: berat diterima melebihi berat order.` });
         return;
       }
-      const shrinkKg = orderedKg - d.parsedKg;
-      acceptedTotal += d.parsedKg;
-      shrinkTotal += shrinkKg;
+      const shrinkKg = Math.round((orderedKg - d.parsedKg) * 1000) / 1000;
+      acceptedTotal = Math.round((acceptedTotal + d.parsedKg) * 1000) / 1000;
+      shrinkTotal = Math.round((shrinkTotal + shrinkKg) * 1000) / 1000;
       lines.push({
         delivery_item_id: it.delivery_item_id,
         qty_accepted_kg: d.parsedKg,
@@ -194,8 +194,8 @@ export function Tab2CourierWeighing() {
     setToast({
       kind: 'ok',
       text:
-        `${stopTitle(stop)}: ${lines.length} barang tersimpan, diterima ${acceptedTotal} kg` +
-        (shrinkTotal > 0 ? `, selisih -${shrinkTotal} kg (tidak ditagih).` : ' (sesuai order).'),
+        `${stopTitle(stop)}: ${lines.length} barang tersimpan, diterima ${formatKg(acceptedTotal)}` +
+        (shrinkTotal > 0 ? `, selisih -${formatKg(shrinkTotal)} (tidak ditagih).` : ' (sesuai order).'),
     });
   };
 
@@ -408,12 +408,10 @@ export function Tab2CourierWeighing() {
                             <div className="mt-0.5 flex gap-1.5">
                               <input
                                 id={weightId}
-                                type="number"
-                                inputMode="numeric"
-                                step="1"
-                                min="0"
-                                max={orderedText}
-                                placeholder="0"
+                                type="text"
+                                inputMode="decimal"
+                                step="any"
+                                placeholder="Contoh: 12,5 atau 0,2"
                                 value={d.weightStr}
                                 onChange={(e) => setDraftWeights((p) => ({ ...p, [id]: e.target.value }))}
                                 className={`h-11 w-full min-w-0 rounded-lg border-2 bg-white px-2.5 text-right text-base font-bold tabular-nums text-slate-900 focus:border-emerald-600 ${

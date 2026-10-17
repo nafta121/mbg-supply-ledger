@@ -14,18 +14,18 @@ Aturan di dalam dokumen ini bersifat **MUTLAK (NON-NEGOTIABLE)** dan **TIDAK BOL
 
 ---
 
-## Invariant 1: Presisi Angka & Satuan (`NUMERIC` & Kilogram Bulat)
+## Invariant 1: Presisi Angka & Satuan (`NUMERIC` & Kilogram Desimal Dinamis)
 
 1. **Larangan Floating-Point Biner:**
    - **DILARANG KERAS** menggunakan tipe data `FLOAT`, `FLOAT4`, `FLOAT8`, `REAL`, atau `DOUBLE PRECISION` di PostgreSQL untuk menyimpan nominal uang, harga per kg, margin, persentase bagi hasil, maupun kuantitas berat.
-   - Di lapisan aplikasi (TypeScript), hindari aritmatika `number` langsung untuk kalkulasi buku besar/keuangan; gunakan helper fixed-point di `financial-engine.ts` (gram & sen `BigInt`) atau `sumIdr` / `sumKg`.
+   - Di lapisan aplikasi (TypeScript), hindari aritmatika `number` langsung untuk kalkulasi buku besar/keuangan; gunakan helper fixed-point di `financial-engine.ts` (gram & sen `BigInt`, serta `roundKg` maksimal 3 desimal) atau `sumIdr` / `sumKg`.
 2. **Standar Tipe Data Database:**
    - **Mata Uang (IDR):** `NUMERIC(15,2)` — `kitchen_unit_price_snapshot`, `margin_per_kg_snapshot`, `line_invoice_amount`, `line_margin_amount`, `total_invoice_amount`, `profit_amount`.
-   - **Kuantitas Berat (`kg`):** Kilogram **bulat** (`35 kg`, `25 kg`, `-2 kg`). Kolom tetap `NUMERIC(10,3)` dengan `CHECK (kolom = TRUNC(kolom))`.
-   - Input berat di semua layar memakai `inputMode="numeric"`, `step="1"`, dan placeholder `"0"`; nilai yang masuk ke store/RPC dibulatkan ke kilogram bulat. Input rupiah memakai `inputMode="numeric"` dengan pemisah ribuan (`14.000`).
-3. **Larangan Tampilan Desimal Kilogram:**
-   - **DILARANG** menampilkan `.000` atau desimal pada angka kilogram di UI, input, PDF, maupun pesan WhatsApp.
-   - Benar: `35 kg`, `33 / 35 kg`, `-2 kg`. Salah: `35.000 kg`, `35,000 kg`, `33.500 kg`.
+   - **Kuantitas Berat (`kg`):** Kilogram dengan dukungan **desimal dinamis hingga 3 angka di belakang koma** (`NUMERIC(12,3)` — mendukung `50 kg`, `12,5 kg`, `0,2 kg`, `1,25 kg`, `-0,5 kg`, dengan constraint `qty_ordered_kg > 0`).
+   - Input berat di semua layar memakai `type="text"`, `inputMode="decimal"`, `step="any"`, dan `placeholder="Contoh: 12,5 atau 0,2"`; menerima tanda koma (`,`) maupun titik (`.`) sebagai pemisah desimal. Input rupiah memakai `inputMode="numeric"` dengan pemisah ribuan (`14.000`).
+3. **Format Desimal Cerdas Berstandar Indonesia (Tanpa Trailing Zeros):**
+   - **DILARANG** menampilkan trailing zeros seperti `50.000 kg` atau `12,500 kg` di UI, input, PDF, maupun pesan WhatsApp (`Intl.NumberFormat('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 3, useGrouping: false })`).
+   - Benar: `50 kg`, `12,5 kg`, `0,2 kg`, `1,25 kg`, `-0,5 kg`. Salah: `50.000 kg`, `50,000 kg`, `12,500 kg`.
 4. **Pembulatan Terstandar:** Seluruh `qty_kg × harga` dibulatkan `ROUND(val, 2)` (half-up) agar tidak pernah ada selisih Rp 0,01 antara invoice dan ledger bagi hasil.
 
 ---
