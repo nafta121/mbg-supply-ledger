@@ -24,6 +24,21 @@ export function gramsToKg(grams: bigint): number {
   return Number(grams) / 1000;
 }
 
+/**
+ * Stage 7 (Invariant 1): operational weights are WHOLE kilograms (no decimals).
+ * Rounds half away from zero (49.5 → 50, -1.5 → -2) and never returns `-0`.
+ * Invalid input → 0.
+ */
+export function toWholeKg(kg: number | string): number {
+  const num = typeof kg === 'string' ? Number(kg) : kg;
+  if (!Number.isFinite(num)) return 0;
+  const grams = kgToGrams(num);
+  const abs = grams < 0n ? -grams : grams;
+  const whole = (abs + 500n) / 1000n;
+  if (whole === 0n) return 0;
+  return Number(grams < 0n ? -whole : whole);
+}
+
 export function idrToSen(idr: number | string): bigint {
   const num = typeof idr === 'string' ? Number(idr) : idr;
   if (!Number.isFinite(num)) {

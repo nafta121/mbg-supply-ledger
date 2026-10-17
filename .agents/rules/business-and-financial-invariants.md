@@ -11,15 +11,19 @@ Aturan di dalam dokumen ini bersifat **MUTLAK (NON-NEGOTIABLE)** dan **TIDAK BOL
 
 ---
 
-## Invariant 1: Presisi Angka & Satuan (`NUMERIC` & Satuan Dasar `kg`)
+## Invariant 1: Presisi Angka & Satuan (`NUMERIC` & Satuan Dasar Kilogram Bulat)
 
 1. **Larangan Floating-Point Biner:**
    - **DILARANG KERAS** menggunakan tipe data `FLOAT`, `FLOAT4`, `FLOAT8`, `REAL`, atau `DOUBLE PRECISION` di PostgreSQL untuk menyimpan nominal uang, harga satuan, persentase bagi hasil, maupun kuantitas berat barang.
    - Di lapisan aplikasi (Flutter/Dart atau TypeScript), hindari aritmatika `double` langsung untuk kalkulasi buku besar/keuangan; gunakan representasi desimal presisi tetap (`Decimal` / integer sen / string `NUMERIC` dari database).
 2. **Standar Tipe Data Database:**
    - **Mata Uang (IDR):** Wajib menggunakan `NUMERIC(15,2)`.
-   - **Kuantitas Berat (`kg`):** Wajib menggunakan `NUMERIC(10,3)` dalam satuan dasar **kilogram (`kg`)** agar akurat hingga satuan gram (`0.001 kg`). Contoh: `14.250` merepresentasikan `14 kg 250 gram`.
-3. **Pembulatan Terstandar:**
+   - **Kuantitas Berat (`kg`):** Seluruh kuantitas berat bahan baku menggunakan satuan **Kilogram bulat (`INTEGER` / bilangan bulat tanpa desimal atau koma)**, misalnya `50 kg`, `75 kg`, `-3 kg`. Kolom database tetap bertipe eksak `NUMERIC(10,3)` (bukan float) dan dijaga `CHECK (kolom = TRUNC(kolom))` sehingga hanya menerima nilai bulat.
+   - Input berat di semua layar memakai `inputMode="numeric"`, `step="1"`, dan placeholder `"0"`; nilai yang masuk ke store/RPC dibulatkan ke kilogram bulat.
+3. **Larangan Tampilan Desimal Kilogram:**
+   - Di Indonesia, penulisan `50.000 kg` akan terbaca sebagai "lima puluh ribu kg". Oleh karena itu **DILARANG** menampilkan `.000` atau desimal pada angka kilogram di bagian mana pun di aplikasi (UI, Input, dokumen Print PDF, maupun pesan WhatsApp).
+   - Format yang benar: `50 kg`, `20 kg`, `70 / 70 kg`, `-3 kg`. Format yang DILARANG: `50.000 kg`, `50,000 kg`, `48.750 kg`.
+4. **Pembulatan Terstandar:**
    - Seluruh kalkulasi total harga (`qty_kg × unit_price`) dibulatkan ke `NUMERIC(15,2)` menggunakan `ROUND(val, 2)` (half-up) di level database agar tidak pernah terjadi selisih Rp 0,01 antara invoice, tagihan supplier, dan ledger bagi hasil.
 
 ---

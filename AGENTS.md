@@ -6,7 +6,7 @@ Dokumen ini adalah panduan arsitektur utama (**Single Source of Truth**) bagi se
 
 Aplikasi mobile dan backend ini mengelola siklus harian pengadaan bahan baku dari berbagai **Supplier**, alokasi & distribusi ke **20–30 Dapur MBG**, penerbitan **Invoice Dapur**, pemotongan tagihan ke Supplier akibat penyusutan/barang rusak (**Shrinkage/Reject**), serta pembagian keuntungan (**Profit-Sharing Ledger**) antara **Tim** dan **Koperasi**.
 
-- **Operasi Batch Harian:** Melayani 20–30 dapur setiap hari dalam satuan dasar kilogram (`kg`) hingga presisi gram (`0.001 kg`).
+- **Operasi Batch Harian:** Melayani 20–30 dapur setiap hari dalam satuan dasar **kilogram bulat** (`kg`, bilangan bulat tanpa desimal/koma — contoh: `50 kg`, `-3 kg`).
 - **Batch-Traced Costing:** Harga modal menggunakan harga beli aktual per batch pengadaan supplier (`Actual Cost per Batch`), bukan harga rata-rata (*average cost*).
 - **Zero-Shrinkage Risk bagi Tim & Koperasi:** Seluruh susut bobot atau reject saat BAST di dapur otomatis memotong kewajiban bayar ke Supplier asal batch.
 - **Cash-Basis Profit Distribution:** Bagi hasil Tim dan Koperasi dihitung saat Invoice diterbitkan, namun dikunci (`LOCKED_UNPAID`) dan baru siap dicairkan (`AVAILABLE_FOR_PAYOUT`) setelah Invoice Dapur berstatus lunas (`PAID`).
@@ -22,7 +22,7 @@ Aplikasi mobile dan backend ini mengelola siklus harian pengadaan bahan baku dar
 
 Seluruh kode backend, query SQL, state management, dan UI wajib mematuhi 5 Invariant Bisnis Utama berikut (detail di `.agents/rules/business-and-financial-invariants.md`):
 
-1. **Invariant 1 (Presisi Angka & Satuan):** Dilarang menggunakan `FLOAT` atau `DOUBLE` untuk uang dan berat. Wajib gunakan `NUMERIC(15,2)` untuk mata uang (IDR) dan `NUMERIC(10,3)` untuk kuantitas berat dalam satuan dasar kilogram (`kg`) agar akurat hingga gram (contoh: `14.250 kg`).
+1. **Invariant 1 (Presisi Angka & Satuan — Kilogram Bulat):** Dilarang menggunakan `FLOAT` atau `DOUBLE` untuk uang dan berat. Wajib gunakan `NUMERIC(15,2)` untuk mata uang (IDR). Seluruh kuantitas berat bahan baku menggunakan satuan **Kilogram bulat (`INTEGER` / bilangan bulat tanpa desimal atau koma)**, misalnya `50 kg`, `75 kg`, `-3 kg` (kolom DB tetap bertipe eksak `NUMERIC(10,3)` dengan `CHECK` nilai bulat). Di Indonesia, penulisan `50.000 kg` terbaca sebagai "lima puluh ribu kg" — karena itu **DILARANG** menampilkan `.000` atau desimal pada angka kilogram di bagian mana pun (UI, Input, dokumen Print PDF, maupun pesan WhatsApp).
 2. **Invariant 2 (Zero-Shrinkage Risk / Beban Susut di Supplier):** Segala bentuk penyusutan bobot (*shrinkage*) atau barang rusak/reject saat diterima oleh dapur adalah 100% tanggung jawab Supplier, BUKAN tanggung jawab Tim maupun Koperasi:
    - `Kitchen Invoice` = `qty_accepted_by_kitchen_kg × kitchen_unit_price_snapshot`
    - `Supplier Payable` = `qty_accepted_by_kitchen_kg × supplier_actual_cost_snapshot` (bukan berdasarkan bobot kirim awal). Selisih antara bobot kirim supplier dan total bobot diterima dapur otomatis dicatat sebagai `qty_supplier_claim_or_return_kg` (Potongan Tagihan/Nota Retur Supplier).

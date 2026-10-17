@@ -35,17 +35,17 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
       kitchen: 'Dapur B',
       supplier_batch_id: 'SUP-A',
       qty_dispatched_kg: 50.0,
-      qty_accepted_kg: 48.75, // Susut 1.250 kg
+      qty_accepted_kg: 49, // Susut 1 kg
       supplier_actual_cost_snapshot: 36000.0,
       kitchen_unit_price_snapshot: 40000.0,
       invoice_status: 'PAID' as InvoicePaymentStatus,
-      expected_shrinkage_kg: 1.25,
-      expected_kitchen_invoice: 1950000.0,
-      expected_supplier_net_payable: 1755000.0,
-      expected_supplier_claim: 45000.0,
-      expected_total_markup: 195000.0,
-      expected_team_share: 117000.0,
-      expected_coop_share: 78000.0,
+      expected_shrinkage_kg: 1,
+      expected_kitchen_invoice: 1960000.0,
+      expected_supplier_net_payable: 1764000.0,
+      expected_supplier_claim: 36000.0,
+      expected_total_markup: 196000.0,
+      expected_team_share: 117600.0,
+      expected_coop_share: 78400.0,
       expected_ledger_status: 'AVAILABLE_FOR_PAYOUT',
     },
     {
@@ -69,17 +69,17 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
       kitchen: 'Dapur D',
       supplier_batch_id: 'SUP-B',
       qty_dispatched_kg: 50.0,
-      qty_accepted_kg: 48.25, // Reject 1.750 kg
+      qty_accepted_kg: 48, // Reject 2 kg
       supplier_actual_cost_snapshot: 37000.0,
       kitchen_unit_price_snapshot: 40000.0,
       invoice_status: 'PAID' as InvoicePaymentStatus,
-      expected_shrinkage_kg: 1.75,
-      expected_kitchen_invoice: 1930000.0,
-      expected_supplier_net_payable: 1785250.0,
-      expected_supplier_claim: 64750.0,
-      expected_total_markup: 144750.0,
-      expected_team_share: 86850.0,
-      expected_coop_share: 57900.0,
+      expected_shrinkage_kg: 2,
+      expected_kitchen_invoice: 1920000.0,
+      expected_supplier_net_payable: 1776000.0,
+      expected_supplier_claim: 74000.0,
+      expected_total_markup: 144000.0,
+      expected_team_share: 86400.0,
+      expected_coop_share: 57600.0,
       expected_ledger_status: 'AVAILABLE_FOR_PAYOUT',
     },
     {
@@ -101,7 +101,7 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
     },
   ];
 
-  it('reconciles 5 kitchens across 2 supplier batches with 3.000 kg total shrinkage (Table 1 of docs/01)', () => {
+  it('reconciles 5 kitchens across 2 supplier batches with 3 kg total shrinkage (whole kg) (Table 1 of docs/01)', () => {
     let totalDispatchedKg = 0;
     let totalShrinkageKg = 0;
     let totalAcceptedKg = 0;
@@ -156,22 +156,22 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
     expect(totalShrinkageKg).toBe(3.0);
     expect(totalAcceptedKg).toBe(247.0);
     expect(totalKitchenInvoice).toBe(9880000.0);
-    expect(totalSupplierNetPayable).toBe(8990250.0);
-    expect(totalSupplierClaim).toBe(109750.0);
+    expect(totalSupplierNetPayable).toBe(8990000.0);
+    expect(totalSupplierClaim).toBe(110000.0);
 
     // Supplier Batch SUP-A settlement verification (CV Tani Makmur)
-    expect(batchTotals['SUP-A']?.acceptedKg).toBe(148.75);
-    expect(batchTotals['SUP-A']?.shrinkageKg).toBe(1.25);
+    expect(batchTotals['SUP-A']?.acceptedKg).toBe(149);
+    expect(batchTotals['SUP-A']?.shrinkageKg).toBe(1);
     expect(batchTotals['SUP-A']?.gross).toBe(5400000.0);
-    expect(batchTotals['SUP-A']?.claim).toBe(45000.0);
-    expect(batchTotals['SUP-A']?.net).toBe(5355000.0);
+    expect(batchTotals['SUP-A']?.claim).toBe(36000.0);
+    expect(batchTotals['SUP-A']?.net).toBe(5364000.0);
 
     // Supplier Batch SUP-B settlement verification (UD Berkah Unggas)
-    expect(batchTotals['SUP-B']?.acceptedKg).toBe(98.25);
-    expect(batchTotals['SUP-B']?.shrinkageKg).toBe(1.75);
+    expect(batchTotals['SUP-B']?.acceptedKg).toBe(98);
+    expect(batchTotals['SUP-B']?.shrinkageKg).toBe(2);
     expect(batchTotals['SUP-B']?.gross).toBe(3700000.0);
-    expect(batchTotals['SUP-B']?.claim).toBe(64750.0);
-    expect(batchTotals['SUP-B']?.net).toBe(3635250.0);
+    expect(batchTotals['SUP-B']?.claim).toBe(74000.0);
+    expect(batchTotals['SUP-B']?.net).toBe(3626000.0);
   });
 
   it('calculates profit-sharing ledger & enforces LOCKED_UNPAID vs AVAILABLE_FOR_PAYOUT on PAID transition (Table 2 of docs/01)', () => {
@@ -206,9 +206,9 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
     }
 
     // Verify exact cash position from docs/01-domain-workflows-and-formulas.md
-    expect(availableTeamTotal).toBe(323850.0);
-    expect(availableCoopTotal).toBe(215900.0);
-    expect(availableTeamTotal + availableCoopTotal).toBe(539750.0);
+    expect(availableTeamTotal).toBe(324000.0);
+    expect(availableCoopTotal).toBe(216000.0);
+    expect(availableTeamTotal + availableCoopTotal).toBe(540000.0);
 
     expect(lockedTeamTotal).toBe(210000.0);
     expect(lockedCoopTotal).toBe(140000.0);
@@ -233,7 +233,7 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
       reconcileKitchenDeliveryItem({
         supplier_batch_id: 'SUP-A',
         qty_dispatched_kg: 50.0,
-        qty_accepted_kg: 50.001, // Exceeds dispatched
+        qty_accepted_kg: 51, // Exceeds dispatched
         supplier_actual_cost_snapshot: 36000.0,
         kitchen_unit_price_snapshot: 40000.0,
       })
@@ -263,14 +263,14 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
       base_unit: 'kg' as const,
       supplier_batch_id: 'SUP-A',
       qty_dispatched_kg: 50.0,
-      qty_accepted_kg: 48.75,
+      qty_accepted_kg: 49,
       supplier_actual_cost_snapshot: 36000.0,
       kitchen_unit_price_snapshot: 40000.0,
-      line_invoice_amount: 1950000.0,
-      line_supplier_payable_amount: 1755000.0,
-      line_supplier_claim_amount: 45000.0,
-      line_total_markup_amount: 195000.0,
-      rejection_reason: 'Susut perjalanan 1.250 kg',
+      line_invoice_amount: 1960000.0,
+      line_supplier_payable_amount: 1764000.0,
+      line_supplier_claim_amount: 36000.0,
+      line_total_markup_amount: 196000.0,
+      rejection_reason: 'Susut perjalanan 1 kg',
     };
 
     const safeRecord = sanitizeDeliveryForFieldTeam(rawDeliveryRecord);
@@ -286,9 +286,9 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
       item_name: 'Dada Ayam Fillet',
       base_unit: 'kg',
       qty_dispatched_kg: 50.0,
-      qty_accepted_kg: 48.75,
-      qty_shrinkage_kg: 1.25,
-      rejection_reason: 'Susut perjalanan 1.250 kg',
+      qty_accepted_kg: 49,
+      qty_shrinkage_kg: 1,
+      rejection_reason: 'Susut perjalanan 1 kg',
     });
 
     expect('supplier_actual_cost_snapshot' in safeRecord).toBe(false);
@@ -305,13 +305,13 @@ describe('MBG Financial Engine — 5 Business Invariants & Real Simulation (docs
     expect(seed.items).toHaveLength(5);
     expect(seed.items.every((i) => i.base_unit === 'kg')).toBe(true);
 
-    // Check supplier settlements match SUP-A (5,355,000 net) and SUP-B (3,635,250 net)
+    // Check supplier settlements match SUP-A (5,364,000 net) and SUP-B (3,626,000 net) — whole-kg seed
     const supASettlement = seed.supplierSettlements.find((s) => s.supplier_id === 'sup-a');
     const supBSettlement = seed.supplierSettlements.find((s) => s.supplier_id === 'sup-b');
-    expect(supASettlement?.net_payable_amount).toBe(5355000.0);
-    expect(supASettlement?.shrinkage_claim_deduction_amount).toBe(45000.0);
-    expect(supBSettlement?.net_payable_amount).toBe(3635250.0);
-    expect(supBSettlement?.shrinkage_claim_deduction_amount).toBe(64750.0);
+    expect(supASettlement?.net_payable_amount).toBe(5364000.0);
+    expect(supASettlement?.shrinkage_claim_deduction_amount).toBe(36000.0);
+    expect(supBSettlement?.net_payable_amount).toBe(3626000.0);
+    expect(supBSettlement?.shrinkage_claim_deduction_amount).toBe(74000.0);
   });
 });
 

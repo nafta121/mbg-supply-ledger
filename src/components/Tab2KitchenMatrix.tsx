@@ -76,12 +76,14 @@ export function Tab2KitchenMatrix({ initialBatchId }: { initialBatchId?: string 
 
   const fillEvenly = () => {
     if (kitchens.length === 0) return;
-    const perKitchenGrams = kgToGrams(remainingKg) / BigInt(kitchens.length);
-    if (perKitchenGrams <= 0n) {
+    // Whole kg per kitchen (floor) so the sum never exceeds the remaining stock.
+    const remainingWholeKg = kgToGrams(remainingKg) / 1000n;
+    const perKitchenKg = remainingWholeKg / BigInt(kitchens.length);
+    if (perKitchenKg <= 0n) {
       setToast({ kind: 'error', text: 'Stok batch ini sudah habis.' });
       return;
     }
-    const val = formatKgNum(gramsToKg(perKitchenGrams));
+    const val = String(perKitchenKg);
     setGridValues(Object.fromEntries(kitchens.map((k) => [k.id, val])));
   };
 
@@ -248,8 +250,8 @@ export function Tab2KitchenMatrix({ initialBatchId }: { initialBatchId?: string 
                     </button>
                     <input
                       type="number"
-                      inputMode="decimal"
-                      step="0.001"
+                      inputMode="numeric"
+                      step="1"
                       min="0"
                       placeholder="0"
                       aria-label={`Berat kirim (kg) untuk ${k.name}`}

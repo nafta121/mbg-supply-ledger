@@ -26,9 +26,11 @@ import {
   reconcileKitchenDeliveryItem,
   sanitizeDeliveryForFieldTeam,
   senToIdr,
+  toWholeKg,
 } from './financial-engine';
 
-const STORAGE_KEY = 'mbg_supply_ledger_state_v3';
+// v4 (Stage 7): seed switched to whole kilograms — old decimal-kg local state is discarded.
+const STORAGE_KEY = 'mbg_supply_ledger_state_v4';
 const SIM_DATE = '2026-10-16';
 
 export type ActiveTab = 'batches' | 'matrix' | 'bast' | 'invoices' | 'ledger';
@@ -244,9 +246,9 @@ export function batchShortCode(batchId: string, batches: SupplierProcurementBatc
   return `#B${String(batches.length - idx).padStart(2, '0')}`;
 }
 
+/** `50 kg` — whole kilograms only, never `50.000 kg` (Stage 7 Invariant 1). */
 export function formatKg(kg: number): string {
-  const exact = gramsToKg(kgToGrams(kg));
-  return `${exact.toFixed(3)} kg`;
+  return `${toWholeKg(kg)} kg`;
 }
 
 export function formatIdr(idr: number): string {
@@ -478,17 +480,17 @@ export function createInitialSeedState(): MbgState {
       amountPaid: 2000000.0,
     },
     {
-      kitchenIdx: 1, // Dapur B (02) - Susut 1.250 kg
+      kitchenIdx: 1, // Dapur B (02) - Susut 1 kg (diterima 49 kg)
       batchId: 'batch-sup-a-ayam',
       supplierId: 'sup-a',
       itemId: 'item-ayam',
-      dispatchedKg: 50.0,
-      acceptedKg: 48.75,
+      dispatchedKg: 50,
+      acceptedKg: 49,
       costSnapshot: 36000.0,
       priceSnapshot: 40000.0,
       rejectionReason: 'Susut — susut air/perjalanan saat timbang BAST di Dapur 02',
       invoiceStatus: 'PAID' as const,
-      amountPaid: 1950000.0,
+      amountPaid: 1960000.0,
     },
     {
       kitchenIdx: 2, // Dapur C (03) - ISSUED (Belum Bayar)
@@ -504,17 +506,17 @@ export function createInitialSeedState(): MbgState {
       amountPaid: 0.0,
     },
     {
-      kitchenIdx: 3, // Dapur D (04) - Reject 1.750 kg
+      kitchenIdx: 3, // Dapur D (04) - Reject 2 kg (diterima 48 kg)
       batchId: 'batch-sup-b-ayam',
       supplierId: 'sup-b',
       itemId: 'item-ayam',
-      dispatchedKg: 50.0,
-      acceptedKg: 48.25,
+      dispatchedKg: 50,
+      acceptedKg: 48,
       costSnapshot: 37000.0,
       priceSnapshot: 40000.0,
       rejectionReason: 'Barang Rusak/Reject — ayam memar dikembalikan ke Supplier',
       invoiceStatus: 'PAID' as const,
-      amountPaid: 1930000.0,
+      amountPaid: 1920000.0,
     },
     {
       kitchenIdx: 4, // Dapur E (05) - UNPAID
@@ -859,7 +861,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         supplier_id: supplier.id,
         item_id: item.id,
         procurement_date: SIM_DATE,
-        qty_procured_kg: gramsToKg(kgToGrams(input.qty_received_kg)),
+        qty_procured_kg: toWholeKg(input.qty_received_kg),
         supplier_actual_cost_per_kg: senToIdr(idrToSen(input.supplier_actual_cost_per_kg)),
         notes: input.notes?.trim() || `Batch pengadaan ${item.name} dari ${supplier.name}`,
         created_by: 'owner-1',
@@ -878,7 +880,9 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const batch = prev.batches.find((b) => b.id === input.supplier_batch_id);
       if (!batch) return prev;
 
-      const validAllocations = input.allocations.filter((a) => kgToGrams(a.qty_dispatched_kg) > 0n);
+      const validAllocations = input.allocations
+        .map((a) => ({ ...a, qty_dispatched_kg: toWholeKg(a.qty_dispatched_kg) }))
+        .filter((a) => a.qty_dispatched_kg > 0);
       if (validAllocations.length === 0) return prev;
 
       const nowIso = new Date().toISOString();
@@ -1031,7 +1035,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const reconciled = reconcileKitchenDeliveryItem({
         supplier_batch_id: targetItem.supplier_batch_id,
         qty_dispatched_kg: targetItem.qty_dispatched_kg,
-        qty_accepted_kg: input.qty_accepted_kg,
+        qty_accepted_kg: toWholeKg(input.qty_accepted_kg),
         supplier_actual_cost_snapshot: targetItem.supplier_actual_cost_snapshot,
         kitchen_unit_price_snapshot: targetItem.kitchen_unit_price_snapshot,
       });

@@ -46,8 +46,8 @@ export function Tab1SupplierBatches({ onAllocate }: { onAllocate: (batchId: stri
     e.preventDefault();
     const qty = Number(qtyKg);
     const cost = Number(costPerKg);
-    if (!Number.isFinite(qty) || qty <= 0) {
-      setFormError('Isi berat masuk lebih dari 0 kg.');
+    if (!Number.isInteger(qty) || qty <= 0) {
+      setFormError('Isi berat masuk dengan angka bulat lebih dari 0 kg.');
       return;
     }
     if (!Number.isFinite(cost) || cost <= 0) {
@@ -218,10 +218,10 @@ export function Tab1SupplierBatches({ onAllocate }: { onAllocate: (batchId: stri
               <input
                 id="in-qty"
                 type="number"
-                inputMode="decimal"
-                step="0.001"
-                min="0.001"
-                placeholder="0.000"
+                inputMode="numeric"
+                step="1"
+                min="1"
+                placeholder="0"
                 value={qtyKg}
                 onChange={(e) => setQtyKg(e.target.value)}
                 className="field-input text-right font-semibold tabular-nums"

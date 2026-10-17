@@ -114,6 +114,63 @@ export function courierProgress(stops: KitchenStop[]): CourierProgress {
   };
 }
 
+// ---------- Stage 7: honest weighed progress & anti-overwrite accept ----------
+
+export interface StopWeighedSummary {
+  weighed_count: number;
+  total_count: number;
+  /** Σ accepted kg of lines already weighed (pending lines are NOT counted). */
+  weighed_accepted_kg: number;
+  /** Σ dispatched kg of all lines on the card. */
+  total_dispatched_kg: number;
+}
+
+/** "Tertimbang: 1/2 barang (50 / 70 kg)" — never sums not-yet-weighed lines. */
+export function stopWeighedSummary(stop: Pick<KitchenStop, 'items'>): StopWeighedSummary {
+  let accepted = 0n;
+  let dispatched = 0n;
+  let weighed = 0;
+  for (const it of stop.items) {
+    dispatched += kgToGrams(it.qty_dispatched_kg);
+    if (isDeliveryDone(it.delivery_status)) {
+      weighed += 1;
+      accepted += kgToGrams(it.qty_accepted_kg);
+    }
+  }
+  return {
+    weighed_count: weighed,
+    total_count: stop.items.length,
+    weighed_accepted_kg: gramsToKg(accepted),
+    total_dispatched_kg: gramsToKg(dispatched),
+  };
+}
+
+export function formatWeighedSummary(s: StopWeighedSummary): string {
+  return `Tertimbang: ${s.weighed_count}/${s.total_count} barang (${formatKgNum(s.weighed_accepted_kg)} / ${formatKgNum(s.total_dispatched_kg)} kg)`;
+}
+
+export interface AcceptAsDispatchedLine {
+  delivery_item_id: string;
+  qty_accepted_kg: number;
+  rejection_reason: null;
+}
+
+/**
+ * "✓ Terima Sesuai Kirim (Barang Belum Timbang)": only lines still PENDING
+ * (not yet weighed) are accepted at their dispatched weight. Lines already
+ * weighed (e.g. Ayam 49 kg / susut 1 kg) are NEVER overwritten. Returns []
+ * when nothing is pending.
+ */
+export function buildAcceptPendingLines(stop: Pick<KitchenStop, 'items'>): AcceptAsDispatchedLine[] {
+  return stop.items
+    .filter((it) => !isDeliveryDone(it.delivery_status))
+    .map((it) => ({
+      delivery_item_id: it.delivery_item_id,
+      qty_accepted_kg: it.qty_dispatched_kg,
+      rejection_reason: null,
+    }));
+}
+
 // ---------- Shrinkage reason (quick chips + short note) ----------
 
 export const SHRINK_REASONS = ['Susut', 'Barang Rusak/Reject', 'Selisih Timbang'] as const;
@@ -163,14 +220,14 @@ export function buildKitchenBastWaText(stop: KitchenStop): string {
     if (shrinkG > 0n) {
       const { reason, note } = parseShrinkReason(it.rejection_reason);
       const why = [reason, note].filter(Boolean).join(' — ');
-      line += ` (susut ${formatKgNum(gramsToKg(shrinkG))} kg${why ? ` — ${why}` : ''})`;
+      line += ` (susut -${formatKgNum(gramsToKg(shrinkG))} kg${why ? ` — ${why}` : ''})`;
     }
     lines.push(line);
   });
   lines.push('');
   lines.push(`Total diterima: ${formatKgNum(stop.total_accepted_kg)} kg`);
   if (kgToGrams(stop.total_shrinkage_kg) > 0n) {
-    lines.push(`Total susut (dipotong dari tagihan supplier): ${formatKgNum(stop.total_shrinkage_kg)} kg`);
+    lines.push(`Total susut (dipotong dari tagihan supplier): -${formatKgNum(stop.total_shrinkage_kg)} kg`);
   }
   return lines.join('\n');
 }

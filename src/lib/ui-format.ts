@@ -11,7 +11,7 @@ import type {
   SettlementStatus,
   UserRole,
 } from '../types/mbg';
-import { gramsToKg, idrToSen, kgToGrams, senToIdr } from './financial-engine';
+import { gramsToKg, idrToSen, kgToGrams, senToIdr, toWholeKg } from './financial-engine';
 import { formatIdr } from './mbg-store';
 
 // ---------- Exact aggregation (grams / sen BigInt) ----------
@@ -36,11 +36,11 @@ export function addIdr(a: number, b: number): number {
   return senToIdr(idrToSen(a) + idrToSen(b));
 }
 
-/** Parse a user-typed kg string into a safe, gram-rounded number (invalid → 0). */
+/** Parse a user-typed kg string into a safe WHOLE-kg number (invalid / ≤ 0 → 0). */
 export function parseKgInput(raw: string | undefined): number {
   const n = Number(raw);
   if (!raw || !Number.isFinite(n) || n <= 0) return 0;
-  return gramsToKg(kgToGrams(n));
+  return toWholeKg(n);
 }
 
 // ---------- Display formatting ----------
@@ -50,9 +50,24 @@ export function formatRp(idr: number): string {
   return formatIdr(idr).replace(/\u00a0/g, ' ').replace(/,00$/, '');
 }
 
-/** `50.000` — kg number without unit, 3 decimals (gram precision). */
+/**
+ * `50` — kg number without unit as a WHOLE number (Stage 7 Invariant 1).
+ * Never prints decimals or thousand separators: in Indonesia `50.000 kg`
+ * reads as "fifty thousand kg".
+ */
 export function formatKgNum(kg: number): string {
-  return gramsToKg(kgToGrams(kg)).toFixed(3);
+  return String(toWholeKg(kg));
+}
+
+/** `50 kg`, `-3 kg` — whole-kg weight with unit. */
+export function formatKg(kg: number): string {
+  return `${formatKgNum(kg)} kg`;
+}
+
+/** Shrinkage shown as a deduction: 1 → `-1`, 0 → `0` (whole kg, no unit). */
+export function formatShrinkKgNum(shrinkKg: number): string {
+  const whole = toWholeKg(shrinkKg);
+  return whole > 0 ? `-${whole}` : String(whole);
 }
 
 /** "SPPG Dapur 01 - Tebet (Dapur A)" → "Tebet" */

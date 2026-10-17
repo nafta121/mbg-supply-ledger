@@ -2,9 +2,11 @@
 
 import React, { useState } from 'react';
 import {
+  buildAcceptPendingLines,
   buildKitchenBastWaText,
   composeShrinkReason,
   courierProgress,
+  formatWeighedSummary,
   groupCourierStops,
   isDeliveryDone,
   type KitchenStop,
@@ -12,9 +14,10 @@ import {
   SHRINK_REASONS,
   type ShrinkReason,
   stopTitle,
+  stopWeighedSummary,
   summarizeVehicleLoad,
 } from '../lib/courier-view';
-import { gramsToKg, kgToGrams } from '../lib/financial-engine';
+import { kgToGrams } from '../lib/financial-engine';
 import { type UpdateBastInput, useMbgStore } from '../lib/mbg-store';
 import { shareToWhatsApp } from '../lib/share';
 import { formatKgNum, shortKitchenName } from '../lib/ui-format';
@@ -26,17 +29,25 @@ type Filter = 'pending' | 'done';
 
 interface LineDraft {
   weightStr: string;
+  /** Typed value is a valid whole kg (≥ 0). `null` = empty or invalid. */
+  parsedKg: number | null;
   reason: ShrinkReason | null;
   note: string;
-  /** Live accepted grams for display (falls back to stored value while typing). */
-  liveAcceptedGrams: bigint;
-  /** Live shrinkage grams (dispatched − accepted). Negative = over dispatched. */
+  /** Live shrinkage grams (dispatched − typed accepted). Negative = over dispatched. */
   liveShrinkGrams: bigint;
 }
 
+/** Whole-kg input only (Stage 7 Invariant 1): "49" ok, "49.5" / "-1" / "" → null. */
+function parseWholeKgInput(raw: string): number | null {
+  const t = raw.trim();
+  if (!/^\d+$/.test(t)) return null;
+  return Number(t);
+}
+
 /**
- * Kitchen-centric courier view (Stage 6): 1 kartu = 1 dapur dengan semua barangnya.
+ * Kitchen-centric courier view (Stage 6/7): 1 kartu = 1 dapur dengan semua barangnya.
  * Reads ONLY the price-free courier projection (Invariant 5) — no rupiah on screen.
+ * Weighed lines are locked into a compact row; pending lines start with an EMPTY input.
  */
 export function Tab3FieldBast() {
   const { activeRole, getSafeCourierItems, saveKitchenBast } = useMbgStore();
@@ -49,6 +60,8 @@ export function Tab3FieldBast() {
   const [draftWeights, setDraftWeights] = useState<Record<string, string>>({});
   const [draftReasons, setDraftReasons] = useState<Record<string, ShrinkReason | null>>({});
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
+  /** Weighed lines the courier re-opened with "Ubah". */
+  const [editing, setEditing] = useState<Record<string, boolean>>({});
   const [toast, setToast] = useState<ToastState>(null);
   const [printKitchenId, setPrintKitchenId] = useState<string | null>(null);
 
@@ -76,21 +89,34 @@ export function Tab3FieldBast() {
 
   const getDraft = (it: SafeCourierBastItem): LineDraft => {
     const id = it.delivery_item_id;
+    const lineDone = isDeliveryDone(it.delivery_status);
     const stored = parseShrinkReason(it.rejection_reason);
-    const weightStr = draftWeights[id] ?? formatKgNum(it.qty_accepted_kg);
-    const parsed = Number(weightStr);
-    const liveAcceptedGrams =
-      weightStr.trim() !== '' && Number.isFinite(parsed) && parsed >= 0
-        ? kgToGrams(parsed)
-        : kgToGrams(it.qty_accepted_kg);
+    // Pending lines start EMPTY (never pre-filled with the dispatched weight).
+    const weightStr = draftWeights[id] ?? (lineDone ? formatKgNum(it.qty_accepted_kg) : '');
+    const parsedKg = parseWholeKgInput(weightStr);
+    const dispatchedGrams = kgToGrams(it.qty_dispatched_kg);
+    const liveShrinkGrams =
+      parsedKg !== null
+        ? dispatchedGrams - kgToGrams(parsedKg)
+        : lineDone
+          ? kgToGrams(it.qty_shrinkage_kg)
+          : 0n;
     return {
       weightStr,
+      parsedKg,
       reason: id in draftReasons ? draftReasons[id] ?? null : stored.reason,
       note: draftNotes[id] ?? stored.note,
-      liveAcceptedGrams,
-      liveShrinkGrams: kgToGrams(it.qty_dispatched_kg) - liveAcceptedGrams,
+      liveShrinkGrams,
     };
   };
+
+  /** Lines whose typed weight should be saved by "💾 Simpan Timbangan Dapur". */
+  const typedLines = (stop: KitchenStop) =>
+    stop.items.filter((it) => {
+      const id = it.delivery_item_id;
+      if (isDeliveryDone(it.delivery_status)) return !!editing[id];
+      return (draftWeights[id] ?? '').trim() !== '';
+    });
 
   const clearDrafts = (ids: string[]) => {
     const drop = <T,>(rec: Record<string, T>) => {
@@ -101,74 +127,68 @@ export function Tab3FieldBast() {
     setDraftWeights(drop);
     setDraftReasons(drop);
     setDraftNotes(drop);
+    setEditing(drop);
   };
 
   // ---------- Actions ----------
 
-  const acceptAll = (stop: KitchenStop) => {
+  /** Anti-timpa: only lines still "Perlu Ditimbang" without a typed value are accepted as dispatched. */
+  const acceptPending = (stop: KitchenStop) => {
     if (!canEdit) return;
-    const targets = stop.items.filter((it) => !isDeliveryDone(it.delivery_status));
-    const lines: UpdateBastInput[] = (targets.length > 0 ? targets : stop.items).map((it) => ({
-      delivery_item_id: it.delivery_item_id,
-      qty_accepted_kg: it.qty_dispatched_kg,
-      rejection_reason: null,
-    }));
-    saveKitchenBast(lines);
-    clearDrafts(lines.map((l) => l.delivery_item_id));
-    setToast({
-      kind: 'ok',
-      text: `${stopTitle(stop)}: ${lines.length} barang diterima 100%. BAST tersimpan.`,
-    });
-  };
-
-  const saveStop = (stop: KitchenStop) => {
-    if (!canEdit) return;
-    const lines: UpdateBastInput[] = [];
-    let acceptedTotal = 0n;
-    let shrinkTotal = 0n;
-
-    for (const it of stop.items) {
-      const d = getDraft(it);
-      const val = Number(d.weightStr);
-      if (d.weightStr.trim() === '' || !Number.isFinite(val) || val < 0) {
-        setToast({ kind: 'error', text: `${it.item_name}: isi berat diterima dengan benar.` });
-        return;
-      }
-      const acceptedGrams = kgToGrams(val);
-      const dispatchedGrams = kgToGrams(it.qty_dispatched_kg);
-      if (acceptedGrams > dispatchedGrams) {
-        setToast({ kind: 'error', text: `${it.item_name}: berat diterima melebihi berat kirim.` });
-        return;
-      }
-      const shrinkGrams = dispatchedGrams - acceptedGrams;
-      const reasonText = shrinkGrams > 0n ? composeShrinkReason(d.reason ?? 'Susut', d.note) : null;
-      acceptedTotal += acceptedGrams;
-      shrinkTotal += shrinkGrams;
-
-      const changed =
-        !isDeliveryDone(it.delivery_status) ||
-        acceptedGrams !== kgToGrams(it.qty_accepted_kg) ||
-        (shrinkGrams > 0n && reasonText !== it.rejection_reason);
-      if (changed) {
-        lines.push({
-          delivery_item_id: it.delivery_item_id,
-          qty_accepted_kg: gramsToKg(acceptedGrams),
-          rejection_reason: reasonText,
-        });
-      }
-    }
-
+    const typedIds = new Set(typedLines(stop).map((it) => it.delivery_item_id));
+    const lines = buildAcceptPendingLines(stop).filter((l) => !typedIds.has(l.delivery_item_id));
     if (lines.length === 0) {
-      setToast({ kind: 'ok', text: `${stopTitle(stop)}: tidak ada perubahan timbangan.` });
+      setToast({ kind: 'error', text: `${stopTitle(stop)}: tidak ada barang yang belum ditimbang.` });
       return;
     }
     saveKitchenBast(lines);
     clearDrafts(lines.map((l) => l.delivery_item_id));
     setToast({
       kind: 'ok',
+      text: `${stopTitle(stop)}: ${lines.length} barang diterima sesuai kirim. Barang yang sudah ditimbang tidak diubah.`,
+    });
+  };
+
+  const saveStop = (stop: KitchenStop) => {
+    if (!canEdit) return;
+    const targets = typedLines(stop);
+    if (targets.length === 0) {
+      setToast({ kind: 'error', text: `${stopTitle(stop)}: isi berat diterima dulu, atau ketuk ✓ Pas.` });
+      return;
+    }
+
+    const lines: UpdateBastInput[] = [];
+    let acceptedTotal = 0;
+    let shrinkTotal = 0;
+
+    for (const it of targets) {
+      const d = getDraft(it);
+      if (d.parsedKg === null) {
+        setToast({ kind: 'error', text: `${it.item_name}: isi berat diterima dengan angka bulat (kg).` });
+        return;
+      }
+      const dispatchedKg = Number(formatKgNum(it.qty_dispatched_kg));
+      if (d.parsedKg > dispatchedKg) {
+        setToast({ kind: 'error', text: `${it.item_name}: berat diterima melebihi berat kirim.` });
+        return;
+      }
+      const shrinkKg = dispatchedKg - d.parsedKg;
+      acceptedTotal += d.parsedKg;
+      shrinkTotal += shrinkKg;
+      lines.push({
+        delivery_item_id: it.delivery_item_id,
+        qty_accepted_kg: d.parsedKg,
+        rejection_reason: shrinkKg > 0 ? composeShrinkReason(d.reason ?? 'Susut', d.note) : null,
+      });
+    }
+
+    saveKitchenBast(lines);
+    clearDrafts(lines.map((l) => l.delivery_item_id));
+    setToast({
+      kind: 'ok',
       text:
-        `${stopTitle(stop)}: diterima ${formatKgNum(gramsToKg(acceptedTotal))} kg` +
-        (shrinkTotal > 0n ? `, susut ${formatKgNum(gramsToKg(shrinkTotal))} kg.` : ' (utuh).'),
+        `${stopTitle(stop)}: ${lines.length} barang tersimpan, diterima ${acceptedTotal} kg` +
+        (shrinkTotal > 0 ? `, susut -${shrinkTotal} kg.` : ' (utuh).'),
     });
   };
 
@@ -284,128 +304,179 @@ export function Tab3FieldBast() {
                 <Badge tone={stop.done ? 'green' : 'amber'}>{stop.done ? 'Selesai' : 'Belum Selesai'}</Badge>
               </header>
 
-              <ul className="divide-y divide-slate-100 px-3">
+              <ul className="space-y-2 px-3 py-2.5">
                 {stop.items.map((it) => {
                   const id = it.delivery_item_id;
                   const d = getDraft(it);
                   const lineDone = isDeliveryDone(it.delivery_status);
+                  const inputOpen = canEdit && (!lineDone || !!editing[id]);
                   const over = d.liveShrinkGrams < 0n;
-                  const shrinkGrams = canEdit ? d.liveShrinkGrams : kgToGrams(it.qty_shrinkage_kg);
+                  const shrinkKgText = formatKgNum(Number(d.liveShrinkGrams) / 1000);
                   const weightId = `bast-w-${id}`;
                   const noteId = `bast-n-${id}`;
+                  const dispatchedText = formatKgNum(it.qty_dispatched_kg);
 
+                  // ✓ Tertimbang → 1 baris ringkas terkunci (tanpa input / tombol 100%).
+                  if (lineDone && !inputOpen) {
+                    const storedShrink = kgToGrams(it.qty_shrinkage_kg);
+                    return (
+                      <li
+                        key={id}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-slate-50 px-3 py-2"
+                      >
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span className="truncate text-sm font-semibold text-slate-900">{it.item_name}</span>
+                          {storedShrink > 0n ? (
+                            <Badge tone="red">Susut -{formatKgNum(it.qty_shrinkage_kg)} kg</Badge>
+                          ) : (
+                            <Badge tone="green">✓ Tertimbang</Badge>
+                          )}
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <span className="text-sm font-bold tabular-nums text-slate-900">
+                            {formatKgNum(it.qty_accepted_kg)} / {dispatchedText} kg
+                          </span>
+                          {canEdit && (
+                            <button
+                              type="button"
+                              onClick={() => setEditing((p) => ({ ...p, [id]: true }))}
+                              aria-label={`Ubah timbangan ${it.item_name}`}
+                              className="min-h-[32px] rounded-md px-1.5 text-xs font-semibold text-emerald-700 underline-offset-2 hover:underline"
+                            >
+                              Ubah
+                            </button>
+                          )}
+                        </div>
+                      </li>
+                    );
+                  }
+
+                  // Perlu Ditimbang (viewer tanpa hak ubah): hanya info kirim.
+                  if (!inputOpen) {
+                    return (
+                      <li
+                        key={id}
+                        className="flex items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 py-2"
+                      >
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span className="truncate text-sm font-semibold text-slate-900">{it.item_name}</span>
+                          <Badge tone="amber">Perlu Ditimbang</Badge>
+                        </div>
+                        <span className="shrink-0 text-sm font-bold tabular-nums text-slate-900">
+                          Kirim {dispatchedText} kg
+                        </span>
+                      </li>
+                    );
+                  }
+
+                  // Input terbuka: barang PENDING (input kosong) atau barang tertimbang yang di-Ubah.
                   return (
-                    <li key={id} className="space-y-2 py-2.5">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm font-semibold text-slate-900">{it.item_name}</p>
-                          <p className="truncate font-mono text-[11px] text-slate-500">{it.batch_code}</p>
+                    <li
+                      key={id}
+                      className={`space-y-2 rounded-lg px-3 py-2.5 ring-1 ring-inset ${
+                        lineDone ? 'bg-white ring-slate-300' : 'bg-amber-50/60 ring-amber-200'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+                          <span className="truncate text-sm font-semibold text-slate-900">{it.item_name}</span>
+                          {lineDone ? (
+                            <Badge tone="slate">Ubah Timbangan</Badge>
+                          ) : (
+                            <Badge tone="amber">Perlu Ditimbang</Badge>
+                          )}
                         </div>
                         {lineDone && (
-                          <span className="shrink-0 text-[11px] font-semibold text-emerald-700">✓ Tertimbang</span>
+                          <button
+                            type="button"
+                            onClick={() => clearDrafts([id])}
+                            className="min-h-[32px] shrink-0 rounded-md px-1.5 text-xs font-semibold text-slate-600 underline-offset-2 hover:underline"
+                          >
+                            Batal
+                          </button>
                         )}
                       </div>
 
-                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.5fr)] items-end gap-2">
-                        <div className="rounded-lg bg-slate-100 px-2.5 py-1.5">
+                      <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.8fr)] items-end gap-2">
+                        <div className="rounded-lg bg-white px-2.5 py-1.5 ring-1 ring-inset ring-slate-200">
                           <div className="text-[11px] font-medium text-slate-600">Kirim</div>
                           <div className="text-base font-bold tabular-nums text-slate-900">
-                            {formatKgNum(it.qty_dispatched_kg)} <span className="text-xs font-semibold">kg</span>
+                            {dispatchedText} <span className="text-xs font-semibold">kg</span>
                           </div>
                         </div>
-                        {canEdit ? (
-                          <div>
-                            <label htmlFor={weightId} className="block text-[11px] font-medium text-slate-600">
-                              Diterima (kg)
-                            </label>
-                            <div className="mt-0.5 flex gap-1.5">
-                              <input
-                                id={weightId}
-                                type="number"
-                                inputMode="decimal"
-                                step="0.001"
-                                min="0"
-                                max={it.qty_dispatched_kg}
-                                value={d.weightStr}
-                                onChange={(e) => setDraftWeights((p) => ({ ...p, [id]: e.target.value }))}
-                                className={`h-11 w-full min-w-0 rounded-lg border-2 px-2.5 text-right text-base font-bold tabular-nums text-slate-900 focus:border-emerald-600 ${
-                                  over ? 'border-rose-500' : 'border-slate-300'
-                                }`}
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  setDraftWeights((p) => ({ ...p, [id]: formatKgNum(it.qty_dispatched_kg) }))
-                                }
-                                aria-label={`Isi 100% ${it.item_name}`}
-                                className="h-11 shrink-0 rounded-lg border border-emerald-600 px-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50"
-                              >
-                                100%
-                              </button>
-                            </div>
+                        <div>
+                          <label htmlFor={weightId} className="block text-[11px] font-medium text-slate-600">
+                            Diterima (kg)
+                          </label>
+                          <div className="mt-0.5 flex gap-1.5">
+                            <input
+                              id={weightId}
+                              type="number"
+                              inputMode="numeric"
+                              step="1"
+                              min="0"
+                              max={dispatchedText}
+                              placeholder="0"
+                              value={d.weightStr}
+                              onChange={(e) => setDraftWeights((p) => ({ ...p, [id]: e.target.value }))}
+                              className={`h-11 w-full min-w-0 rounded-lg border-2 bg-white px-2.5 text-right text-base font-bold tabular-nums text-slate-900 focus:border-emerald-600 ${
+                                over ? 'border-rose-500' : 'border-slate-300'
+                              }`}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setDraftWeights((p) => ({ ...p, [id]: dispatchedText }))}
+                              aria-label={`Isi sesuai kirim ${dispatchedText} kg untuk ${it.item_name}`}
+                              className="h-11 shrink-0 whitespace-nowrap rounded-lg border border-emerald-600 bg-white px-2 text-xs font-bold text-emerald-700 transition hover:bg-emerald-50"
+                            >
+                              ✓ Pas ({dispatchedText} kg)
+                            </button>
                           </div>
-                        ) : (
-                          <div className="rounded-lg bg-slate-100 px-2.5 py-1.5">
-                            <div className="text-[11px] font-medium text-slate-600">Diterima</div>
-                            <div className="text-base font-bold tabular-nums text-slate-900">
-                              {formatKgNum(it.qty_accepted_kg)} <span className="text-xs font-semibold">kg</span>
-                            </div>
-                          </div>
-                        )}
+                        </div>
                       </div>
 
-                      {canEdit && over && (
+                      {over && (
                         <p role="alert" className="text-xs font-semibold text-rose-700">
                           Melebihi berat kirim.
                         </p>
                       )}
 
-                      {shrinkGrams > 0n && (
+                      {d.liveShrinkGrams > 0n && (
                         <div className="space-y-1.5">
                           <div className="rounded-md bg-rose-50 px-2.5 py-1.5 text-xs font-bold tabular-nums text-rose-700 ring-1 ring-inset ring-rose-200">
-                            Susut -{formatKgNum(gramsToKg(shrinkGrams))} kg (Potong Tagihan Supplier)
+                            Susut -{shrinkKgText} kg (Potong Tagihan Supplier)
                           </div>
-                          {canEdit ? (
-                            <>
-                              <div role="group" aria-label={`Alasan susut ${it.item_name}`} className="flex flex-wrap gap-1.5">
-                                {SHRINK_REASONS.map((r) => {
-                                  const active = (d.reason ?? 'Susut') === r;
-                                  return (
-                                    <button
-                                      key={r}
-                                      type="button"
-                                      aria-pressed={active}
-                                      onClick={() => setDraftReasons((p) => ({ ...p, [id]: r }))}
-                                      className={`min-h-[32px] rounded-full px-2.5 text-[11px] font-semibold transition ${
-                                        active
-                                          ? 'bg-rose-600 text-white'
-                                          : 'border border-rose-300 bg-white text-rose-700 hover:bg-rose-50'
-                                      }`}
-                                    >
-                                      {r}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              <label htmlFor={noteId} className="sr-only">
-                                Catatan susut {it.item_name}
-                              </label>
-                              <input
-                                id={noteId}
-                                type="text"
-                                placeholder="Catatan singkat (mis. memar, susut air)"
-                                value={d.note}
-                                onChange={(e) => setDraftNotes((p) => ({ ...p, [id]: e.target.value }))}
-                                className="field-input min-h-[40px]"
-                              />
-                            </>
-                          ) : (
-                            <p className="flex flex-wrap items-center gap-1 text-xs leading-snug text-slate-700">
-                              <span className="font-semibold">Alasan:</span>
-                              {d.reason && <Badge tone="red">{d.reason}</Badge>}
-                              <span>{d.note || (d.reason ? '' : 'Tidak ada keterangan susut.')}</span>
-                            </p>
-                          )}
+                          <div role="group" aria-label={`Alasan susut ${it.item_name}`} className="flex flex-wrap gap-1.5">
+                            {SHRINK_REASONS.map((r) => {
+                              const active = (d.reason ?? 'Susut') === r;
+                              return (
+                                <button
+                                  key={r}
+                                  type="button"
+                                  aria-pressed={active}
+                                  onClick={() => setDraftReasons((p) => ({ ...p, [id]: r }))}
+                                  className={`min-h-[32px] rounded-full px-2.5 text-[11px] font-semibold transition ${
+                                    active
+                                      ? 'bg-rose-600 text-white'
+                                      : 'border border-rose-300 bg-white text-rose-700 hover:bg-rose-50'
+                                  }`}
+                                >
+                                  {r}
+                                </button>
+                              );
+                            })}
+                          </div>
+                          <label htmlFor={noteId} className="sr-only">
+                            Catatan susut {it.item_name}
+                          </label>
+                          <input
+                            id={noteId}
+                            type="text"
+                            placeholder="Catatan singkat (mis. memar, susut air)"
+                            value={d.note}
+                            onChange={(e) => setDraftNotes((p) => ({ ...p, [id]: e.target.value }))}
+                            className="field-input min-h-[40px]"
+                          />
                         </div>
                       )}
                     </li>
@@ -413,55 +484,62 @@ export function Tab3FieldBast() {
                 })}
               </ul>
 
-              <footer className="space-y-2 border-t border-slate-200 bg-white px-3 py-2.5">
-                <div className="flex items-center justify-between text-xs text-slate-600">
-                  <span>Total diterima</span>
-                  <span className="font-bold tabular-nums text-slate-900">
-                    {formatKgNum(stop.total_accepted_kg)} / {formatKgNum(stop.total_dispatched_kg)} kg
-                  </span>
-                </div>
+              {(() => {
+                const summary = stopWeighedSummary(stop);
+                const hasTyped = canEdit && typedLines(stop).length > 0;
+                const hasPending = canEdit && stop.pending_count > 0;
+                return (
+                  <footer className="space-y-2 border-t border-slate-200 bg-white px-3 py-2.5">
+                    <p className="text-xs font-semibold tabular-nums text-slate-700">
+                      {formatWeighedSummary(summary)}
+                    </p>
 
-                {canEdit && !stop.done && (
-                  <div className="grid grid-cols-1 gap-2">
-                    <button type="button" onClick={() => acceptAll(stop)} className="btn-primary min-h-[48px] w-full">
-                      ✓ Terima 100% Semua Barang
-                    </button>
-                    <button type="button" onClick={() => saveStop(stop)} className="btn-secondary min-h-[44px] w-full">
-                      Simpan Timbangan Dapur
-                    </button>
-                  </div>
-                )}
+                    {(hasPending || hasTyped) && (
+                      <div className="grid grid-cols-1 gap-2">
+                        {hasTyped && (
+                          <button
+                            type="button"
+                            onClick={() => saveStop(stop)}
+                            className="btn-primary min-h-[48px] w-full"
+                          >
+                            💾 Simpan Timbangan Dapur
+                          </button>
+                        )}
+                        {hasPending && (
+                          <button
+                            type="button"
+                            onClick={() => acceptPending(stop)}
+                            className={`${hasTyped ? 'btn-secondary' : 'btn-primary'} min-h-[48px] w-full text-center leading-tight`}
+                          >
+                            ✓ Terima Sesuai Kirim (Barang Belum Timbang)
+                          </button>
+                        )}
+                      </div>
+                    )}
 
-                {stop.done && (
-                  <div className={`grid gap-2 ${canEdit ? 'grid-cols-2' : 'grid-cols-1'}`}>
-                    <button
-                      type="button"
-                      onClick={() => openBast(stop)}
-                      className="btn-secondary min-h-[44px] px-1 text-xs"
-                    >
-                      📄 Bukti BAST
-                    </button>
-                    {canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => shareBast(stop)}
-                        className="btn-secondary min-h-[44px] px-1 text-xs"
-                      >
-                        💬 WA BAST ke PIC
-                      </button>
+                    {stop.done && (
+                      <div className={`grid gap-2 ${canEdit ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                        <button
+                          type="button"
+                          onClick={() => openBast(stop)}
+                          className="btn-secondary min-h-[44px] px-1 text-xs"
+                        >
+                          📄 Bukti BAST
+                        </button>
+                        {canEdit && (
+                          <button
+                            type="button"
+                            onClick={() => shareBast(stop)}
+                            className="btn-secondary min-h-[44px] px-1 text-xs"
+                          >
+                            💬 WA BAST ke PIC
+                          </button>
+                        )}
+                      </div>
                     )}
-                    {canEdit && (
-                      <button
-                        type="button"
-                        onClick={() => saveStop(stop)}
-                        className="col-span-2 min-h-[40px] rounded-lg text-xs font-semibold text-slate-600 underline-offset-2 hover:underline"
-                      >
-                        Simpan Koreksi Timbangan
-                      </button>
-                    )}
-                  </div>
-                )}
-              </footer>
+                  </footer>
+                );
+              })()}
             </Card>
           ))}
         </div>

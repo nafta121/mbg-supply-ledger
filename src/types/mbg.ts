@@ -2,7 +2,7 @@
  * Strict TypeScript Domain Definitions for MBG B2B Supply Chain, Invoicing & Profit-Sharing Ledger
  * Mirrors the 12 core PostgreSQL tables and security-barrier view `v_safe_delivery_items_bast`.
  *
- * Invariant 1: All weights are in base unit `kg` (precision to 0.001 kg = 1 gram)
+ * Invariant 1: All weights are WHOLE kilograms (`kg`, no decimals — e.g. 50, 49, -3)
  *              and all monetary values are in IDR (`NUMERIC(15,2)`).
  */
 

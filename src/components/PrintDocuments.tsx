@@ -7,7 +7,7 @@ import {
   supplierShrinkBreakdown,
 } from '../lib/courier-view';
 import { formatIdr, formatKg, useMbgStore } from '../lib/mbg-store';
-import { formatKgNum, INVOICE_LABEL, shortKitchenName } from '../lib/ui-format';
+import { formatKgNum, formatShrinkKgNum, INVOICE_LABEL, shortKitchenName } from '../lib/ui-format';
 
 export type PrintDocMode =
   | { type: 'INVOICE'; invoiceId: string }
@@ -68,7 +68,7 @@ export function KitchenBastDocument({ stop }: { stop: KitchenStop }) {
                 </td>
                 <td className={`${td} text-right font-mono`}>{formatKgNum(it.qty_dispatched_kg)}</td>
                 <td className={`${td} text-right font-mono font-bold`}>{formatKgNum(it.qty_accepted_kg)}</td>
-                <td className={`${td} text-right font-mono`}>{formatKgNum(it.qty_shrinkage_kg)}</td>
+                <td className={`${td} text-right font-mono`}>{formatShrinkKgNum(it.qty_shrinkage_kg)}</td>
               </tr>
             );
           })}
@@ -76,7 +76,7 @@ export function KitchenBastDocument({ stop }: { stop: KitchenStop }) {
             <td className={td}>Total</td>
             <td className={`${td} text-right font-mono`}>{formatKgNum(stop.total_dispatched_kg)}</td>
             <td className={`${td} text-right font-mono`}>{formatKgNum(stop.total_accepted_kg)}</td>
-            <td className={`${td} text-right font-mono`}>{formatKgNum(stop.total_shrinkage_kg)}</td>
+            <td className={`${td} text-right font-mono`}>{formatShrinkKgNum(stop.total_shrinkage_kg)}</td>
           </tr>
         </tbody>
       </table>
@@ -231,7 +231,7 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
               <td className={`${td} text-right font-mono font-bold`}>
                 {formatKg(ditem?.qty_accepted_kg ?? 0)}
               </td>
-              <td className={`${td} text-right font-mono`}>{formatKg(ditem?.qty_shrinkage_kg ?? 0)}</td>
+              <td className={`${td} text-right font-mono`}>{formatShrinkKgNum(ditem?.qty_shrinkage_kg ?? 0)} kg</td>
             </tr>
           </tbody>
         </table>
@@ -339,7 +339,7 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
             {shrinkLines.map((l) => (
               <tr key={l.id}>
                 <td className={td}>{l.kitchen}</td>
-                <td className={`${td} text-right font-mono`}>{formatKgNum(l.kg)}</td>
+                <td className={`${td} text-right font-mono`}>{formatShrinkKgNum(l.kg)}</td>
                 <td className={td}>{l.why}</td>
               </tr>
             ))}

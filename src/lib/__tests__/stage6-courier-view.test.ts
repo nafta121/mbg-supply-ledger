@@ -98,9 +98,9 @@ describe('Stage 6 — shrink reasons', () => {
     const seed = createInitialSeedState();
     const supA = supplierShrinkBreakdown('batch-sup-a-ayam', seed.deliveryItems, seed.deliveries, seed.kitchens);
     expect(supA).toHaveLength(1);
-    expect(supA[0]).toMatchObject({ kitchen_code: 'DPR-02', kg: 1.25, reason: 'Susut' });
+    expect(supA[0]).toMatchObject({ kitchen_code: 'DPR-02', kg: 1, reason: 'Susut' });
     const supB = supplierShrinkBreakdown('batch-sup-b-ayam', seed.deliveryItems, seed.deliveries, seed.kitchens);
-    expect(supB[0]).toMatchObject({ kitchen_code: 'DPR-04', kg: 1.75, reason: 'Barang Rusak/Reject' });
+    expect(supB[0]).toMatchObject({ kitchen_code: 'DPR-04', kg: 2, reason: 'Barang Rusak/Reject' });
   });
 
   it('WA BAST recap lists every item in kg and contains no rupiah', () => {
@@ -108,7 +108,8 @@ describe('Stage 6 — shrink reasons', () => {
     const text = buildKitchenBastWaText(stops.find((s) => s.kitchen_code === 'DPR-02')!);
     expect(text).toContain('Daging Ayam Fillet');
     expect(text).toContain('Telur Ayam Negeri');
-    expect(text).toContain('susut 1.250 kg — Susut');
+    expect(text).toContain('diterima 49 kg (susut -1 kg — Susut');
+    expect(text).not.toMatch(/\d\.\d{3} kg/);
     expect(text).not.toMatch(/Rp|IDR/);
   });
 });
