@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest';
+import { summarizeOrderDraft } from '../order-engine';
 import {
   formatKg,
   formatKgNum,
   formatRp,
+  getJakartaTodayYmd,
   INVOICE_LABEL,
   parseAcceptedKgInput,
   parseKgInput,
+  parseRpInput,
   PAYOUT_LABEL,
   ROLE_LABEL,
   shortKitchenName,
@@ -54,6 +57,41 @@ describe('ui-format helpers', () => {
     expect(parseAcceptedKgInput('')).toBeNull();
   });
 
+  it('separates parseKgInput vs parseRpInput and calculates Wortel 13.5 kg x Rp 9.500 = Rp 128.250 (margin Rp 27.000)', () => {
+    expect(parseKgInput('13.5')).toBe(13.5);
+    expect(parseKgInput('13,5')).toBe(13.5);
+    expect(parseRpInput('9.500')).toBe(9500);
+    expect(parseRpInput('2.000')).toBe(2000);
+
+    const qty = parseKgInput('13.5');
+    const price = parseRpInput('9.500');
+    const margin = parseRpInput('2.000');
+    const summary = summarizeOrderDraft([
+      {
+        item_id: 'item-wortel',
+        qty_ordered_kg: qty,
+        kitchen_unit_price_rp: price,
+        margin_per_kg_rp: margin,
+      },
+    ]);
+
+    expect(summary).toEqual({
+      item_count: 1,
+      total_kg: 13.5,
+      estimated_invoice: 128250,
+      estimated_margin: 27000,
+    });
+    expect(
+      `Total Barang: ${summary.item_count} jenis (${formatKgNum(summary.total_kg)} kg) • Estimasi Tagihan Dapur: ${formatRp(summary.estimated_invoice)}`
+    ).toBe('Total Barang: 1 jenis (13,5 kg) • Estimasi Tagihan Dapur: Rp 128.250');
+    expect(formatRp(summary.estimated_margin)).toBe('Rp 27.000');
+  });
+
+  it('formats current date in Asia/Jakarta (WIB) as YYYY-MM-DD', () => {
+    expect(getJakartaTodayYmd(new Date('2026-10-17T20:00:00.000Z'))).toBe('2026-10-18');
+    expect(getJakartaTodayYmd()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
   it('maps technical statuses to operational labels', () => {
     expect(PAYOUT_LABEL.LOCKED_UNPAID).toBe('Menunggu Dapur Bayar');
     expect(PAYOUT_LABEL.AVAILABLE_FOR_PAYOUT).toBe('Siap Dicairkan');
@@ -70,3 +108,4 @@ describe('ui-format helpers', () => {
     expect(toWaNumber('0812-9000-0001')).toBe('6281290000001');
   });
 });
+

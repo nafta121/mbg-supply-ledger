@@ -389,10 +389,23 @@ export function createInitialSeedState(): MbgState {
 const MbgContext = createContext<MbgContextValue | null>(null);
 
 let runtimeSeq = 0;
+function jakartaTodayYmd(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
+  const m = parts.find((p) => p.type === 'month')?.value ?? '01';
+  const d = parts.find((p) => p.type === 'day')?.value ?? '01';
+  return `${y}-${m}-${d}`;
+}
+
 function runtimeCtx(): EngineCtx {
   return {
     nowIso: new Date().toISOString(),
-    today: BUSINESS_DATE,
+    today: jakartaTodayYmd(),
     uid: (prefix) => `${prefix}-${Date.now().toString(36)}-${(runtimeSeq += 1)}`,
   };
 }

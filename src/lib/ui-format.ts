@@ -38,21 +38,22 @@ export function addIdr(a: number, b: number): number {
 }
 
 /**
- * Parse a user-typed kg string (with `,` or `.` decimal separator, e.g. `"12,5"`, `"12.5"`, `"0,2"`)
- * into a 3-decimal number (`Math.round(val * 1000) / 1000`).
- * Invalid or `<= 0` → `0`.
+ * Parse a user-typed kg string or number (where BOTH `,` and `.` are decimal separators,
+ * e.g. `"13.5"` -> `13.5`, `"13,5"` -> `13.5`, `"0.2"` -> `0.2`, `"0,2"` -> `0.2`, `"35"` -> `35`)
+ * into a 3-decimal number (`Math.round(num * 1000) / 1000`).
+ * Never share this parser with Rupiah inputs.
  */
 export function parseKgInput(raw: string | number | null | undefined): number {
   if (raw === null || raw === undefined) return 0;
-  if (typeof raw === 'number') {
-    if (!Number.isFinite(raw) || raw <= 0) return 0;
-    return Math.round(raw * 1000) / 1000;
-  }
-  const cleaned = raw.trim().replace(/\s*kg$/i, '').trim().replace(/,/g, '.');
-  if (!cleaned || !/^[+]?(\d+(\.\d*)?|\.\d+)$/.test(cleaned)) return 0;
-  const val = Number(cleaned);
-  if (!Number.isFinite(val) || val <= 0) return 0;
-  return Math.round(val * 1000) / 1000;
+  if (typeof raw === 'number') return Number.isFinite(raw) && raw > 0 ? Math.round(raw * 1000) / 1000 : 0;
+  const trimmed = String(raw).trim();
+  if (trimmed.startsWith('-')) return 0;
+  const cleaned = trimmed.replace(/,/g, '.').replace(/[^0-9.]/g, '');
+  if (!cleaned) return 0;
+  const parts = cleaned.split('.');
+  const normalized = parts.length > 1 ? `${parts[0] || '0'}.${parts.slice(1).join('')}` : (parts[0] ?? '');
+  const num = Number.parseFloat(normalized);
+  return Number.isFinite(num) && num > 0 ? Math.round(num * 1000) / 1000 : 0;
 }
 
 /**
@@ -72,10 +73,30 @@ export function parseWholeKgInput(raw: string): number | null {
   return parseAcceptedKgInput(raw);
 }
 
-/** Typed rupiah text → whole rupiah: "14.000" / "Rp 14.000" → 14000, "" → 0. */
-export function parseRpInput(raw: string | null | undefined): number {
-  const digits = (raw ?? '').replace(/\D/g, '');
-  return digits ? Number(digits) : 0;
+/**
+ * Parse Rupiah input (`Harga Dapur/kg` like `"9.500"` or `Margin Kita/kg` like `"2.000"`),
+ * where `.` is an Indonesian thousands separator, NOT a decimal point.
+ * `"9.500"` or `"9500"` -> `9500`; `"2.000"` or `"2000"` -> `2000`.
+ */
+export function parseRpInput(raw: string | number | null | undefined): number {
+  if (raw === null || raw === undefined) return 0;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? Math.round(raw) : 0;
+  const digitsOnly = String(raw).replace(/[^0-9]/g, '');
+  return digitsOnly ? Number.parseInt(digitsOnly, 10) : 0;
+}
+
+/** Returns today's date (`YYYY-MM-DD`) in Indonesian Western Time (`Asia/Jakarta` / WIB). */
+export function getJakartaTodayYmd(now: Date = new Date()): string {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Jakarta',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(now);
+  const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
+  const m = parts.find((p) => p.type === 'month')?.value ?? '01';
+  const d = parts.find((p) => p.type === 'day')?.value ?? '01';
+  return `${y}-${m}-${d}`;
 }
 
 /** 14000 → "14.000" (thousand dots, no "Rp", for editable rupiah inputs). */

@@ -1,13 +1,14 @@
 'use client';
 
 import React, { useRef, useState } from 'react';
-import { BUSINESS_DATE, type OrderLineInput, useMbgStore } from '../lib/mbg-store';
+import { type OrderLineInput, useMbgStore } from '../lib/mbg-store';
 import { findOpenOrder, linesForDelivery, orderProgress, summarizeOrderDraft } from '../lib/order-engine';
 import {
   formatKg,
   formatKgNum,
   formatRp,
   formatThousands,
+  getJakartaTodayYmd,
   ORDER_PROGRESS_LABEL,
   orderProgressTone,
   parseKgInput,
@@ -60,9 +61,10 @@ export function Tab1KitchenOrders() {
 
   if (activeRole !== 'OWNER_ADMIN' && activeRole !== 'FINANCE') return <NoAccess />;
 
+  const todayYmd = getJakartaTodayYmd();
   const data = { deliveries, deliveryItems, invoices };
   const kitchen = kitchens.find((k) => k.id === kitchenId) ?? null;
-  const openOrder = kitchen ? findOpenOrder(data, kitchen.id, BUSINESS_DATE) : undefined;
+  const openOrder = kitchen ? (findOpenOrder(data, kitchen.id, todayYmd) ?? findOpenOrder(data, kitchen.id)) : undefined;
   const openItemIds = new Set(openOrder ? linesForDelivery(data, openOrder.id).map((l) => l.item_id) : []);
 
   const q = kitchenQuery.trim().toLowerCase();
@@ -76,7 +78,11 @@ export function Tab1KitchenOrders() {
     kitchen_unit_price_rp: parseRpInput(l.priceStr),
     margin_per_kg_rp: parseRpInput(l.marginStr),
   }));
-  const summary = summarizeOrderDraft(orderLines);
+  const previewLines: OrderLineInput[] = orderLines.map((l, idx) => ({
+    ...l,
+    item_id: l.item_id || (l.qty_ordered_kg > 0 ? `draft-${idx}` : ''),
+  }));
+  const summary = summarizeOrderDraft(previewLines);
 
   // ---------- Draft actions ----------
 
@@ -85,12 +91,26 @@ export function Tab1KitchenOrders() {
 
   const pickItem = (key: number, itemId: string) => {
     const it = items.find((i) => i.id === itemId);
-    patchLine(key, {
-      item_id: itemId,
-      // Auto-fill default prices so Admin does not retype them (still editable).
-      priceStr: it ? formatThousands(it.default_kitchen_price_per_kg) : '',
-      marginStr: it ? formatThousands(it.default_margin_per_kg) : '',
-    });
+    setLines((prev) =>
+      prev.map((l) => {
+        if (l.key !== key) return l;
+        return {
+          ...l,
+          item_id: itemId,
+          // Auto-fill default prices when > 0 so Admin does not retype them (still editable).
+          priceStr: it
+            ? it.default_kitchen_price_per_kg > 0
+              ? formatThousands(it.default_kitchen_price_per_kg)
+              : l.priceStr
+            : '',
+          marginStr: it
+            ? it.default_margin_per_kg > 0
+              ? formatThousands(it.default_margin_per_kg)
+              : l.marginStr
+            : '',
+        };
+      })
+    );
   };
 
   const resetForm = () => {
@@ -131,7 +151,6 @@ export function Tab1KitchenOrders() {
   // ---------- Active order list ----------
 
   const todayOrders = deliveries
-    .filter((d) => d.delivery_date === BUSINESS_DATE)
     .map((d) => ({
       delivery: d,
       kitchen: kitchens.find((k) => k.id === d.kitchen_id),
@@ -207,7 +226,7 @@ export function Tab1KitchenOrders() {
                     <li className="px-3 py-2 text-xs text-slate-500">Dapur tidak ditemukan.</li>
                   )}
                   {kitchenMatches.map((k) => {
-                    const hasOpen = !!findOpenOrder(data, k.id, BUSINESS_DATE);
+                    const hasOpen = !!(findOpenOrder(data, k.id, todayYmd) ?? findOpenOrder(data, k.id));
                     return (
                       <li key={k.id}>
                         <button
@@ -244,7 +263,7 @@ export function Tab1KitchenOrders() {
               const chosenElsewhere = new Set(lines.filter((o) => o.key !== l.key).map((o) => o.item_id));
               const kg = parseKgInput(l.kgStr);
               const price = parseRpInput(l.priceStr);
-              const lineTotal = kg > 0 && price > 0 ? summarizeOrderDraft([orderLines[idx]!]).estimated_invoice : 0;
+              const lineTotal = kg > 0 && price > 0 ? summarizeOrderDraft([previewLines[idx]!]).estimated_invoice : 0;
               const idp = `ol-${l.key}`;
               return (
                 <div key={l.key} className="space-y-2 rounded-lg bg-slate-50 p-2.5 ring-1 ring-inset ring-slate-200">
@@ -370,7 +389,7 @@ export function Tab1KitchenOrders() {
       {/* Daftar Order Dapur hari ini */}
       <div className="flex items-center justify-between gap-2 pt-1">
         <h2 className="text-sm font-extrabold text-slate-900">Order Dapur Hari Ini</h2>
-        <span className="text-xs text-slate-500">{BUSINESS_DATE}</span>
+        <span className="text-xs text-slate-500">{todayYmd}</span>
       </div>
       <SegmentedControl<ListFilter>
         label="Filter order"

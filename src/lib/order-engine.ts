@@ -151,14 +151,17 @@ export function summarizeOrderDraft(lines: OrderLineInput[]): OrderDraftSummary 
   };
 }
 
-/** Open (not yet Lunas) order of a kitchen for the given date — new lines are merged into it. */
+/** Open (not yet Lunas) order of a kitchen — new lines are merged into it. */
 export function findOpenOrder(
   data: Pick<MbgData, 'deliveries' | 'invoices'>,
   kitchenId: string,
-  date: string
+  date?: string
 ): KitchenDelivery | undefined {
   return data.deliveries.find(
-    (d) => d.kitchen_id === kitchenId && d.delivery_date === date && !isPaid(invoiceForDelivery(data, d.id))
+    (d) =>
+      d.kitchen_id === kitchenId &&
+      (date ? d.delivery_date === date : true) &&
+      !isPaid(invoiceForDelivery(data, d.id))
   );
 }
 
@@ -354,7 +357,7 @@ export function createKitchenOrder<T extends MbgData>(
     margin_per_kg_rp: senToIdr(idrToSen(Number.isFinite(l.margin_per_kg_rp) ? l.margin_per_kg_rp : 0)),
   }));
 
-  const open = findOpenOrder(data, kitchen.id, ctx.today);
+  const open = findOpenOrder(data, kitchen.id, ctx.today) ?? findOpenOrder(data, kitchen.id);
   const existingItemIds = open ? linesForDelivery(data, open.id).map((l) => l.item_id) : [];
   const error = validateOrderLines(data, lines, existingItemIds);
   if (error) return { ok: false, error };
