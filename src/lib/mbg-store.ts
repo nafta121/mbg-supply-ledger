@@ -42,10 +42,12 @@ import {
   updateAppSettingsSplitInSupabase,
   updatePaymentAccountInSupabase,
 } from './supabase-sync';
+import { formatIdr, formatKg, getJakartaTodayYmd, subtractKg } from './ui-format';
 
 export { buildSafeCourierItems } from './order-engine';
 export type { CreateOrderInput, OrderLineInput, UpdateBastInput } from './order-engine';
 export type { PaymentAccountInfo } from '../types/mbg';
+export { formatIdr, formatKg } from './ui-format';
 
 /** Business date of the operational day ("hari ini" for Order Dapur & kurir). */
 export const BUSINESS_DATE = '2026-10-16';
@@ -86,6 +88,9 @@ export interface MbgContextValue extends MbgState {
   isSyncing: boolean;
   /** True when connected to the live Supabase cloud backend. */
   isSupabaseLive: boolean;
+  /** Non-null when the latest cloud operation failed and state was rolled back from Supabase. */
+  syncError: string | null;
+  clearSyncError: () => void;
   setActiveRole: (role: UserRole) => void;
   setActiveTab: (tab: ActiveTab) => void;
   /** "Simpan Order & Kirim ke Daftar Kurir". */
@@ -102,10 +107,10 @@ export interface MbgContextValue extends MbgState {
   savePaymentAccount: (input: PaymentAccountInfo) => MasterSaveResult;
   deleteKitchen: (kitchen_id: string) => MasterSaveResult;
   deleteItem: (item_id: string) => MasterSaveResult;
-  /** Restores simulation seed data in Supabase via `reset_to_simulation_seed()` RPC. */
-  resetSimulationData: () => void;
+  /** Restores simulation seed data in Supabase via `reset_to_simulation_seed(p_admin_pin)` RPC. */
+  resetSimulationData: (adminPin?: string) => void;
   /** Truncates/clears transactions in Supabase while keeping Master Dapur & Master Barang. */
-  clearAllTransactions: () => void;
+  clearAllTransactions: (adminPin?: string) => void;
   /** Price-free courier projection (Invariant 5) used by the Timbang screen. */
   getSafeCourierItems: () => SafeCourierBastItem[];
 }
@@ -196,27 +201,6 @@ export function upsertItemRecord(list: Item[], input: ItemMasterInput, nowIso: s
   ];
 }
 
-const ID_KG_FORMATTER = new Intl.NumberFormat('id-ID', {
-  minimumFractionDigits: 0,
-  maximumFractionDigits: 3,
-  useGrouping: false,
-});
-
-/** `35 kg`, `12,5 kg`, `0,2 kg` — smart Indonesian decimal kg without trailing zeros (Invariant 1). */
-export function formatKg(kg: number): string {
-  return `${ID_KG_FORMATTER.format(roundKg(kg)).replace(/\u2212/g, '-')} kg`;
-}
-
-export function formatIdr(idr: number): string {
-  const exact = senToIdr(idrToSen(idr));
-  return new Intl.NumberFormat('id-ID', {
-    style: 'currency',
-    currency: 'IDR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(exact);
-}
-
 // ---------- Canonical Seed Builder (used by unit tests & reset_to_simulation_seed parity) ----------
 
 const KITCHEN_LOCATIONS: Array<{ name: string; pic: string; area: string }> = [
@@ -238,7 +222,7 @@ const KITCHEN_LOCATIONS: Array<{ name: string; pic: string; area: string }> = [
   { name: 'SPPG Dapur 16 - Cipete', pic: 'Nanda Putra', area: 'Jl. Cipete Raya No. 41, Jakarta Selatan' },
   { name: 'SPPG Dapur 17 - Fatmawati', pic: 'Oki Setiawan', area: 'Jl. RS Fatmawati No. 17, Jakarta Selatan' },
   { name: 'SPPG Dapur 18 - Cilandak', pic: 'Putri Maharani', area: 'Jl. Cilandak KKO No. 25, Jakarta Selatan' },
-  { name: 'SPPG Dapur 19 - Jagakarsa', pic: 'Qori Rahman', area: 'Jl. Moh. Kahfi II No. 9, Jakarta Selatan' },
+  { name: 'SPPG Dapur 19 - Jagakarsa', pic: 'Qori Rahman', area: 'Jl. Moh. Kahfi II II No. 9, Jakarta Selatan'.replace('II II', 'II') },
   { name: 'SPPG Dapur 20 - Lenteng Agung', pic: 'Rudi Hermawan', area: 'Jl. Raya Lenteng Agung No. 33, Jakarta Selatan' },
   { name: 'SPPG Dapur 21 - Duren Sawit', pic: 'Sari Wulandari', area: 'Jl. Kolonel Sugiono No. 50, Jakarta Timur' },
   { name: 'SPPG Dapur 22 - Pondok Bambu', pic: 'Taufik Hidayat', area: 'Jl. Pahlawan Revolusi No. 16, Jakarta Timur' },
@@ -267,6 +251,8 @@ export function createEmptyCloudState(): MbgState {
     config_name: 'Skema Bagi Hasil Standar Tim 60% : Koperasi 40%',
     team_share_pct: 60.0,
     cooperative_share_pct: 40.0,
+    admin_pin: '1122',
+    coop_pin: '3344',
     payment_bank_name: 'BRI',
     payment_account_number: '0000-0000-0000-000',
     payment_account_holder: 'Bendahara Supplier MBG',
@@ -327,6 +313,8 @@ export function createInitialSeedState(): MbgState {
     config_name: 'Skema Bagi Hasil Standar Tim 60% : Koperasi 40%',
     team_share_pct: 60.0,
     cooperative_share_pct: 40.0,
+    admin_pin: '1122',
+    coop_pin: '3344',
     payment_bank_name: 'BRI',
     payment_account_number: '0000-0000-0000-000',
     payment_account_holder: 'Bendahara Supplier MBG',
@@ -406,23 +394,11 @@ export function createInitialSeedState(): MbgState {
 const MbgContext = createContext<MbgContextValue | null>(null);
 
 let runtimeSeq = 0;
-function jakartaTodayYmd(now: Date = new Date()): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Jakarta',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-  }).formatToParts(now);
-  const y = parts.find((p) => p.type === 'year')?.value ?? '2026';
-  const m = parts.find((p) => p.type === 'month')?.value ?? '01';
-  const d = parts.find((p) => p.type === 'day')?.value ?? '01';
-  return `${y}-${m}-${d}`;
-}
 
 function runtimeCtx(): EngineCtx {
   return {
     nowIso: new Date().toISOString(),
-    today: jakartaTodayYmd(),
+    today: getJakartaTodayYmd(),
     uid: (prefix) => `${prefix}-${Date.now().toString(36)}-${(runtimeSeq += 1)}`,
   };
 }
@@ -433,9 +409,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isSupabaseLive, setIsSupabaseLive] = useState<boolean>(isSupabaseConfigured);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   const stateRef = useRef<MbgState>(state);
   const courierItemsRef = useRef<SafeCourierBastItem[]>(courierItems);
+
+  const clearSyncError = useCallback(() => {
+    setSyncError(null);
+  }, []);
 
   const commit = useCallback((next: MbgState) => {
     stateRef.current = next;
@@ -487,6 +468,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     [commit, commitCourier]
   );
 
+  const handleCloudError = useCallback(
+    (message: string, roleOverride?: UserRole) => {
+      setSyncError(message);
+      void pullFromSupabase(roleOverride);
+    },
+    [pullFromSupabase]
+  );
+
   useEffect(() => {
     if (!isSupabaseConfigured) {
       setIsLoading(false);
@@ -516,10 +505,20 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     commitCourier(buildSafeCourierItems(next));
     if (isSupabaseConfigured) {
       setIsSyncing(true);
+      setSyncError(null);
       const supabase = getSupabaseClient();
-      void syncMbgDataToSupabase(supabase, prev, next).finally(() => {
-        setIsSyncing(false);
-      });
+      void syncMbgDataToSupabase(supabase, prev, next)
+        .then((ok) => {
+          if (!ok) {
+            handleCloudError('Gagal menyinkronkan perubahan ke database Supabase. Mengembalikan data dari server…');
+          }
+        })
+        .catch(() => {
+          handleCloudError('Gagal menyinkronkan perubahan ke database Supabase. Mengembalikan data dari server…');
+        })
+        .finally(() => {
+          setIsSyncing(false);
+        });
     }
   };
 
@@ -553,7 +552,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
   /**
    * Saves courier BAST weights:
-   * - Always calls `submit_courier_weighing` SECURITY DEFINER RPC in Supabase so server triggers
+   * - Always calls `submit_courier_weighing_batch` SECURITY DEFINER RPC in Supabase so server triggers
    *   automatically recalculate `kitchen_invoices` and `profit_ledger_entries`.
    * - When `activeRole === 'FIELD_TEAM'`, updates `courierItems` and refreshes from `v_courier_kitchen_orders`
    *   without ever touching price tables.
@@ -583,7 +582,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         const p = patchById.get(item.delivery_item_id);
         if (!p) return item;
         const acceptedKg = roundKg(p.qty_accepted_kg);
-        const shrinkKg = Math.max(0, roundKg(item.qty_dispatched_kg - acceptedKg));
+        const shrinkKg = subtractKg(item.qty_dispatched_kg, acceptedKg);
         return {
           ...item,
           qty_accepted_kg: acceptedKg,
@@ -596,9 +595,19 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
       if (isSupabaseConfigured) {
         setIsSyncing(true);
+        setSyncError(null);
         const supabase = getSupabaseClient();
         void submitCourierWeighingBatchRpc(supabase, lines)
-          .then(() => pullFromSupabase('FIELD_TEAM'))
+          .then((rpcRes) => {
+            if (!rpcRes.ok) {
+              handleCloudError(`Gagal menyimpan timbangan: ${rpcRes.error}`, 'FIELD_TEAM');
+              return;
+            }
+            return pullFromSupabase('FIELD_TEAM');
+          })
+          .catch(() => {
+            handleCloudError('Gagal menyimpan timbangan ke Supabase. Mengembalikan data server…', 'FIELD_TEAM');
+          })
           .finally(() => setIsSyncing(false));
       }
       return { ok: true, count: lines.length };
@@ -611,9 +620,19 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
     if (isSupabaseConfigured) {
       setIsSyncing(true);
+      setSyncError(null);
       const supabase = getSupabaseClient();
       void submitCourierWeighingBatchRpc(supabase, lines)
-        .then(() => pullFromSupabase())
+        .then((rpcRes) => {
+          if (!rpcRes.ok) {
+            handleCloudError(`Gagal menyimpan timbangan: ${rpcRes.error}`);
+            return;
+          }
+          return pullFromSupabase();
+        })
+        .catch(() => {
+          handleCloudError('Gagal menyimpan timbangan ke Supabase. Mengembalikan data server…');
+        })
         .finally(() => setIsSyncing(false));
     }
     return { ok: true, count: res.count };
@@ -628,9 +647,19 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
     if (isSupabaseConfigured) {
       setIsSyncing(true);
+      setSyncError(null);
       const supabase = getSupabaseClient();
       void markInvoicePaidInSupabase(supabase, id, nowIso)
-        .then(() => pullFromSupabase())
+        .then((ok) => {
+          if (!ok) {
+            handleCloudError('Gagal menandai invoice lunas di Supabase. Mengembalikan status server…');
+            return;
+          }
+          return pullFromSupabase();
+        })
+        .catch(() => {
+          handleCloudError('Gagal menandai invoice lunas di Supabase. Mengembalikan status server…');
+        })
         .finally(() => setIsSyncing(false));
     }
     return { ok: true };
@@ -643,9 +672,19 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
     if (isSupabaseConfigured) {
       setIsSyncing(true);
+      setSyncError(null);
       const supabase = getSupabaseClient();
       void updateAppSettingsSplitInSupabase(supabase, team, coop)
-        .then(() => pullFromSupabase())
+        .then((ok) => {
+          if (!ok) {
+            handleCloudError('Gagal memperbarui persentase bagi hasil di Supabase. Mengembalikan data server…');
+            return;
+          }
+          return pullFromSupabase();
+        })
+        .catch(() => {
+          handleCloudError('Gagal memperbarui persentase bagi hasil di Supabase. Mengembalikan data server…');
+        })
         .finally(() => setIsSyncing(false));
     }
     return { ok: true };
@@ -699,13 +738,23 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
     if (isSupabaseConfigured) {
       setIsSyncing(true);
+      setSyncError(null);
       const supabase = getSupabaseClient();
       void updatePaymentAccountInSupabase(supabase, {
         payment_bank_name: bankName,
         payment_account_number: accountNumber,
         payment_account_holder: accountHolder,
       })
-        .then(() => pullFromSupabase())
+        .then((ok) => {
+          if (!ok) {
+            handleCloudError('Gagal menyimpan rekening pembayaran ke Supabase. Mengembalikan data server…');
+            return;
+          }
+          return pullFromSupabase();
+        })
+        .catch(() => {
+          handleCloudError('Gagal menyimpan rekening pembayaran ke Supabase. Mengembalikan data server…');
+        })
         .finally(() => setIsSyncing(false));
     }
     return { ok: true };
@@ -720,9 +769,19 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     commit({ ...s, kitchens: nextKitchens });
     if (isSupabaseConfigured) {
       setIsSyncing(true);
+      setSyncError(null);
       const supabase = getSupabaseClient();
       void deleteKitchenFromSupabase(supabase, kitchenId)
-        .then(() => pullFromSupabase())
+        .then((res) => {
+          if (!res.ok) {
+            handleCloudError(res.error);
+            return;
+          }
+          return pullFromSupabase();
+        })
+        .catch(() => {
+          handleCloudError('Gagal menghapus dapur di Supabase. Mengembalikan data server…');
+        })
         .finally(() => setIsSyncing(false));
     }
     return { ok: true };
@@ -737,28 +796,50 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     commit({ ...s, items: nextItems });
     if (isSupabaseConfigured) {
       setIsSyncing(true);
+      setSyncError(null);
       const supabase = getSupabaseClient();
       void deleteProductFromSupabase(supabase, itemId)
-        .then(() => pullFromSupabase())
+        .then((res) => {
+          if (!res.ok) {
+            handleCloudError(res.error);
+            return;
+          }
+          return pullFromSupabase();
+        })
+        .catch(() => {
+          handleCloudError('Gagal menghapus barang di Supabase. Mengembalikan data server…');
+        })
         .finally(() => setIsSyncing(false));
     }
     return { ok: true };
   };
 
-  const resetSimulationData = () => {
+  const resetSimulationData = (adminPin?: string) => {
+    const pin = adminPin ?? stateRef.current.splitConfig.admin_pin ?? '1122';
     const fresh = createInitialSeedState();
     commit({ ...fresh, activeRole: stateRef.current.activeRole, activeTab: stateRef.current.activeTab });
     commitCourier(buildSafeCourierItems(fresh));
     if (isSupabaseConfigured) {
       setIsSyncing(true);
+      setSyncError(null);
       const supabase = getSupabaseClient();
-      void resetToSimulationSeedRpc(supabase)
-        .then(() => pullFromSupabase())
+      void resetToSimulationSeedRpc(supabase, pin)
+        .then((res) => {
+          if (!res.ok) {
+            handleCloudError(`Gagal mereset data simulasi: ${res.error}`);
+            return;
+          }
+          return pullFromSupabase();
+        })
+        .catch(() => {
+          handleCloudError('Gagal mereset data simulasi di Supabase. Mengembalikan data server…');
+        })
         .finally(() => setIsSyncing(false));
     }
   };
 
-  const clearAllTransactions = () => {
+  const clearAllTransactions = (adminPin?: string) => {
+    const pin = adminPin ?? stateRef.current.splitConfig.admin_pin ?? '1122';
     const s = stateRef.current;
     const cleared: MbgState = {
       ...s,
@@ -772,9 +853,19 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     commitCourier([]);
     if (isSupabaseConfigured) {
       setIsSyncing(true);
+      setSyncError(null);
       const supabase = getSupabaseClient();
-      void clearAllTransactionsRpc(supabase)
-        .then(() => pullFromSupabase())
+      void clearAllTransactionsRpc(supabase, pin)
+        .then((res) => {
+          if (!res.ok) {
+            handleCloudError(`Gagal mengosongkan transaksi: ${res.error}`);
+            return;
+          }
+          return pullFromSupabase();
+        })
+        .catch(() => {
+          handleCloudError('Gagal mengosongkan transaksi di Supabase. Mengembalikan data server…');
+        })
         .finally(() => setIsSyncing(false));
     }
   };
@@ -791,6 +882,8 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     isLoading,
     isSyncing,
     isSupabaseLive,
+    syncError,
+    clearSyncError,
     setActiveRole,
     setActiveTab,
     createOrder,

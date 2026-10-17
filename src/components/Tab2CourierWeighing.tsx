@@ -20,7 +20,7 @@ import {
 import { kgToGrams, roundKg } from '../lib/financial-engine';
 import { type UpdateBastInput, useMbgStore } from '../lib/mbg-store';
 import { shareToWhatsApp } from '../lib/share';
-import { formatKg, formatKgNum, parseAcceptedKgInput, shortKitchenName } from '../lib/ui-format';
+import { formatKg, formatKgNum, parseAcceptedKgInput, shortKitchenName, subtractKg, sumKg } from '../lib/ui-format';
 import type { SafeCourierBastItem } from '../types/mbg';
 import { KitchenBastDocument } from './PrintDocuments';
 import { Badge, Card, SegmentedControl, Toast, type ToastState } from './ui';
@@ -161,8 +161,8 @@ export function Tab2CourierWeighing() {
     }
 
     const lines: UpdateBastInput[] = [];
-    let acceptedTotal = 0;
-    let shrinkTotal = 0;
+    const acceptedValues: number[] = [];
+    const shrinkValues: number[] = [];
 
     for (const it of targets) {
       const d = getDraft(it);
@@ -175,15 +175,18 @@ export function Tab2CourierWeighing() {
         setToast({ kind: 'error', text: `${it.item_name}: berat diterima melebihi berat order.` });
         return;
       }
-      const shrinkKg = Math.round((orderedKg - d.parsedKg) * 1000) / 1000;
-      acceptedTotal = Math.round((acceptedTotal + d.parsedKg) * 1000) / 1000;
-      shrinkTotal = Math.round((shrinkTotal + shrinkKg) * 1000) / 1000;
+      const shrinkKg = subtractKg(orderedKg, d.parsedKg);
+      acceptedValues.push(d.parsedKg);
+      shrinkValues.push(shrinkKg);
       lines.push({
         delivery_item_id: it.delivery_item_id,
         qty_accepted_kg: d.parsedKg,
         rejection_reason: shrinkKg > 0 ? composeShrinkReason(d.reason ?? 'Susut', d.note) : null,
       });
     }
+
+    const acceptedTotal = sumKg(acceptedValues);
+    const shrinkTotal = sumKg(shrinkValues);
 
     const res = saveKitchenBast(lines);
     if (!res.ok) {

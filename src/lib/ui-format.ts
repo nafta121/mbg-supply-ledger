@@ -7,13 +7,22 @@
  */
 import type { InvoicePaymentStatus, LedgerPayoutStatus, OrderProgress, UserRole } from '../types/mbg';
 import { gramsToKg, idrToSen, kgToGrams, roundKg, senToIdr } from './financial-engine';
-import { formatIdr } from './mbg-store';
 
 const ID_KG_FORMATTER = new Intl.NumberFormat('id-ID', {
   minimumFractionDigits: 0,
   maximumFractionDigits: 3,
   useGrouping: false,
 });
+
+export function formatIdr(idr: number): string {
+  const exact = senToIdr(idrToSen(idr));
+  return new Intl.NumberFormat('id-ID', {
+    style: 'currency',
+    currency: 'IDR',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(exact);
+}
 
 // ---------- Exact aggregation (grams / sen BigInt) ----------
 

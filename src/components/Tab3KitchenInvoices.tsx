@@ -38,7 +38,6 @@ export function Tab3KitchenInvoices() {
 
   const openPrint = (doc: PrintDocMode) => {
     setPrintDoc(doc);
-    setTimeout(() => window.print(), 150);
   };
 
   return (

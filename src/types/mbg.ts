@@ -3,7 +3,8 @@
  * Stage 8 (Order-Driven Flow): Order Dapur -> Timbang BAST Kurir -> Invoice Dapur Gabungan -> Bagi Hasil.
  * Supplier stock batches and supplier settlements are NOT part of Phase 1.
  *
- * Invariant 1: All weights are WHOLE kilograms (`kg`, no decimals — e.g. 35, 33, -2)
+ * Invariant 1: All weights are dynamic decimal kilograms (`kg`, up to 3 decimals,
+ *              `NUMERIC(12,3)` — e.g. 35, 12.5, 0.2, -0.5, formatted without trailing zeros)
  *              and all monetary values are in IDR (`NUMERIC(15,2)`).
  */
 
@@ -83,8 +84,8 @@ export interface KitchenDeliveryItem {
   id: string;
   delivery_id: string;
   item_id: string;
-  qty_dispatched_kg: number; // Berat Order = Berat Kirim (whole kg, NUMERIC(10,3))
-  qty_accepted_kg: number; // Berat diterima dapur saat BAST (whole kg)
+  qty_dispatched_kg: number; // Berat Order = Berat Kirim (dynamic decimal kg, NUMERIC(12,3))
+  qty_accepted_kg: number; // Berat diterima dapur saat BAST (dynamic decimal kg, NUMERIC(12,3))
   qty_shrinkage_kg: number; // GENERATED: qty_dispatched_kg - qty_accepted_kg
   kitchen_unit_price_snapshot: number; // NUMERIC(15,2) — Harga Dapur / kg (immutable snapshot)
   margin_per_kg_snapshot: number; // NUMERIC(15,2) — Margin Kita / kg (immutable snapshot)
@@ -130,6 +131,8 @@ export interface ProfitSplitConfig {
   config_name: string;
   team_share_pct: number; // NUMERIC(5,2)
   cooperative_share_pct: number; // NUMERIC(5,2)
+  admin_pin?: string;
+  coop_pin?: string;
   payment_bank_name?: string;
   payment_account_number?: string;
   payment_account_holder?: string;

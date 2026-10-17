@@ -126,6 +126,8 @@ export interface ProfitLedgerRow {
   coop_paid_out: boolean;
   team_payout_batch_id?: string | null;
   coop_payout_batch_id?: string | null;
+  team_paid_out_at?: string | null;
+  coop_paid_out_at?: string | null;
   unlocked_at?: string | null;
   paid_out_at?: string | null;
   created_at?: string | null;
@@ -351,6 +353,8 @@ export function toSupabaseRows(data: MbgData): {
       coop_paid_out: coopPaid,
       team_payout_batch_id: pair.team?.payout_batch_id ?? null,
       coop_payout_batch_id: pair.coop?.payout_batch_id ?? null,
+      team_paid_out_at: pair.team?.paid_out_at ?? null,
+      coop_paid_out_at: pair.coop?.paid_out_at ?? null,
       unlocked_at: pair.team?.unlocked_at ?? pair.coop?.unlocked_at ?? null,
       paid_out_at: pair.team?.paid_out_at ?? pair.coop?.paid_out_at ?? null,
       created_at: sample.created_at,
@@ -375,8 +379,8 @@ export function toSupabaseRows(data: MbgData): {
     id: 'default',
     team_share_pct: data.splitConfig.team_share_pct,
     coop_share_pct: data.splitConfig.cooperative_share_pct,
-    admin_pin: '1234',
-    coop_pin: '5678',
+    admin_pin: data.splitConfig.admin_pin || '1122',
+    coop_pin: data.splitConfig.coop_pin || '3344',
     payment_bank_name: bankName,
     payment_account_number: accountNumber,
     payment_account_holder: accountHolder,
@@ -492,6 +496,8 @@ export function fromSupabaseRows(rows: {
   const scRow = rows.splitConfigs[0];
   const teamPctVal = appSetting ? num(appSetting.team_share_pct) : scRow ? num(scRow.team_share_pct) : 60.0;
   const coopPctVal = appSetting ? num(appSetting.coop_share_pct) : scRow ? num(scRow.cooperative_share_pct) : 40.0;
+  const cfgAdminPin = appSetting?.admin_pin || '1122';
+  const cfgCoopPin = appSetting?.coop_pin || '3344';
   const cfgBankName = appSetting?.payment_bank_name || scRow?.payment_bank_name || 'BRI';
   const cfgAccountNumber = appSetting?.payment_account_number || scRow?.payment_account_number || '0000-0000-0000-000';
   const cfgAccountHolder =
@@ -526,6 +532,8 @@ export function fromSupabaseRows(rows: {
     config_name: scRow?.config_name ?? `Skema Bagi Hasil Standar Tim ${teamPctVal}% : Koperasi ${coopPctVal}%`,
     team_share_pct: teamPctVal,
     cooperative_share_pct: coopPctVal,
+    admin_pin: cfgAdminPin,
+    coop_pin: cfgCoopPin,
     payment_bank_name: cfgBankName,
     payment_account_number: cfgAccountNumber,
     payment_account_holder: cfgAccountHolder,
@@ -566,7 +574,7 @@ export function fromSupabaseRows(rows: {
         payout_status: teamStatus,
         payout_batch_id: r.team_payout_batch_id ?? null,
         unlocked_at: r.unlocked_at ?? null,
-        paid_out_at: r.team_paid_out ? r.paid_out_at ?? DEFAULT_ISO : null,
+        paid_out_at: r.team_paid_out ? r.team_paid_out_at ?? r.paid_out_at ?? DEFAULT_ISO : null,
         created_at: r.created_at ?? DEFAULT_ISO,
         updated_at: r.updated_at ?? DEFAULT_ISO,
       },
@@ -583,7 +591,7 @@ export function fromSupabaseRows(rows: {
         payout_status: coopStatus,
         payout_batch_id: r.coop_payout_batch_id ?? null,
         unlocked_at: r.unlocked_at ?? null,
-        paid_out_at: r.coop_paid_out ? r.paid_out_at ?? DEFAULT_ISO : null,
+        paid_out_at: r.coop_paid_out ? r.coop_paid_out_at ?? r.paid_out_at ?? DEFAULT_ISO : null,
         created_at: r.created_at ?? DEFAULT_ISO,
         updated_at: r.updated_at ?? DEFAULT_ISO,
       }
@@ -675,7 +683,8 @@ export async function fetchCourierOrdersFromSupabase(
 }
 
 /**
- * Invokes `submit_courier_weighing` SECURITY DEFINER RPC for each weighed item.
+ * Invokes atomic `submit_courier_weighing_batch(p_items JSONB)` SECURITY DEFINER RPC
+ * in a single database transaction (no N+1 loop).
  * Server triggers automatically recalculate `kitchen_invoices` and `profit_ledger_entries`.
  */
 export async function submitCourierWeighingBatchRpc(
@@ -683,17 +692,20 @@ export async function submitCourierWeighingBatchRpc(
   lines: UpdateBastInput[]
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    for (const line of lines) {
+    const payload = lines.map((line) => {
       const parsed = parseShrinkReason(line.rejection_reason ?? null);
-      const { error } = await supabase.rpc('submit_courier_weighing', {
-        p_item_id: line.delivery_item_id,
-        p_qty_accepted_kg: roundKg(line.qty_accepted_kg),
-        p_shrinkage_reason: parsed.reason,
-        p_shrinkage_note: parsed.note || null,
-      });
-      if (error) {
-        return { ok: false, error: error.message };
-      }
+      return {
+        item_id: line.delivery_item_id,
+        qty_accepted_kg: roundKg(line.qty_accepted_kg),
+        shrinkage_reason: parsed.reason,
+        shrinkage_note: parsed.note || null,
+      };
+    });
+    const { error } = await supabase.rpc('submit_courier_weighing_batch', {
+      p_items: payload,
+    });
+    if (error) {
+      return { ok: false, error: error.message };
     }
     return { ok: true };
   } catch (e) {
@@ -831,26 +843,44 @@ export async function updatePaymentAccountInSupabase(
   return !settingsRes.error && !splitRes.error;
 }
 
-export async function deleteKitchenFromSupabase(supabase: SupabaseClient, kitchenId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function deleteKitchenFromSupabase(
+  supabase: SupabaseClient,
+  kitchenId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const { error } = await supabase.from('kitchens').delete().eq('id', kitchenId);
   if (error) return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki histori order.' };
   return { ok: true };
 }
 
-export async function deleteProductFromSupabase(supabase: SupabaseClient, productId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+export async function deleteProductFromSupabase(
+  supabase: SupabaseClient,
+  productId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const { error } = await supabase.from('products').delete().eq('id', productId);
   if (error) return { ok: false, error: 'Barang tidak dapat dihapus karena masih digunakan di order dapur.' };
   return { ok: true };
 }
 
-export async function resetToSimulationSeedRpc(supabase: SupabaseClient): Promise<boolean> {
-  const { error } = await supabase.rpc('reset_to_simulation_seed');
-  return !error;
+export async function resetToSimulationSeedRpc(
+  supabase: SupabaseClient,
+  adminPin: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabase.rpc('reset_to_simulation_seed', {
+    p_admin_pin: adminPin,
+  });
+  if (error) return { ok: false, error: error.message || 'Gagal mereset simulasi.' };
+  return { ok: true };
 }
 
-export async function clearAllTransactionsRpc(supabase: SupabaseClient): Promise<boolean> {
-  const { error } = await supabase.rpc('clear_all_transactions');
-  return !error;
+export async function clearAllTransactionsRpc(
+  supabase: SupabaseClient,
+  adminPin: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabase.rpc('clear_all_transactions', {
+    p_admin_pin: adminPin,
+  });
+  if (error) return { ok: false, error: error.message || 'Gagal mengosongkan transaksi.' };
+  return { ok: true };
 }
 
 export async function syncMbgDataToSupabase(
@@ -936,17 +966,26 @@ export function subscribeToMbgRealtime(
   onRemoteChange: () => void,
   onStatusChange?: (connected: boolean) => void
 ): () => void {
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  const debouncedChange = () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      onRemoteChange();
+    }, 250);
+  };
+
   const channel = supabase
     .channel('mbg-order-driven-realtime')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchens' }, onRemoteChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, onRemoteChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_orders' }, onRemoteChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_order_items' }, onRemoteChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_invoices' }, onRemoteChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_ledger_entries' }, onRemoteChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_split_configs' }, onRemoteChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, onRemoteChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_payout_batches' }, onRemoteChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchens' }, debouncedChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, debouncedChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_orders' }, debouncedChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_order_items' }, debouncedChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_invoices' }, debouncedChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_ledger_entries' }, debouncedChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_split_configs' }, debouncedChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, debouncedChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_payout_batches' }, debouncedChange)
     .subscribe((status) => {
       if (onStatusChange) {
         onStatusChange(status === 'SUBSCRIBED');
@@ -954,6 +993,7 @@ export function subscribeToMbgRealtime(
     });
 
   return () => {
+    if (debounceTimer) clearTimeout(debounceTimer);
     void supabase.removeChannel(channel);
   };
 }

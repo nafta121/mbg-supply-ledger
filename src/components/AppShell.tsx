@@ -54,9 +54,12 @@ export function AppShell() {
   const {
     activeRole,
     activeTab,
+    splitConfig,
     isLoading,
     isSyncing,
     isSupabaseLive,
+    syncError,
+    clearSyncError,
     setActiveRole,
     setActiveTab,
     resetSimulationData,
@@ -64,6 +67,49 @@ export function AppShell() {
   } = useMbgStore();
   const [masterOpen, setMasterOpen] = useState(false);
   const [resetSheetOpen, setResetSheetOpen] = useState(false);
+  const [resetPin, setResetPin] = useState('');
+  const [resetPinError, setResetPinError] = useState<string | null>(null);
+
+  // PIN Role Lock state for switching into Admin / Koperasi
+  const [pinTargetRole, setPinTargetRole] = useState<UserRole | null>(null);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState<string | null>(null);
+
+  const handleRolePillClick = (targetRole: UserRole) => {
+    if (targetRole === activeRole) return;
+    // Role Lapangan (FIELD_TEAM) is always accessible without a PIN.
+    if (targetRole === 'FIELD_TEAM') {
+      setActiveRole('FIELD_TEAM');
+      return;
+    }
+    const storageKey = `mbg_pin_verified_${targetRole}`;
+    if (typeof window !== 'undefined' && window.sessionStorage.getItem(storageKey) === '1') {
+      setActiveRole(targetRole);
+      return;
+    }
+    setPinTargetRole(targetRole);
+    setPinInput('');
+    setPinError(null);
+  };
+
+  const handleVerifyRolePin = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pinTargetRole) return;
+    const expectedPin =
+      pinTargetRole === 'OWNER_ADMIN' ? splitConfig.admin_pin || '1122' : splitConfig.coop_pin || '3344';
+    if (pinInput.trim() !== expectedPin) {
+      setPinError('PIN salah. Periksa kembali PIN 4 digit Anda.');
+      return;
+    }
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.setItem(`mbg_pin_verified_${pinTargetRole}`, '1');
+    }
+    const nextRole = pinTargetRole;
+    setPinTargetRole(null);
+    setPinInput('');
+    setPinError(null);
+    setActiveRole(nextRole);
+  };
 
   const visibleTabs = NAV_TABS.filter((t) => t.roles.includes(activeRole));
   // Never render a tab the active role is not allowed to see (Invariant 5).
@@ -118,7 +164,7 @@ export function AppShell() {
                   key={opt.role}
                   type="button"
                   aria-pressed={active}
-                  onClick={() => setActiveRole(opt.role)}
+                  onClick={() => handleRolePillClick(opt.role)}
                   className={`min-h-[36px] rounded-full px-2.5 text-xs font-bold transition ${
                     active
                       ? 'bg-emerald-600 text-white shadow-sm'
@@ -146,7 +192,11 @@ export function AppShell() {
             {activeRole === 'OWNER_ADMIN' && (
               <button
                 type="button"
-                onClick={() => setResetSheetOpen(true)}
+                onClick={() => {
+                  setResetPin('');
+                  setResetPinError(null);
+                  setResetSheetOpen(true);
+                }}
                 aria-label="Reset data"
                 title="Reset / Kosongkan Transaksi Supabase"
                 className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
@@ -162,6 +212,70 @@ export function AppShell() {
           onClose={() => setMasterOpen(false)}
         />
 
+        {/* PIN Verification Modal when switching to Admin or Koperasi */}
+        <BottomSheet
+          open={pinTargetRole !== null}
+          title={pinTargetRole === 'OWNER_ADMIN' ? '🔒 Verifikasi PIN Admin' : '🔒 Verifikasi PIN Koperasi'}
+          onClose={() => {
+            setPinTargetRole(null);
+            setPinInput('');
+            setPinError(null);
+          }}
+        >
+          <form onSubmit={handleVerifyRolePin} className="space-y-3 text-sm text-slate-700">
+            <p className="text-xs text-slate-600">
+              Masukkan PIN 4 digit untuk membuka akses{' '}
+              <span className="font-bold text-slate-900">
+                {pinTargetRole === 'OWNER_ADMIN' ? 'Admin' : 'Koperasi'}
+              </span>
+              . (Mode <span className="font-semibold">Lapangan</span> tetap dapat diakses tanpa PIN).
+            </p>
+            <div>
+              <label htmlFor="role-pin-input" className="field-label">
+                PIN 4 Digit
+              </label>
+              <input
+                id="role-pin-input"
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                autoFocus
+                placeholder="••••"
+                value={pinInput}
+                onChange={(e) => {
+                  setPinInput(e.target.value.replace(/\D/g, ''));
+                  if (pinError) setPinError(null);
+                }}
+                className="field-input text-center font-mono text-lg tracking-widest"
+              />
+              <p className="mt-1 text-[11px] text-slate-500">
+                Default {pinTargetRole === 'OWNER_ADMIN' ? 'Admin: 1122' : 'Koperasi: 3344'}
+              </p>
+            </div>
+            {pinError && (
+              <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                {pinError}
+              </p>
+            )}
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setPinTargetRole(null);
+                  setPinInput('');
+                  setPinError(null);
+                }}
+                className="btn-secondary w-full"
+              >
+                Batal
+              </button>
+              <button type="submit" className="btn-primary w-full">
+                🔓 Buka Akses
+              </button>
+            </div>
+          </form>
+        </BottomSheet>
+
         <BottomSheet
           open={resetSheetOpen && activeRole === 'OWNER_ADMIN'}
           title="🔄 Kelola Data Database Supabase"
@@ -169,16 +283,45 @@ export function AppShell() {
         >
           <div className="space-y-3 text-sm text-slate-700">
             <p className="text-xs text-slate-600">
-              Pilih tindakan pada database cloud Supabase (<span className="font-mono">nrdepkayabbbshnmyrvc</span>):
+              Tindakan destruktif pada database cloud Supabase (<span className="font-mono">nrdepkayabbbshnmyrvc</span>)
+              wajib diverifikasi dengan PIN Admin:
             </p>
+            <div>
+              <label htmlFor="reset-admin-pin" className="field-label">
+                PIN Admin Konfirmasi
+              </label>
+              <input
+                id="reset-admin-pin"
+                type="password"
+                inputMode="numeric"
+                maxLength={6}
+                placeholder="Masukkan PIN Admin (default 1122)"
+                value={resetPin}
+                onChange={(e) => {
+                  setResetPin(e.target.value.replace(/\D/g, ''));
+                  if (resetPinError) setResetPinError(null);
+                }}
+                className="field-input font-mono tracking-widest"
+              />
+            </div>
+            {resetPinError && (
+              <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
+                {resetPinError}
+              </p>
+            )}
             <button
               type="button"
               onClick={() => {
+                const expected = splitConfig.admin_pin || '1122';
+                if (resetPin.trim() !== expected) {
+                  setResetPinError('Masukkan PIN Admin yang benar sebelum mereset database.');
+                  return;
+                }
                 if (
                   typeof window === 'undefined' ||
                   window.confirm('Kembalikan database Supabase ke 5 Order Dapur simulasi awal (16 Oktober 2026)?')
                 ) {
-                  resetSimulationData();
+                  resetSimulationData(resetPin.trim());
                   setResetSheetOpen(false);
                 }
               }}
@@ -189,13 +332,18 @@ export function AppShell() {
             <button
               type="button"
               onClick={() => {
+                const expected = splitConfig.admin_pin || '1122';
+                if (resetPin.trim() !== expected) {
+                  setResetPinError('Masukkan PIN Admin yang benar sebelum mengosongkan transaksi.');
+                  return;
+                }
                 if (
                   typeof window === 'undefined' ||
                   window.confirm(
                     'Kosongkan seluruh transaksi (Order, Invoice, Bagi Hasil) di Supabase? Master Dapur & Master Barang tetap disimpan.'
                   )
                 ) {
-                  clearAllTransactions();
+                  clearAllTransactions(resetPin.trim());
                   setResetSheetOpen(false);
                 }
               }}
@@ -206,7 +354,23 @@ export function AppShell() {
           </div>
         </BottomSheet>
 
-        <main id="main-content" className="flex-1 px-3 py-3">
+        <main id="main-content" className="flex-1 space-y-3 px-3 py-3">
+          {syncError && (
+            <div
+              role="alert"
+              className="no-print flex items-start justify-between gap-2 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2.5 text-xs font-semibold text-rose-800 shadow-sm"
+            >
+              <span>⚠️ {syncError}</span>
+              <button
+                type="button"
+                onClick={clearSyncError}
+                className="shrink-0 rounded px-1.5 py-0.5 text-xs font-bold text-rose-700 hover:bg-rose-100"
+              >
+                Tutup
+              </button>
+            </div>
+          )}
+
           {isLoading ? (
             <div aria-label="Memuat data dari Supabase" className="space-y-3">
               <div className="h-24 animate-pulse rounded-xl bg-slate-200/80" />

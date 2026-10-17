@@ -7,7 +7,7 @@
  * Every transition takes the current data and returns a NEW data object
  * (or an error). The React store (`mbg-store.ts`) only wraps these with
  * `setState`, so all business rules are unit-testable here:
- * - Invariant 1: whole-kg weights, exact sen arithmetic (financial-engine).
+ * - Invariant 1: dynamic decimal kg weights (up to 3 decimals, no trailing zeros), exact sen arithmetic (financial-engine).
  * - Invariant 2: kitchens are billed only for `qty_accepted_kg`.
  * - Invariant 3: kitchen price & margin are snapshotted per order line.
  * - Invariant 4: ledger stays LOCKED_UNPAID until the invoice is PAID.
@@ -242,22 +242,32 @@ export function recomputeOrder<T extends MbgData>(data: T, deliveryId: string, n
   const others = data.ledgerEntries.filter(
     (le) => le.invoice_id !== invoice.id || (!lineIds.has(le.delivery_item_id) && le.payout_status === 'PAID_OUT')
   );
+  const orderEntries = data.ledgerEntries.filter((le) => le.invoice_id === invoice.id);
+  const hasOrderPaidOut = orderEntries.some((le) => le.payout_status === 'PAID_OUT');
+  const effectiveTeamPct = hasOrderPaidOut
+    ? (orderEntries.find((le) => le.beneficiary_type === 'TEAM')?.share_pct_snapshot ?? data.splitConfig.team_share_pct)
+    : data.splitConfig.team_share_pct;
+  const effectiveCoopPct = hasOrderPaidOut
+    ? (orderEntries.find((le) => le.beneficiary_type === 'COOPERATIVE')?.share_pct_snapshot ??
+        data.splitConfig.cooperative_share_pct)
+    : data.splitConfig.cooperative_share_pct;
+
   const rebuilt: ProfitLedgerEntry[] = [];
   for (const line of lines) {
-    const split = calculateProfitSplitEntry({
-      qty_accepted_kg: line.qty_accepted_kg,
-      margin_per_kg_rp: line.margin_per_kg_snapshot,
-      team_share_pct: data.splitConfig.team_share_pct,
-      cooperative_share_pct: data.splitConfig.cooperative_share_pct,
-      invoice_payment_status: invoice.payment_status,
-    });
-    // Once any share of a line is paid out, both shares keep their snapshot so
-    // Tim + Koperasi always equals the line margin (no over-distribution).
+    // Once any share of the order or line is paid out, both shares keep their snapshot so
+    // Tim + Koperasi always equals the line margin (no over-distribution, Invariant 4).
     const lineEntries = data.ledgerEntries.filter((le) => le.delivery_item_id === line.id);
-    if (lineEntries.some((le) => le.payout_status === 'PAID_OUT') && lineEntries.length === 2) {
+    if ((hasOrderPaidOut || lineEntries.some((le) => le.payout_status === 'PAID_OUT')) && lineEntries.length === 2) {
       rebuilt.push(...lineEntries);
       continue;
     }
+    const split = calculateProfitSplitEntry({
+      qty_accepted_kg: line.qty_accepted_kg,
+      margin_per_kg_rp: line.margin_per_kg_snapshot,
+      team_share_pct: effectiveTeamPct,
+      cooperative_share_pct: effectiveCoopPct,
+      invoice_payment_status: invoice.payment_status,
+    });
     for (const who of ['TEAM', 'COOPERATIVE'] as const) {
       const existing = lineEntries.find((le) => le.beneficiary_type === who);
       if (existing?.payout_status === 'PAID_OUT') {
