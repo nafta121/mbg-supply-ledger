@@ -11,6 +11,7 @@ import type {
   ProfitLedgerEntry,
   ProfitPayoutBatch,
   ProfitSplitConfig,
+  SafeCourierBastItem,
   SafeDeliveryItemBastView,
   Supplier,
   SupplierProcurementBatch,
@@ -27,7 +28,7 @@ import {
   senToIdr,
 } from './financial-engine';
 
-const STORAGE_KEY = 'mbg_supply_ledger_state_v2';
+const STORAGE_KEY = 'mbg_supply_ledger_state_v3';
 const SIM_DATE = '2026-10-16';
 
 export type ActiveTab = 'batches' | 'matrix' | 'bast' | 'invoices' | 'ledger';
@@ -116,6 +117,10 @@ export interface MbgContextValue extends MbgState {
   resetSimulationData: () => void;
   getBatchRemainingKg: (batch_id: string) => number;
   getSafeBastItemsForFieldTeam: () => SafeDeliveryItemBastView[];
+  /** Price-free courier projection (Invariant 5) used by the kitchen-centric view. */
+  getSafeCourierItems: () => SafeCourierBastItem[];
+  /** Saves BAST weights for several items of one kitchen stop at once. */
+  saveKitchenBast: (lines: UpdateBastInput[]) => void;
 }
 
 // ---------- Master data (pure helpers) ----------
@@ -442,7 +447,23 @@ export function createInitialSeedState(): MbgState {
   ];
 
   // 6. Seed 5 Kitchen Deliveries & Delivery Items from docs/01-domain-workflows-and-formulas.md
-  const seedScenarios = [
+  //    + Stage 6: 2 pending Telur deliveries to DPR-01 & DPR-02 so the courier view
+  //    shows kitchens with multiple items grouped on one card.
+  interface SeedScenario {
+    kitchenIdx: number;
+    batchId: string;
+    supplierId: string;
+    itemId: string;
+    dispatchedKg: number;
+    acceptedKg: number;
+    costSnapshot: number;
+    priceSnapshot: number;
+    rejectionReason: string | null;
+    invoiceStatus: 'PAID' | 'ISSUED' | 'UNPAID';
+    amountPaid: number;
+    deliveryStatus?: 'INVOICED' | 'IN_TRANSIT';
+  }
+  const seedScenarios: SeedScenario[] = [
     {
       kitchenIdx: 0, // Dapur A (01)
       batchId: 'batch-sup-a-ayam',
@@ -465,7 +486,7 @@ export function createInitialSeedState(): MbgState {
       acceptedKg: 48.75,
       costSnapshot: 36000.0,
       priceSnapshot: 40000.0,
-      rejectionReason: 'Susut Air/Perjalanan 1.250 kg saat timbang BAST di Dapur 02',
+      rejectionReason: 'Susut — susut air/perjalanan saat timbang BAST di Dapur 02',
       invoiceStatus: 'PAID' as const,
       amountPaid: 1950000.0,
     },
@@ -491,7 +512,7 @@ export function createInitialSeedState(): MbgState {
       acceptedKg: 48.25,
       costSnapshot: 37000.0,
       priceSnapshot: 40000.0,
-      rejectionReason: 'Kualitas Reject Dapur (Ayam memar 1.750 kg dikembalikan ke Supplier)',
+      rejectionReason: 'Barang Rusak/Reject — ayam memar dikembalikan ke Supplier',
       invoiceStatus: 'PAID' as const,
       amountPaid: 1930000.0,
     },
@@ -508,6 +529,35 @@ export function createInitialSeedState(): MbgState {
       invoiceStatus: 'UNPAID' as const,
       amountPaid: 0.0,
     },
+    // Stage 6: pending multi-item stops (same flow as Admin allocation — UNPAID / LOCKED_UNPAID).
+    {
+      kitchenIdx: 0, // DPR-01 Tebet: Ayam (done) + Telur (pending BAST)
+      batchId: 'batch-sup-c-telur',
+      supplierId: 'sup-c',
+      itemId: 'item-telur',
+      dispatchedKg: 20.0,
+      acceptedKg: 20.0,
+      costSnapshot: 26500.0,
+      priceSnapshot: 30500.0,
+      rejectionReason: null,
+      invoiceStatus: 'UNPAID',
+      amountPaid: 0.0,
+      deliveryStatus: 'IN_TRANSIT',
+    },
+    {
+      kitchenIdx: 1, // DPR-02 Cawang: Ayam (done) + Telur (pending BAST)
+      batchId: 'batch-sup-c-telur',
+      supplierId: 'sup-c',
+      itemId: 'item-telur',
+      dispatchedKg: 20.0,
+      acceptedKg: 20.0,
+      costSnapshot: 26500.0,
+      priceSnapshot: 30500.0,
+      rejectionReason: null,
+      invoiceStatus: 'UNPAID',
+      amountPaid: 0.0,
+      deliveryStatus: 'IN_TRANSIT',
+    },
   ];
 
   const deliveries: KitchenDelivery[] = [];
@@ -521,6 +571,10 @@ export function createInitialSeedState(): MbgState {
     const deliveryId = `deliv-${num}`;
     const deliveryItemId = `ditem-${num}`;
     const invoiceId = `inv-${num}`;
+    const inTransit = sc.deliveryStatus === 'IN_TRANSIT';
+    const docSuffix = inTransit
+      ? `${kitchen.kitchen_code.replace('-', '')}-${num}`
+      : `DPR${num}`;
 
     const reconciled = reconcileKitchenDeliveryItem({
       supplier_batch_id: sc.batchId,
@@ -532,14 +586,14 @@ export function createInitialSeedState(): MbgState {
 
     deliveries.push({
       id: deliveryId,
-      delivery_number: `SJ-20261016-DPR${num}`,
+      delivery_number: `SJ-20261016-${docSuffix}`,
       kitchen_id: kitchen.id,
       delivery_date: SIM_DATE,
-      status: 'INVOICED',
+      status: inTransit ? 'IN_TRANSIT' : 'INVOICED',
       courier_user_id: 'field-1',
       bast_signed_by_name: kitchen.pic_name,
-      bast_photo_url: `https://storage.mbg.local/bast/SJ-20261016-DPR${num}.jpg`,
-      bast_verified_at: nowIso,
+      bast_photo_url: inTransit ? null : `https://storage.mbg.local/bast/SJ-20261016-${docSuffix}.jpg`,
+      bast_verified_at: inTransit ? null : nowIso,
       notes: sc.rejectionReason,
       created_at: nowIso,
       updated_at: nowIso,
@@ -568,7 +622,7 @@ export function createInitialSeedState(): MbgState {
 
     invoices.push({
       id: invoiceId,
-      invoice_number: `INV-20261016-DPR${num}`,
+      invoice_number: `INV-20261016-${docSuffix}`,
       kitchen_id: kitchen.id,
       delivery_id: deliveryId,
       invoice_date: SIM_DATE,
@@ -652,6 +706,41 @@ export function createInitialSeedState(): MbgState {
     ledgerEntries,
     payoutBatches: [],
   };
+}
+
+/**
+ * Mirrors `v_safe_delivery_items_bast` (migration 0002): sanitized via
+ * `sanitizeDeliveryForFieldTeam`, then enriched with non-financial context only.
+ * Output never contains cost/price/invoice/markup fields (Invariant 5).
+ */
+export function buildSafeCourierItems(
+  state: Pick<MbgState, 'deliveryItems' | 'deliveries' | 'kitchens' | 'items' | 'batches'>
+): SafeCourierBastItem[] {
+  return state.deliveryItems.map((di) => {
+    const del = state.deliveries.find((d) => d.id === di.delivery_id);
+    const kitchen = state.kitchens.find((k) => k.id === del?.kitchen_id);
+    const item = state.items.find((i) => i.id === di.item_id);
+    const batch = state.batches.find((b) => b.id === di.supplier_batch_id);
+    const safe = sanitizeDeliveryForFieldTeam({
+      ...di,
+      delivery_item_id: di.id,
+      delivery_id: di.delivery_id,
+      delivery_number: del?.delivery_number ?? 'SJ-UNKNOWN',
+      delivery_date: del?.delivery_date ?? SIM_DATE,
+      kitchen_id: kitchen?.id ?? 'unknown',
+      kitchen_name: kitchen?.name ?? 'Dapur MBG',
+      item_id: item?.id ?? di.item_id,
+      item_name: item?.name ?? 'Bahan Baku MBG',
+    });
+    return {
+      ...safe,
+      batch_code: batch?.batch_code ?? '-',
+      kitchen_code: kitchen?.kitchen_code ?? '-',
+      kitchen_pic_name: kitchen?.pic_name ?? '-',
+      kitchen_pic_phone: kitchen?.pic_phone ?? '',
+      delivery_status: del?.status ?? 'ALLOCATED',
+    };
+  });
 }
 
 function recomputeSupplierSettlements(
@@ -742,7 +831,8 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   const setActiveRole = (role: UserRole) => {
     setState((prev) => {
       let nextTab = prev.activeTab;
-      if (role === 'FIELD_TEAM' && (nextTab === 'batches' || nextTab === 'invoices' || nextTab === 'ledger')) {
+      if (role === 'FIELD_TEAM') {
+        // Single-courier focus mode: always land on "Kirim Dapur" (Tab3FieldBast).
         nextTab = 'bast';
       } else if (role === 'COOPERATIVE_VIEWER' && nextTab === 'batches') {
         nextTab = 'ledger';
@@ -971,7 +1061,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         if (del.id !== targetItem.delivery_id) return del;
         return {
           ...del,
-          status: 'BAST_VERIFIED' as const,
+          status: del.status === 'INVOICED' ? ('INVOICED' as const) : ('BAST_VERIFIED' as const),
           bast_signed_by_name: input.bast_signed_by_name || del.bast_signed_by_name,
           bast_verified_at: nowIso,
           notes:
@@ -1042,6 +1132,12 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       qty_accepted_kg: item.qty_dispatched_kg,
       rejection_reason: null,
     });
+  };
+
+  const saveKitchenBast = (lines: UpdateBastInput[]) => {
+    // Each call is a functional state update, so all lines of one kitchen stop
+    // are applied in order within the same render batch.
+    for (const line of lines) updateBastAcceptance(line);
   };
 
   const markInvoicePaid = (invoice_id: string) => {
@@ -1269,6 +1365,8 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
+  const getSafeCourierItems = (): SafeCourierBastItem[] => buildSafeCourierItems(state);
+
   const value: MbgContextValue = {
     ...state,
     setActiveRole,
@@ -1277,6 +1375,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     allocateBatchToKitchens,
     updateBastAcceptance,
     acceptFullBast,
+    saveKitchenBast,
     markInvoicePaid,
     markSupplierSettlementPaid,
     updateProfitSplitPercentage,
@@ -1287,6 +1386,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     resetSimulationData,
     getBatchRemainingKg,
     getSafeBastItemsForFieldTeam,
+    getSafeCourierItems,
   };
 
   return React.createElement(MbgContext.Provider, { value }, children);

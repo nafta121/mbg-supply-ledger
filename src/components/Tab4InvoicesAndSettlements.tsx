@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { parseShrinkReason, supplierShrinkBreakdown } from '../lib/courier-view';
 import { formatIdr, useMbgStore } from '../lib/mbg-store';
 import {
   formatKgNum,
@@ -208,6 +209,19 @@ export function Tab4InvoicesAndSettlements() {
                       {formatRp(inv.total_invoice_amount)}
                     </div>
 
+                    {ditem && ditem.qty_shrinkage_kg > 0 && (
+                      <p className="rounded-md bg-rose-50 px-2.5 py-1.5 text-xs leading-snug text-rose-800 ring-1 ring-inset ring-rose-200">
+                        <span className="font-bold tabular-nums">
+                          Susut -{formatKgNum(ditem.qty_shrinkage_kg)} kg
+                        </span>{' '}
+                        (potong tagihan supplier) •{' '}
+                        {(() => {
+                          const { reason, note } = parseShrinkReason(ditem.rejection_reason);
+                          return [reason, note].filter(Boolean).join(' — ') || 'Tidak ada keterangan';
+                        })()}
+                      </p>
+                    )}
+
                     {isAdmin && (
                       <>
                         {!paid && (
@@ -268,6 +282,12 @@ export function Tab4InvoicesAndSettlements() {
               const batch = batches.find((b) => b.id === stl.supplier_batch_id);
               const item = items.find((i) => i.id === batch?.item_id);
               const paid = stl.status === 'PAID';
+              const shrinkLines = supplierShrinkBreakdown(
+                stl.supplier_batch_id,
+                deliveryItems,
+                deliveries,
+                kitchens
+              );
 
               return (
                 <Card as="article" key={stl.id} className="space-y-2.5 p-3">
@@ -301,6 +321,31 @@ export function Tab4InvoicesAndSettlements() {
                     </div>
                   </div>
 
+                  {shrinkLines.length > 0 && (
+                    <div className="space-y-1.5 rounded-lg bg-rose-50/60 p-2.5 ring-1 ring-inset ring-rose-200">
+                      <div className="text-xs font-bold text-rose-800">Dasar Potongan (dari BAST kurir)</div>
+                      <ul className="space-y-1.5">
+                        {shrinkLines.map((l) => (
+                          <li key={l.id} className="text-xs leading-snug text-slate-800">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="truncate font-semibold">
+                                {l.kitchen_code} • {shortKitchenName(l.kitchen_name)}
+                              </span>
+                              <span className="shrink-0 font-bold tabular-nums text-rose-700">
+                                -{formatKgNum(l.kg)} kg
+                              </span>
+                            </div>
+                            <div className="mt-0.5 flex flex-wrap items-center gap-1">
+                              {l.reason && <Badge tone="red">{l.reason}</Badge>}
+                              <span className="text-slate-600">
+                                {l.note || (l.reason ? '' : 'Tidak ada keterangan')}
+                              </span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"

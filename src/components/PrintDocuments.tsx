@@ -1,8 +1,13 @@
 'use client';
 
 import React from 'react';
+import {
+  type KitchenStop,
+  parseShrinkReason,
+  supplierShrinkBreakdown,
+} from '../lib/courier-view';
 import { formatIdr, formatKg, useMbgStore } from '../lib/mbg-store';
-import { INVOICE_LABEL } from '../lib/ui-format';
+import { formatKgNum, INVOICE_LABEL, shortKitchenName } from '../lib/ui-format';
 
 export type PrintDocMode =
   | { type: 'INVOICE'; invoiceId: string }
@@ -11,6 +16,84 @@ export type PrintDocMode =
 
 const th = 'border border-slate-300 p-2';
 const td = 'border border-slate-300 p-2';
+
+/**
+ * Bukti BAST per dapur (semua barang dalam 1 dokumen). Rendered purely from
+ * the price-free courier projection, so it is safe for FIELD_TEAM (Invariant 5).
+ */
+export function KitchenBastDocument({ stop }: { stop: KitchenStop }) {
+  return (
+    <div className="space-y-4 text-xs text-slate-900">
+      <div className="flex justify-between border-b-2 border-slate-900 pb-3">
+        <div>
+          <h1 className="text-base font-extrabold uppercase">Bukti Serah Terima (BAST)</h1>
+          <p className="text-[11px] text-slate-600">Timbang terima bahan baku di dapur</p>
+        </div>
+        <div className="text-right font-mono">
+          <div className="font-bold">{stop.kitchen_code}</div>
+          <div>Tanggal: {stop.delivery_date}</div>
+        </div>
+      </div>
+
+      <div>
+        <div className="font-bold">Dapur Tujuan: {stop.kitchen_name}</div>
+        <div>
+          PIC Penerima: {stop.pic_name} ({stop.pic_phone})
+        </div>
+      </div>
+
+      <table className="w-full border-collapse border border-slate-300 text-xs">
+        <thead>
+          <tr className="bg-slate-100">
+            <th className={`${th} text-left`}>Barang</th>
+            <th className={`${th} text-right`}>Kirim (kg)</th>
+            <th className={`${th} text-right`}>Diterima (kg)</th>
+            <th className={`${th} text-right`}>Susut (kg)</th>
+          </tr>
+        </thead>
+        <tbody>
+          {stop.items.map((it) => {
+            const { reason, note } = parseShrinkReason(it.rejection_reason);
+            const why = [reason, note].filter(Boolean).join(' — ');
+            return (
+              <tr key={it.delivery_item_id}>
+                <td className={td}>
+                  <div className="font-semibold">{it.item_name}</div>
+                  <div className="font-mono text-[10px] text-slate-500">
+                    {it.delivery_number} • {it.batch_code}
+                  </div>
+                  {it.qty_shrinkage_kg > 0 && why && (
+                    <div className="text-[10px] text-slate-700">Alasan susut: {why}</div>
+                  )}
+                </td>
+                <td className={`${td} text-right font-mono`}>{formatKgNum(it.qty_dispatched_kg)}</td>
+                <td className={`${td} text-right font-mono font-bold`}>{formatKgNum(it.qty_accepted_kg)}</td>
+                <td className={`${td} text-right font-mono`}>{formatKgNum(it.qty_shrinkage_kg)}</td>
+              </tr>
+            );
+          })}
+          <tr className="bg-slate-100 font-bold">
+            <td className={td}>Total</td>
+            <td className={`${td} text-right font-mono`}>{formatKgNum(stop.total_dispatched_kg)}</td>
+            <td className={`${td} text-right font-mono`}>{formatKgNum(stop.total_accepted_kg)}</td>
+            <td className={`${td} text-right font-mono`}>{formatKgNum(stop.total_shrinkage_kg)}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div className="flex justify-between pt-4 text-[11px]">
+        <div>
+          <div className="font-bold">Petugas Pengiriman</div>
+          <div className="mt-8 border-t border-slate-400 pt-1">&nbsp;</div>
+        </div>
+        <div className="text-right">
+          <div className="font-bold">Penerima Dapur</div>
+          <div className="mt-8 border-t border-slate-400 pt-1">{stop.pic_name}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
   const {
@@ -178,6 +261,15 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
   const supplier = suppliers.find((s) => s.id === stl.supplier_id);
   const batch = batches.find((b) => b.id === stl.supplier_batch_id);
   const item = items.find((i) => i.id === batch?.item_id);
+  const shrinkLines = supplierShrinkBreakdown(
+    stl.supplier_batch_id,
+    deliveryItems,
+    deliveries,
+    kitchens
+  ).map((l) => ({
+    ...l,
+    kitchen: `${l.kitchen_code} • ${shortKitchenName(l.kitchen_name)}`,
+  }));
 
   return (
     <div className="space-y-4 text-xs text-slate-900">
@@ -233,6 +325,27 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
           </tr>
         </tbody>
       </table>
+
+      {shrinkLines.length > 0 && (
+        <table className="w-full border-collapse border border-slate-300 text-xs">
+          <thead>
+            <tr className="bg-slate-100">
+              <th className={`${th} text-left`}>Dapur</th>
+              <th className={`${th} text-right`}>Susut (kg)</th>
+              <th className={`${th} text-left`}>Alasan (dari BAST kurir)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shrinkLines.map((l) => (
+              <tr key={l.id}>
+                <td className={td}>{l.kitchen}</td>
+                <td className={`${td} text-right font-mono`}>{formatKgNum(l.kg)}</td>
+                <td className={td}>{l.why}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

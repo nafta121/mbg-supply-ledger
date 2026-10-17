@@ -217,3 +217,15 @@ export interface SafeDeliveryItemBastView {
   qty_shrinkage_kg: number;
   rejection_reason: string | null;
 }
+
+// Extended courier projection of `v_safe_delivery_items_bast` (migration 0002).
+// Adds only non-financial context for the kitchen-centric courier view:
+// batch code (traceability), kitchen code/PIC, and delivery status.
+// Still contains NO cost, price, invoice, or markup fields (Invariant 5).
+export interface SafeCourierBastItem extends SafeDeliveryItemBastView {
+  batch_code: string;
+  kitchen_code: string;
+  kitchen_pic_name: string;
+  kitchen_pic_phone: string;
+  delivery_status: DeliveryStatus;
+}

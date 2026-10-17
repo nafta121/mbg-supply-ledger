@@ -40,7 +40,8 @@ const NAV_TABS: Array<{
     id: 'matrix',
     label: 'Bagi ke Dapur',
     renderIcon: (cls) => <MatrixGridIcon className={cls} />,
-    roles: ['OWNER_ADMIN', 'FINANCE', 'FIELD_TEAM'],
+    // Admin-only allocation matrix — hidden for the single courier (Stage 6).
+    roles: ['OWNER_ADMIN', 'FINANCE'],
   },
   {
     id: 'bast',
@@ -68,11 +69,16 @@ export function AppShell() {
   const [preselectBatchId, setPreselectBatchId] = useState<string | null>(null);
   const [masterOpen, setMasterOpen] = useState(false);
 
-  const visibleTabs = NAV_TABS.filter((t) => t.roles.includes(activeRole));
+  const isCourier = activeRole === 'FIELD_TEAM';
+  const visibleTabs = NAV_TABS.filter((t) => t.roles.includes(activeRole)).map((t) =>
+    isCourier && t.id === 'bast' ? { ...t, label: 'Kirim Dapur' } : t
+  );
   // Never render a tab the active role is not allowed to see (Invariant 5).
   const currentTab: ActiveTab = visibleTabs.some((t) => t.id === activeTab)
     ? activeTab
     : visibleTabs[0]?.id ?? 'bast';
+  // Single-courier focus mode: no bottom nav when there is only one screen.
+  const showNav = visibleTabs.length > 1;
 
   const handleReset = () => {
     if (typeof window !== 'undefined' && !window.confirm('Kembalikan semua data ke awal?')) {
@@ -96,7 +102,11 @@ export function AppShell() {
         Lewati ke konten utama
       </a>
 
-      <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col border-x border-slate-200 bg-slate-50 pb-20">
+      <div
+        className={`mx-auto flex min-h-[100dvh] max-w-md flex-col border-x border-slate-200 bg-slate-50 ${
+          showNav ? 'pb-20' : 'pb-6'
+        }`}
+      >
         {/* 1-row sticky header (56px) */}
         <header className="no-print sticky top-0 z-30 flex h-14 items-center justify-between gap-1.5 border-b border-slate-200 bg-white px-3">
           <h1 className="shrink-0 text-base font-extrabold tracking-tight text-slate-900">
@@ -170,6 +180,7 @@ export function AppShell() {
           {currentTab === 'ledger' && <Tab5ProfitLedger />}
         </main>
 
+        {showNav && (
         <nav aria-label="Navigasi utama" className="no-print fixed bottom-0 left-0 right-0 z-30">
           <div className="mx-auto max-w-md border-t border-slate-200 bg-white px-1.5 pb-[env(safe-area-inset-bottom)]">
             <div
@@ -201,6 +212,7 @@ export function AppShell() {
             </div>
           </div>
         </nav>
+        )}
       </div>
     </div>
   );

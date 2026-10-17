@@ -14,13 +14,22 @@ import { INVOICE_LABEL, invoiceTone, sumIdr } from '../ui-format';
 const NOW = '2026-10-17T00:00:00.000Z';
 
 describe('Stage 5 — invoice status standardisation', () => {
+  // docs/01 scenario = the 5 deliveries already INVOICED in the seed. Stage 6 adds
+  // pending (IN_TRANSIT) Telur stops for the courier view, covered in stage6 tests.
+  const docs01Invoices = (seed: ReturnType<typeof createInitialSeedState>) => {
+    const invoicedDeliveryIds = new Set(
+      seed.deliveries.filter((d) => d.status === 'INVOICED').map((d) => d.id)
+    );
+    return seed.invoices.filter((i) => invoicedDeliveryIds.has(i.delivery_id));
+  };
+
   it('seed has only Belum Bayar / Lunas kitchen bills, unpaid total Rp 4.000.000', () => {
     const seed = createInitialSeedState();
     const labels = new Set(seed.invoices.map((i) => INVOICE_LABEL[i.payment_status]));
     expect([...labels].sort()).toEqual(['Belum Bayar', 'Lunas']);
     expect(seed.invoices.some((i) => i.payment_status === 'PARTIALLY_PAID')).toBe(false);
 
-    const unpaid = seed.invoices.filter((i) => i.payment_status !== 'PAID');
+    const unpaid = docs01Invoices(seed).filter((i) => i.payment_status !== 'PAID');
     expect(unpaid).toHaveLength(2);
     expect(unpaid.every((i) => i.amount_paid === 0)).toBe(true);
     expect(sumIdr(unpaid.map((i) => i.total_invoice_amount))).toBe(4000000);
@@ -29,7 +38,9 @@ describe('Stage 5 — invoice status standardisation', () => {
   it('unpaid invoices keep profit share LOCKED_UNPAID (cash basis)', () => {
     const seed = createInitialSeedState();
     const unpaidIds = new Set(
-      seed.invoices.filter((i) => i.payment_status !== 'PAID').map((i) => i.id)
+      docs01Invoices(seed)
+        .filter((i) => i.payment_status !== 'PAID')
+        .map((i) => i.id)
     );
     const entries = seed.ledgerEntries.filter((le) => unpaidIds.has(le.invoice_id));
     expect(entries).toHaveLength(4);
