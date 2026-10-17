@@ -132,7 +132,7 @@ export function Tab2CourierWeighing() {
   // ---------- Actions ----------
 
   /** Anti-timpa: only lines still "Perlu Ditimbang" without a typed value are accepted as ordered. */
-  const acceptPending = (stop: KitchenStop) => {
+  const acceptPending = async (stop: KitchenStop) => {
     if (!canEditRole || stop.locked) return;
     const typedIds = new Set(typedLines(stop).map((it) => it.delivery_item_id));
     const lines = buildAcceptPendingLines(stop).filter((l) => !typedIds.has(l.delivery_item_id));
@@ -140,7 +140,7 @@ export function Tab2CourierWeighing() {
       setToast({ kind: 'error', text: `${stopTitle(stop)}: tidak ada barang yang belum ditimbang.` });
       return;
     }
-    const res = saveKitchenBast(lines);
+    const res = await saveKitchenBast(lines);
     if (!res.ok) {
       setToast({ kind: 'error', text: res.error });
       return;
@@ -152,7 +152,7 @@ export function Tab2CourierWeighing() {
     });
   };
 
-  const saveStop = (stop: KitchenStop) => {
+  const saveStop = async (stop: KitchenStop) => {
     if (!canEditRole || stop.locked) return;
     const targets = typedLines(stop);
     if (targets.length === 0) {
@@ -188,7 +188,7 @@ export function Tab2CourierWeighing() {
     const acceptedTotal = sumKg(acceptedValues);
     const shrinkTotal = sumKg(shrinkValues);
 
-    const res = saveKitchenBast(lines);
+    const res = await saveKitchenBast(lines);
     if (!res.ok) {
       setToast({ kind: 'error', text: res.error });
       return;

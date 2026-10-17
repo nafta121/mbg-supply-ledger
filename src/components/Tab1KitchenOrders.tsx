@@ -127,13 +127,13 @@ export function Tab1KitchenOrders() {
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
-  const submit = () => {
+  const submit = async () => {
     if (!kitchen) {
       setFormError('Pilih dapur tujuan dulu.');
       return;
     }
     const filled = orderLines.filter((l, idx) => l.item_id || lines[idx]!.kgStr.trim() !== '');
-    const res = createOrder({ kitchen_id: kitchen.id, lines: filled });
+    const res = await createOrder({ kitchen_id: kitchen.id, lines: filled });
     if (!res.ok) {
       setFormError(res.error);
       return;
@@ -164,15 +164,15 @@ export function Tab1KitchenOrders() {
 
   const confirmDo = (text: string) => typeof window === 'undefined' || window.confirm(text);
 
-  const handleRemoveLine = (lineId: string, label: string) => {
+  const handleRemoveLine = async (lineId: string, label: string) => {
     if (!confirmDo(`Hapus ${label} dari order?`)) return;
-    const res = removeOrderLine(lineId);
+    const res = await removeOrderLine(lineId);
     setToast(res.ok ? { kind: 'ok', text: `${label} dihapus dari order.` } : { kind: 'error', text: res.error });
   };
 
-  const handleDeleteOrder = (deliveryId: string, label: string) => {
+  const handleDeleteOrder = async (deliveryId: string, label: string) => {
     if (!confirmDo(`Hapus seluruh order ${label}? Invoice & bagi hasilnya ikut terhapus.`)) return;
-    const res = deleteOrder(deliveryId);
+    const res = await deleteOrder(deliveryId);
     setToast(res.ok ? { kind: 'ok', text: `Order ${label} dihapus.` } : { kind: 'error', text: res.error });
   };
 

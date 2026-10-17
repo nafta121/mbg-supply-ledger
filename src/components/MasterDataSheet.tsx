@@ -48,16 +48,16 @@ function MasterForm<T extends { id?: string }>({
   idPrefix: string;
   fields: FieldDef<T>[];
   initial: T;
-  onSave: (value: T) => MasterSaveResult;
+  onSave: (value: T) => Promise<MasterSaveResult>;
   onCancel: () => void;
   extra?: React.ReactNode;
 }) {
   const [value, setValue] = useState<T>(initial);
   const [error, setError] = useState<string | null>(null);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = onSave(value);
+    const res = await onSave(value);
     if (!res.ok) setError(res.error);
   };
 
@@ -133,7 +133,8 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
     setEditing(null);
   };
 
-  const done = (res: MasterSaveResult, text: string): MasterSaveResult => {
+  const done = async (resPromise: Promise<MasterSaveResult>, text: string): Promise<MasterSaveResult> => {
+    const res = await resPromise;
     if (res.ok) {
       setEditing(null);
       setToast({ kind: 'ok', text });
@@ -141,10 +142,10 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
     return res;
   };
 
-  const submitBankAccount = (e: React.FormEvent) => {
+  const submitBankAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     setBankError(null);
-    const res = savePaymentAccount({
+    const res = await savePaymentAccount({
       payment_bank_name: bankName,
       payment_account_number: accountNumber,
       payment_account_holder: accountHolder,
@@ -307,9 +308,9 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (typeof window !== 'undefined' && !window.confirm(`Hapus dapur ${k.name}?`)) return;
-                        const res = deleteKitchen(k.id);
+                        const res = await deleteKitchen(k.id);
                         setToast(
                           res.ok
                             ? { kind: 'ok', text: `Dapur ${k.kitchen_code} dihapus dari Supabase.` }
@@ -361,9 +362,9 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
+                      onClick={async () => {
                         if (typeof window !== 'undefined' && !window.confirm(`Hapus barang ${it.name}?`)) return;
-                        const res = deleteItem(it.id);
+                        const res = await deleteItem(it.id);
                         setToast(
                           res.ok
                             ? { kind: 'ok', text: `Barang ${it.name} dihapus dari Supabase.` }

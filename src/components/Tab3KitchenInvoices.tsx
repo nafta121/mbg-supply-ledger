@@ -144,8 +144,8 @@ export function Tab3KitchenInvoices() {
                       <button
                         type="button"
                         disabled={!summary.fully_weighed}
-                        onClick={() => {
-                          const res = markInvoicePaid(inv.id);
+                        onClick={async () => {
+                          const res = await markInvoicePaid(inv.id);
                           setToast(
                             res.ok
                               ? { kind: 'ok', text: `${title} lunas. Bagi hasil siap dicairkan.` }

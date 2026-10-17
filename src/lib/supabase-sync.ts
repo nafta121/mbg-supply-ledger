@@ -32,7 +32,7 @@ import {
   roundKg,
   senToIdr,
 } from './financial-engine';
-import type { MbgData, UpdateBastInput } from './order-engine';
+import type { CreateOrderInput, MbgData, UpdateBastInput } from './order-engine';
 
 const DEFAULT_DATE = '2026-10-16';
 const DEFAULT_ISO = '2026-10-16T06:00:00.000Z';
@@ -683,14 +683,54 @@ export async function fetchCourierOrdersFromSupabase(
 }
 
 /**
- * Invokes atomic `submit_courier_weighing_batch(p_items JSONB)` SECURITY DEFINER RPC
+ * RPC #1: Invokes `rpc_upsert_kitchen_order(p_kitchen_id, p_order_date, p_items, p_notes)`.
+ * PostgreSQL creates/merges the order, inserts `kitchen_order_items`, and executes
+ * `fn_recalculate_order_financials` to compute `kitchen_invoices` & `profit_ledger_entries`.
+ */
+export async function upsertKitchenOrderRpc(
+  supabase: SupabaseClient,
+  input: CreateOrderInput & { notes?: string | null },
+  orderDate: string
+): Promise<{ ok: true; order_id: string; order_code: string; merged: boolean; count: number } | { ok: false; error: string }> {
+  try {
+    const payload = input.lines.map((l) => ({
+      product_id: l.item_id,
+      item_id: l.item_id,
+      qty_ordered_kg: roundKg(l.qty_ordered_kg),
+      kitchen_unit_price_rp: l.kitchen_unit_price_rp,
+      margin_per_kg_rp: l.margin_per_kg_rp,
+    }));
+    const { data, error } = await supabase.rpc('rpc_upsert_kitchen_order', {
+      p_kitchen_id: input.kitchen_id,
+      p_order_date: orderDate,
+      p_items: payload,
+      p_notes: input.notes ?? null,
+    });
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    const res = (data ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      order_id: String(res.order_id ?? ''),
+      order_code: String(res.order_code ?? ''),
+      merged: Boolean(res.merged),
+      count: Number(res.count ?? payload.length),
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan order ke Supabase.' };
+  }
+}
+
+/**
+ * RPC #2: Invokes atomic `rpc_submit_courier_weighing_batch(p_items JSONB)` SECURITY DEFINER RPC
  * in a single database transaction (no N+1 loop).
- * Server triggers automatically recalculate `kitchen_invoices` and `profit_ledger_entries`.
+ * PostgreSQL updates all items and executes `fn_recalculate_order_financials` for each order.
  */
 export async function submitCourierWeighingBatchRpc(
   supabase: SupabaseClient,
   lines: UpdateBastInput[]
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
   try {
     const payload = lines.map((line) => {
       const parsed = parseShrinkReason(line.rejection_reason ?? null);
@@ -701,15 +741,207 @@ export async function submitCourierWeighingBatchRpc(
         shrinkage_note: parsed.note || null,
       };
     });
-    const { error } = await supabase.rpc('submit_courier_weighing_batch', {
+    const { error } = await supabase.rpc('rpc_submit_courier_weighing_batch', {
       p_items: payload,
+    });
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: true, count: lines.length };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan timbangan ke Supabase.' };
+  }
+}
+
+/**
+ * RPC #3: Invokes `rpc_mark_invoice_paid(p_invoice_id)` in PostgreSQL.
+ * Validates all items are weighed, marks invoice PAID, and unlocks `profit_ledger_entries`
+ * from `LOCKED_UNPAID` to `AVAILABLE_FOR_PAYOUT`.
+ */
+export async function markInvoicePaidRpc(
+  supabase: SupabaseClient,
+  invoiceId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { error } = await supabase.rpc('rpc_mark_invoice_paid', {
+      p_invoice_id: invoiceId,
     });
     if (error) {
       return { ok: false, error: error.message };
     }
     return { ok: true };
   } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan timbangan ke Supabase.' };
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menandai invoice lunas di Supabase.' };
+  }
+}
+
+/**
+ * RPC #4: Invokes `rpc_execute_profit_payout(p_target, p_entry_ids)` in PostgreSQL.
+ * Disburses `TEAM`, `COOPERATIVE`, or `BOTH` on `AVAILABLE_FOR_PAYOUT` entries,
+ * records separate `team_paid_out_at` / `coop_paid_out_at`, and transitions to `PAID_OUT` when both are paid.
+ */
+export async function executeProfitPayoutRpc(
+  supabase: SupabaseClient,
+  target: BeneficiaryType | 'BOTH',
+  entryIds?: string[] | null
+): Promise<{ ok: true; count: number; total_payout_rp: number } | { ok: false; error: string }> {
+  try {
+    const { data, error } = await supabase.rpc('rpc_execute_profit_payout', {
+      p_target: target,
+      p_entry_ids: entryIds && entryIds.length > 0 ? entryIds : null,
+    });
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    const res = (data ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      count: Number(res.count ?? 0),
+      total_payout_rp: Number(res.total_payout_rp ?? 0),
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal mencairkan bagi hasil di Supabase.' };
+  }
+}
+
+/**
+ * RPC #5: Invokes `rpc_update_app_settings(p_team_pct, p_coop_pct, p_bank_name, p_account_number, p_account_holder)`.
+ * Validates `team + coop = 100`, updates `app_settings` + UNPAID invoice bank snapshots,
+ * and recalculates all orders without payouts via `fn_recalculate_order_financials`.
+ */
+export async function updateAppSettingsRpc(
+  supabase: SupabaseClient,
+  params: {
+    teamSharePct: number;
+    coopSharePct: number;
+    bankName?: string | null;
+    accountNumber?: string | null;
+    accountHolder?: string | null;
+  }
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { error } = await supabase.rpc('rpc_update_app_settings', {
+      p_team_pct: params.teamSharePct,
+      p_coop_pct: params.coopSharePct,
+      p_bank_name: params.bankName ?? null,
+      p_account_number: params.accountNumber ?? null,
+      p_account_holder: params.accountHolder ?? null,
+    });
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan pengaturan ke Supabase.' };
+  }
+}
+
+/**
+ * RPC #6: Invokes `rpc_admin_reset_data(p_mode, p_admin_pin)` in PostgreSQL.
+ * Verifies `p_admin_pin` against `app_settings.admin_pin` before running `CLEAR_TRANSACTIONS` or `RESET_SEED`.
+ */
+export async function adminResetDataRpc(
+  supabase: SupabaseClient,
+  mode: 'CLEAR_TRANSACTIONS' | 'RESET_SEED',
+  adminPin: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { error } = await supabase.rpc('rpc_admin_reset_data', {
+      p_mode: mode,
+      p_admin_pin: adminPin,
+    });
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal mengeksekusi reset data di Supabase.' };
+  }
+}
+
+/**
+ * Targeted deletion of a single order item; if the order has 0 remaining items, removes the empty order.
+ * Database trigger `trg_kitchen_order_items_recalc` automatically runs `fn_recalculate_order_financials`.
+ */
+export async function deleteOrderItemFromSupabase(
+  supabase: SupabaseClient,
+  itemId: string,
+  orderId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { error } = await supabase.from('kitchen_order_items').delete().eq('id', itemId);
+    if (error) return { ok: false, error: error.message };
+
+    const { count } = await supabase
+      .from('kitchen_order_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('order_id', orderId);
+    if (count === 0) {
+      await supabase.from('kitchen_orders').delete().eq('id', orderId);
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menghapus baris order di Supabase.' };
+  }
+}
+
+export async function deleteKitchenOrderFromSupabase(
+  supabase: SupabaseClient,
+  orderId: string
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const { error } = await supabase.from('kitchen_orders').delete().eq('id', orderId);
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menghapus order di Supabase.' };
+  }
+}
+
+export async function upsertKitchenInSupabase(
+  supabase: SupabaseClient,
+  kitchen: Kitchen
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const row: KitchenRow = {
+      id: kitchen.id,
+      code: kitchen.kitchen_code,
+      name: kitchen.name,
+      address: kitchen.address,
+      pic_name: kitchen.pic_name,
+      pic_phone: kitchen.pic_phone,
+      default_markup_per_kg: kitchen.default_markup_per_kg,
+      is_active: kitchen.is_active,
+      created_at: kitchen.created_at,
+    };
+    const { error } = await supabase.from('kitchens').upsert(row, { onConflict: 'id' });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan dapur ke Supabase.' };
+  }
+}
+
+export async function upsertProductInSupabase(
+  supabase: SupabaseClient,
+  item: Item
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const row: ProductRow = {
+      id: item.id,
+      code: item.sku,
+      name: item.name,
+      category: item.category,
+      default_kitchen_price_rp: item.default_kitchen_price_per_kg,
+      default_margin_per_kg_rp: item.default_margin_per_kg,
+      is_active: item.is_active,
+      created_at: item.created_at,
+    };
+    const { error } = await supabase.from('products').upsert(row, { onConflict: 'id' });
+    if (error) return { ok: false, error: error.message };
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan barang ke Supabase.' };
   }
 }
 
@@ -771,19 +1003,13 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
   }
 }
 
-/**
- * Targeted cloud operations for Admin / Finance actions.
- */
 export async function markInvoicePaidInSupabase(
   supabase: SupabaseClient,
   invoiceId: string,
-  paidAtIso: string
+  _paidAtIso?: string
 ): Promise<boolean> {
-  const { error } = await supabase
-    .from('kitchen_invoices')
-    .update({ status: 'PAID', paid_at: paidAtIso, updated_at: paidAtIso })
-    .eq('id', invoiceId);
-  return !error;
+  const res = await markInvoicePaidRpc(supabase, invoiceId);
+  return res.ok;
 }
 
 export async function updateAppSettingsSplitInSupabase(
@@ -791,16 +1017,8 @@ export async function updateAppSettingsSplitInSupabase(
   teamSharePct: number,
   coopSharePct: number
 ): Promise<boolean> {
-  const { error } = await supabase.from('app_settings').upsert(
-    {
-      id: 'default',
-      team_share_pct: teamSharePct,
-      coop_share_pct: coopSharePct,
-      updated_at: new Date().toISOString(),
-    },
-    { onConflict: 'id' }
-  );
-  return !error;
+  const res = await updateAppSettingsRpc(supabase, { teamSharePct, coopSharePct });
+  return res.ok;
 }
 
 export async function updatePaymentAccountInSupabase(
@@ -809,38 +1027,18 @@ export async function updatePaymentAccountInSupabase(
     payment_bank_name: string;
     payment_account_number: string;
     payment_account_holder: string;
-  }
+  },
+  teamSharePct = 60,
+  coopSharePct = 40
 ): Promise<boolean> {
-  const nowIso = new Date().toISOString();
-  const [settingsRes, splitRes] = await Promise.all([
-    supabase
-      .from('app_settings')
-      .update({
-        payment_bank_name: account.payment_bank_name,
-        payment_account_number: account.payment_account_number,
-        payment_account_holder: account.payment_account_holder,
-        updated_at: nowIso,
-      })
-      .eq('id', 'default'),
-    supabase
-      .from('profit_split_configs')
-      .update({
-        payment_bank_name: account.payment_bank_name,
-        payment_account_number: account.payment_account_number,
-        payment_account_holder: account.payment_account_holder,
-      })
-      .eq('is_active', true),
-  ]);
-  await supabase
-    .from('kitchen_invoices')
-    .update({
-      payment_bank_name: account.payment_bank_name,
-      payment_account_number: account.payment_account_number,
-      payment_account_holder: account.payment_account_holder,
-      updated_at: nowIso,
-    })
-    .neq('status', 'PAID');
-  return !settingsRes.error && !splitRes.error;
+  const res = await updateAppSettingsRpc(supabase, {
+    teamSharePct,
+    coopSharePct,
+    bankName: account.payment_bank_name,
+    accountNumber: account.payment_account_number,
+    accountHolder: account.payment_account_holder,
+  });
+  return res.ok;
 }
 
 export async function deleteKitchenFromSupabase(
@@ -865,100 +1063,14 @@ export async function resetToSimulationSeedRpc(
   supabase: SupabaseClient,
   adminPin: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { error } = await supabase.rpc('reset_to_simulation_seed', {
-    p_admin_pin: adminPin,
-  });
-  if (error) return { ok: false, error: error.message || 'Gagal mereset simulasi.' };
-  return { ok: true };
+  return adminResetDataRpc(supabase, 'RESET_SEED', adminPin);
 }
 
 export async function clearAllTransactionsRpc(
   supabase: SupabaseClient,
   adminPin: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
-  const { error } = await supabase.rpc('clear_all_transactions', {
-    p_admin_pin: adminPin,
-  });
-  if (error) return { ok: false, error: error.message || 'Gagal mengosongkan transaksi.' };
-  return { ok: true };
-}
-
-export async function syncMbgDataToSupabase(
-  supabase: SupabaseClient,
-  prev: MbgData | null,
-  next: MbgData
-): Promise<boolean> {
-  try {
-    const rows = toSupabaseRows(next);
-
-    // 1. Upsert master tables, app_settings & split config
-    const [kRes, pRes, scRes, asRes] = await Promise.all([
-      supabase.from('kitchens').upsert(rows.kitchens, { onConflict: 'id' }),
-      supabase.from('products').upsert(rows.products, { onConflict: 'id' }),
-      supabase.from('profit_split_configs').upsert([rows.splitConfig], { onConflict: 'id' }),
-      supabase.from('app_settings').upsert([rows.appSettings], { onConflict: 'id' }),
-    ]);
-    if (kRes.error || pRes.error || scRes.error || asRes.error) return false;
-
-    // 2. Delete removed kitchens, products, orders, or order items
-    if (prev) {
-      const nextKitchenIds = new Set(next.kitchens.map((k) => k.id));
-      const deletedKitchenIds = prev.kitchens.filter((k) => !nextKitchenIds.has(k.id)).map((k) => k.id);
-      if (deletedKitchenIds.length > 0) {
-        await supabase.from('kitchens').delete().in('id', deletedKitchenIds);
-      }
-
-      const nextProductIds = new Set(next.items.map((i) => i.id));
-      const deletedProductIds = prev.items.filter((i) => !nextProductIds.has(i.id)).map((i) => i.id);
-      if (deletedProductIds.length > 0) {
-        await supabase.from('products').delete().in('id', deletedProductIds);
-      }
-
-      const nextOrderIds = new Set(next.deliveries.map((d) => d.id));
-      const deletedOrderIds = prev.deliveries.filter((d) => !nextOrderIds.has(d.id)).map((d) => d.id);
-      if (deletedOrderIds.length > 0) {
-        await supabase.from('kitchen_orders').delete().in('id', deletedOrderIds);
-      }
-
-      const nextItemIds = new Set(next.deliveryItems.map((di) => di.id));
-      const deletedItemIds = prev.deliveryItems
-        .filter((di) => !nextItemIds.has(di.id) && nextOrderIds.has(di.delivery_id))
-        .map((di) => di.id);
-      if (deletedItemIds.length > 0) {
-        await supabase.from('kitchen_order_items').delete().in('id', deletedItemIds);
-      }
-    }
-
-    // 3. Upsert orders, invoices, items, payout batches, and ledger entries in FK order
-    if (rows.orders.length > 0) {
-      const oRes = await supabase.from('kitchen_orders').upsert(rows.orders, { onConflict: 'id' });
-      if (oRes.error) return false;
-    }
-
-    if (rows.invoices.length > 0) {
-      const invRes = await supabase.from('kitchen_invoices').upsert(rows.invoices, { onConflict: 'id' });
-      if (invRes.error) return false;
-    }
-
-    if (rows.orderItems.length > 0) {
-      const oiRes = await supabase.from('kitchen_order_items').upsert(rows.orderItems, { onConflict: 'id' });
-      if (oiRes.error) return false;
-    }
-
-    if (rows.payoutBatches.length > 0) {
-      const pbRes = await supabase.from('profit_payout_batches').upsert(rows.payoutBatches, { onConflict: 'id' });
-      if (pbRes.error) return false;
-    }
-
-    if (rows.ledgerEntries.length > 0) {
-      const pleRes = await supabase.from('profit_ledger_entries').upsert(rows.ledgerEntries, { onConflict: 'id' });
-      if (pleRes.error) return false;
-    }
-
-    return true;
-  } catch {
-    return false;
-  }
+  return adminResetDataRpc(supabase, 'CLEAR_TRANSACTIONS', adminPin);
 }
 
 export function subscribeToMbgRealtime(

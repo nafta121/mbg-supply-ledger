@@ -29,18 +29,21 @@ import {
 } from './order-engine';
 import { getSupabaseClient, isSupabaseConfigured } from './supabase';
 import {
-  clearAllTransactionsRpc,
+  adminResetDataRpc,
   deleteKitchenFromSupabase,
+  deleteKitchenOrderFromSupabase,
+  deleteOrderItemFromSupabase,
   deleteProductFromSupabase,
+  executeProfitPayoutRpc,
   fetchCourierOrdersFromSupabase,
   fetchMbgDataFromSupabase,
-  markInvoicePaidInSupabase,
-  resetToSimulationSeedRpc,
+  markInvoicePaidRpc,
   submitCourierWeighingBatchRpc,
   subscribeToMbgRealtime,
-  syncMbgDataToSupabase,
-  updateAppSettingsSplitInSupabase,
-  updatePaymentAccountInSupabase,
+  updateAppSettingsRpc,
+  upsertKitchenInSupabase,
+  upsertKitchenOrderRpc,
+  upsertProductInSupabase,
 } from './supabase-sync';
 import { formatIdr, formatKg, getJakartaTodayYmd, subtractKg } from './ui-format';
 
@@ -93,24 +96,27 @@ export interface MbgContextValue extends MbgState {
   clearSyncError: () => void;
   setActiveRole: (role: UserRole) => void;
   setActiveTab: (tab: ActiveTab) => void;
-  /** "Simpan Order & Kirim ke Daftar Kurir". */
-  createOrder: (input: CreateOrderInput) => ActionResult;
-  removeOrderLine: (delivery_item_id: string) => ActionResult;
-  deleteOrder: (delivery_id: string) => ActionResult;
-  /** Saves BAST weights for several items of one kitchen order at once. */
-  saveKitchenBast: (lines: UpdateBastInput[]) => ActionResult;
-  markInvoicePaid: (invoice_id: string) => ActionResult;
-  updateProfitSplitPercentage: (team_share_pct: number, cooperative_share_pct: number) => ActionResult;
-  executePayout: (beneficiary_type: BeneficiaryType, notes?: string) => ActionResult;
-  saveKitchen: (input: KitchenMasterInput) => MasterSaveResult;
-  saveItem: (input: ItemMasterInput) => MasterSaveResult;
-  savePaymentAccount: (input: PaymentAccountInfo) => MasterSaveResult;
-  deleteKitchen: (kitchen_id: string) => MasterSaveResult;
-  deleteItem: (item_id: string) => MasterSaveResult;
-  /** Restores simulation seed data in Supabase via `reset_to_simulation_seed(p_admin_pin)` RPC. */
-  resetSimulationData: (adminPin?: string) => void;
-  /** Truncates/clears transactions in Supabase while keeping Master Dapur & Master Barang. */
-  clearAllTransactions: (adminPin?: string) => void;
+  /** "Simpan Order & Kirim ke Daftar Kurir" via `rpc_upsert_kitchen_order`. */
+  createOrder: (input: CreateOrderInput) => Promise<ActionResult>;
+  removeOrderLine: (delivery_item_id: string) => Promise<ActionResult>;
+  deleteOrder: (delivery_id: string) => Promise<ActionResult>;
+  /** Saves BAST weights for several items of one kitchen order at once via `rpc_submit_courier_weighing_batch`. */
+  saveKitchenBast: (lines: UpdateBastInput[]) => Promise<ActionResult>;
+  /** Marks invoice paid via `rpc_mark_invoice_paid`. */
+  markInvoicePaid: (invoice_id: string) => Promise<ActionResult>;
+  /** Updates profit split & recalculates unpaid-out orders via `rpc_update_app_settings`. */
+  updateProfitSplitPercentage: (team_share_pct: number, cooperative_share_pct: number) => Promise<ActionResult>;
+  /** Executes profit payout via `rpc_execute_profit_payout`. */
+  executePayout: (beneficiary_type: BeneficiaryType, notes?: string) => Promise<ActionResult>;
+  saveKitchen: (input: KitchenMasterInput) => Promise<MasterSaveResult>;
+  saveItem: (input: ItemMasterInput) => Promise<MasterSaveResult>;
+  savePaymentAccount: (input: PaymentAccountInfo) => Promise<MasterSaveResult>;
+  deleteKitchen: (kitchen_id: string) => Promise<MasterSaveResult>;
+  deleteItem: (item_id: string) => Promise<MasterSaveResult>;
+  /** Restores simulation seed data in Supabase via `rpc_admin_reset_data('RESET_SEED', p_admin_pin)`. */
+  resetSimulationData: (adminPin?: string) => Promise<ActionResult>;
+  /** Truncates/clears transactions in Supabase via `rpc_admin_reset_data('CLEAR_TRANSACTIONS', p_admin_pin)`. */
+  clearAllTransactions: (adminPin?: string) => Promise<ActionResult>;
   /** Price-free courier projection (Invariant 5) used by the Timbang screen. */
   getSafeCourierItems: () => SafeCourierBastItem[];
 }
@@ -499,36 +505,6 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     };
   }, [pullFromSupabase]);
 
-  const commitAndSyncCloud = (next: MbgState) => {
-    const prev = stateRef.current;
-    commit(next);
-    commitCourier(buildSafeCourierItems(next));
-    if (isSupabaseConfigured) {
-      setIsSyncing(true);
-      setSyncError(null);
-      const supabase = getSupabaseClient();
-      void syncMbgDataToSupabase(supabase, prev, next)
-        .then((ok) => {
-          if (!ok) {
-            handleCloudError('Gagal menyinkronkan perubahan ke database Supabase. Mengembalikan data dari server…');
-          }
-        })
-        .catch(() => {
-          handleCloudError('Gagal menyinkronkan perubahan ke database Supabase. Mengembalikan data dari server…');
-        })
-        .finally(() => {
-          setIsSyncing(false);
-        });
-    }
-  };
-
-  const run = (fn: (current: MbgState) => EngineResult<MbgState>): ActionResult => {
-    const res = fn(stateRef.current);
-    if (!res.ok) return { ok: false, error: res.error };
-    commitAndSyncCloud(res.data);
-    return { ok: true, merged: res.merged, count: res.count };
-  };
-
   const setActiveRole = (role: UserRole) => {
     const prev = stateRef.current;
     let nextTab = prev.activeTab;
@@ -544,23 +520,111 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
   const setActiveTab = (tab: ActiveTab) => commit({ ...stateRef.current, activeTab: tab });
 
-  const createOrder = (input: CreateOrderInput) => run((s) => createKitchenOrder(s, input, runtimeCtx()));
+  /**
+   * RPC #1: Creates or merges a kitchen order in PostgreSQL via `rpc_upsert_kitchen_order`,
+   * which invokes `fn_recalculate_order_financials` on the server and returns authoritative totals.
+   */
+  const createOrder = async (input: CreateOrderInput): Promise<ActionResult> => {
+    const precheck = createKitchenOrder(stateRef.current, input, runtimeCtx());
+    if (!precheck.ok) return { ok: false, error: precheck.error };
 
-  const removeOrderLine = (id: string) => run((s) => removeOrderLineEngine(s, id, runtimeCtx().nowIso));
+    if (!isSupabaseConfigured) {
+      commit(precheck.data);
+      commitCourier(buildSafeCourierItems(precheck.data));
+      return { ok: true, merged: precheck.merged, count: precheck.count };
+    }
 
-  const deleteOrder = (id: string) => run((s) => deleteKitchenOrder(s, id));
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const rpcRes = await upsertKitchenOrderRpc(supabase, input, getJakartaTodayYmd());
+      if (!rpcRes.ok) {
+        handleCloudError(`Gagal menyimpan order: ${rpcRes.error}`);
+        return { ok: false, error: rpcRes.error };
+      }
+      await pullFromSupabase();
+      return { ok: true, merged: rpcRes.merged, count: rpcRes.count };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menyimpan order ke Supabase.';
+      handleCloudError(`Gagal menyimpan order: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const removeOrderLine = async (id: string): Promise<ActionResult> => {
+    const targetItem = stateRef.current.deliveryItems.find((d) => d.id === id);
+    const precheck = removeOrderLineEngine(stateRef.current, id, runtimeCtx().nowIso);
+    if (!precheck.ok) return { ok: false, error: precheck.error };
+
+    if (!isSupabaseConfigured || !targetItem) {
+      commit(precheck.data);
+      commitCourier(buildSafeCourierItems(precheck.data));
+      return { ok: true };
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const delRes = await deleteOrderItemFromSupabase(supabase, id, targetItem.delivery_id);
+      if (!delRes.ok) {
+        handleCloudError(`Gagal menghapus barang order: ${delRes.error}`);
+        return { ok: false, error: delRes.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menghapus barang order di Supabase.';
+      handleCloudError(`Gagal menghapus barang order: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const deleteOrder = async (id: string): Promise<ActionResult> => {
+    const precheck = deleteKitchenOrder(stateRef.current, id);
+    if (!precheck.ok) return { ok: false, error: precheck.error };
+
+    if (!isSupabaseConfigured) {
+      commit(precheck.data);
+      commitCourier(buildSafeCourierItems(precheck.data));
+      return { ok: true };
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const delRes = await deleteKitchenOrderFromSupabase(supabase, id);
+      if (!delRes.ok) {
+        handleCloudError(`Gagal menghapus order: ${delRes.error}`);
+        return { ok: false, error: delRes.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menghapus order di Supabase.';
+      handleCloudError(`Gagal menghapus order: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   /**
-   * Saves courier BAST weights:
-   * - Always calls `submit_courier_weighing_batch` SECURITY DEFINER RPC in Supabase so server triggers
-   *   automatically recalculate `kitchen_invoices` and `profit_ledger_entries`.
-   * - When `activeRole === 'FIELD_TEAM'`, updates `courierItems` and refreshes from `v_courier_kitchen_orders`
-   *   without ever touching price tables.
+   * RPC #2: Saves courier BAST weights via `rpc_submit_courier_weighing_batch` SECURITY DEFINER RPC
+   * so PostgreSQL triggers & `fn_recalculate_order_financials` compute `kitchen_invoices` and `profit_ledger_entries`.
    */
-  const saveKitchenBast = (lines: UpdateBastInput[]): ActionResult => {
+  const saveKitchenBast = async (lines: UpdateBastInput[]): Promise<ActionResult> => {
     if (lines.length === 0) return { ok: false, error: 'Pilih minimal 1 barang untuk disimpan.' };
 
-    if (stateRef.current.activeRole === 'FIELD_TEAM') {
+    const role = stateRef.current.activeRole;
+
+    if (role === 'FIELD_TEAM') {
       const currentMap = new Map(courierItemsRef.current.map((c) => [c.delivery_item_id, c]));
       for (const l of lines) {
         const row = currentMap.get(l.delivery_item_id);
@@ -576,140 +640,241 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         }
       }
 
-      // Optimistic update on price-free courier view items
-      const patchById = new Map(lines.map((l) => [l.delivery_item_id, l]));
-      const updatedCourier = courierItemsRef.current.map((item) => {
-        const p = patchById.get(item.delivery_item_id);
-        if (!p) return item;
-        const acceptedKg = roundKg(p.qty_accepted_kg);
-        const shrinkKg = subtractKg(item.qty_dispatched_kg, acceptedKg);
-        return {
-          ...item,
-          qty_accepted_kg: acceptedKg,
-          qty_shrinkage_kg: shrinkKg,
-          rejection_reason: shrinkKg > 0 ? p.rejection_reason ?? 'Susut' : null,
-          is_weighed: true,
-        };
-      });
-      commitCourier(updatedCourier);
-
-      if (isSupabaseConfigured) {
-        setIsSyncing(true);
-        setSyncError(null);
-        const supabase = getSupabaseClient();
-        void submitCourierWeighingBatchRpc(supabase, lines)
-          .then((rpcRes) => {
-            if (!rpcRes.ok) {
-              handleCloudError(`Gagal menyimpan timbangan: ${rpcRes.error}`, 'FIELD_TEAM');
-              return;
-            }
-            return pullFromSupabase('FIELD_TEAM');
-          })
-          .catch(() => {
-            handleCloudError('Gagal menyimpan timbangan ke Supabase. Mengembalikan data server…', 'FIELD_TEAM');
-          })
-          .finally(() => setIsSyncing(false));
+      if (!isSupabaseConfigured) {
+        const patchById = new Map(lines.map((l) => [l.delivery_item_id, l]));
+        const updatedCourier = courierItemsRef.current.map((item) => {
+          const p = patchById.get(item.delivery_item_id);
+          if (!p) return item;
+          const acceptedKg = roundKg(p.qty_accepted_kg);
+          const shrinkKg = subtractKg(item.qty_dispatched_kg, acceptedKg);
+          return {
+            ...item,
+            qty_accepted_kg: acceptedKg,
+            qty_shrinkage_kg: shrinkKg,
+            rejection_reason: shrinkKg > 0 ? p.rejection_reason ?? 'Susut' : null,
+            is_weighed: true,
+          };
+        });
+        commitCourier(updatedCourier);
+        return { ok: true, count: lines.length };
       }
-      return { ok: true, count: lines.length };
-    }
 
-    const res = applyBastWeights(stateRef.current, lines, runtimeCtx().nowIso);
-    if (!res.ok) return { ok: false, error: res.error };
-    commit(res.data);
-    commitCourier(buildSafeCourierItems(res.data));
-
-    if (isSupabaseConfigured) {
       setIsSyncing(true);
       setSyncError(null);
-      const supabase = getSupabaseClient();
-      void submitCourierWeighingBatchRpc(supabase, lines)
-        .then((rpcRes) => {
-          if (!rpcRes.ok) {
-            handleCloudError(`Gagal menyimpan timbangan: ${rpcRes.error}`);
-            return;
-          }
-          return pullFromSupabase();
-        })
-        .catch(() => {
-          handleCloudError('Gagal menyimpan timbangan ke Supabase. Mengembalikan data server…');
-        })
-        .finally(() => setIsSyncing(false));
+      try {
+        const supabase = getSupabaseClient();
+        const rpcRes = await submitCourierWeighingBatchRpc(supabase, lines);
+        if (!rpcRes.ok) {
+          handleCloudError(`Gagal menyimpan timbangan: ${rpcRes.error}`, 'FIELD_TEAM');
+          return { ok: false, error: rpcRes.error };
+        }
+        await pullFromSupabase('FIELD_TEAM');
+        return { ok: true, count: rpcRes.count };
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'Gagal menyimpan timbangan ke Supabase.';
+        handleCloudError(`Gagal menyimpan timbangan: ${msg}`, 'FIELD_TEAM');
+        return { ok: false, error: msg };
+      } finally {
+        setIsSyncing(false);
+      }
     }
-    return { ok: true, count: res.count };
+
+    const precheck = applyBastWeights(stateRef.current, lines, runtimeCtx().nowIso);
+    if (!precheck.ok) return { ok: false, error: precheck.error };
+
+    if (!isSupabaseConfigured) {
+      commit(precheck.data);
+      commitCourier(buildSafeCourierItems(precheck.data));
+      return { ok: true, count: precheck.count };
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const rpcRes = await submitCourierWeighingBatchRpc(supabase, lines);
+      if (!rpcRes.ok) {
+        handleCloudError(`Gagal menyimpan timbangan: ${rpcRes.error}`);
+        return { ok: false, error: rpcRes.error };
+      }
+      await pullFromSupabase();
+      return { ok: true, count: rpcRes.count };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menyimpan timbangan ke Supabase.';
+      handleCloudError(`Gagal menyimpan timbangan: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
-  const markInvoicePaid = (id: string): ActionResult => {
+  /**
+   * RPC #3: Marks invoice PAID via `rpc_mark_invoice_paid` and unlocks `profit_ledger_entries`.
+   */
+  const markInvoicePaid = async (id: string): Promise<ActionResult> => {
     const nowIso = runtimeCtx().nowIso;
-    const res = markInvoicePaidEngine(stateRef.current, id, nowIso);
-    if (!res.ok) return { ok: false, error: res.error };
-    commit(res.data);
-    commitCourier(buildSafeCourierItems(res.data));
+    const precheck = markInvoicePaidEngine(stateRef.current, id, nowIso);
+    if (!precheck.ok) return { ok: false, error: precheck.error };
 
-    if (isSupabaseConfigured) {
-      setIsSyncing(true);
-      setSyncError(null);
-      const supabase = getSupabaseClient();
-      void markInvoicePaidInSupabase(supabase, id, nowIso)
-        .then((ok) => {
-          if (!ok) {
-            handleCloudError('Gagal menandai invoice lunas di Supabase. Mengembalikan status server…');
-            return;
-          }
-          return pullFromSupabase();
-        })
-        .catch(() => {
-          handleCloudError('Gagal menandai invoice lunas di Supabase. Mengembalikan status server…');
-        })
-        .finally(() => setIsSyncing(false));
+    if (!isSupabaseConfigured) {
+      commit(precheck.data);
+      commitCourier(buildSafeCourierItems(precheck.data));
+      return { ok: true };
     }
-    return { ok: true };
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const rpcRes = await markInvoicePaidRpc(supabase, id);
+      if (!rpcRes.ok) {
+        handleCloudError(`Gagal menandai invoice lunas: ${rpcRes.error}`);
+        return { ok: false, error: rpcRes.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menandai invoice lunas di Supabase.';
+      handleCloudError(`Gagal menandai invoice lunas: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
-  const updateProfitSplitPercentage = (team: number, coop: number): ActionResult => {
-    const res = updateProfitSplit(stateRef.current, team, coop, runtimeCtx().nowIso);
-    if (!res.ok) return { ok: false, error: res.error };
-    commit(res.data);
+  /**
+   * RPC #5: Updates profit split percentages via `rpc_update_app_settings` and recalculates
+   * all unpaid-out orders in PostgreSQL.
+   */
+  const updateProfitSplitPercentage = async (team: number, coop: number): Promise<ActionResult> => {
+    const precheck = updateProfitSplit(stateRef.current, team, coop, runtimeCtx().nowIso);
+    if (!precheck.ok) return { ok: false, error: precheck.error };
 
-    if (isSupabaseConfigured) {
-      setIsSyncing(true);
-      setSyncError(null);
-      const supabase = getSupabaseClient();
-      void updateAppSettingsSplitInSupabase(supabase, team, coop)
-        .then((ok) => {
-          if (!ok) {
-            handleCloudError('Gagal memperbarui persentase bagi hasil di Supabase. Mengembalikan data server…');
-            return;
-          }
-          return pullFromSupabase();
-        })
-        .catch(() => {
-          handleCloudError('Gagal memperbarui persentase bagi hasil di Supabase. Mengembalikan data server…');
-        })
-        .finally(() => setIsSyncing(false));
+    if (!isSupabaseConfigured) {
+      commit(precheck.data);
+      return { ok: true };
     }
-    return { ok: true };
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const rpcRes = await updateAppSettingsRpc(supabase, {
+        teamSharePct: team,
+        coopSharePct: coop,
+      });
+      if (!rpcRes.ok) {
+        handleCloudError(`Gagal memperbarui persentase bagi hasil: ${rpcRes.error}`);
+        return { ok: false, error: rpcRes.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal memperbarui persentase bagi hasil di Supabase.';
+      handleCloudError(`Gagal memperbarui persentase bagi hasil: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
-  const executePayout = (who: BeneficiaryType, notes?: string) =>
-    run((s) => executePayoutEngine(s, who, runtimeCtx(), notes));
+  /**
+   * RPC #4: Executes profit payout via `rpc_execute_profit_payout`.
+   */
+  const executePayout = async (who: BeneficiaryType, notes?: string): Promise<ActionResult> => {
+    const precheck = executePayoutEngine(stateRef.current, who, runtimeCtx(), notes);
+    if (!precheck.ok) return { ok: false, error: precheck.error };
 
-  const saveKitchen = (input: KitchenMasterInput): MasterSaveResult => {
+    if (!isSupabaseConfigured) {
+      commit(precheck.data);
+      return { ok: true, count: precheck.count };
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const rpcRes = await executeProfitPayoutRpc(supabase, who, null);
+      if (!rpcRes.ok) {
+        handleCloudError(`Gagal mencairkan bagi hasil: ${rpcRes.error}`);
+        return { ok: false, error: rpcRes.error };
+      }
+      await pullFromSupabase();
+      return { ok: true, count: rpcRes.count };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal mencairkan bagi hasil di Supabase.';
+      handleCloudError(`Gagal mencairkan bagi hasil: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const saveKitchen = async (input: KitchenMasterInput): Promise<MasterSaveResult> => {
     const error = validateKitchenInput(input);
     if (error) return { ok: false, error };
     const s = stateRef.current;
-    commitAndSyncCloud({ ...s, kitchens: upsertKitchenRecord(s.kitchens, input, new Date().toISOString()) });
-    return { ok: true };
+    const nextKitchens = upsertKitchenRecord(s.kitchens, input, new Date().toISOString());
+    const saved = input.id ? nextKitchens.find((k) => k.id === input.id) : nextKitchens[nextKitchens.length - 1];
+
+    if (!isSupabaseConfigured || !saved) {
+      commit({ ...s, kitchens: nextKitchens });
+      return { ok: true };
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const res = await upsertKitchenInSupabase(supabase, saved);
+      if (!res.ok) {
+        handleCloudError(res.error);
+        return { ok: false, error: res.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menyimpan dapur ke Supabase.';
+      handleCloudError(msg);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
-  const saveItem = (input: ItemMasterInput): MasterSaveResult => {
+  const saveItem = async (input: ItemMasterInput): Promise<MasterSaveResult> => {
     const error = validateItemInput(input);
     if (error) return { ok: false, error };
     const s = stateRef.current;
-    commitAndSyncCloud({ ...s, items: upsertItemRecord(s.items, input, new Date().toISOString()) });
-    return { ok: true };
+    const nextItems = upsertItemRecord(s.items, input, new Date().toISOString());
+    const saved = input.id ? nextItems.find((i) => i.id === input.id) : nextItems[nextItems.length - 1];
+
+    if (!isSupabaseConfigured || !saved) {
+      commit({ ...s, items: nextItems });
+      return { ok: true };
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const res = await upsertProductInSupabase(supabase, saved);
+      if (!res.ok) {
+        handleCloudError(res.error);
+        return { ok: false, error: res.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menyimpan barang ke Supabase.';
+      handleCloudError(msg);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
-  const savePaymentAccount = (input: PaymentAccountInfo): MasterSaveResult => {
+  const savePaymentAccount = async (input: PaymentAccountInfo): Promise<MasterSaveResult> => {
     const bankName = clean(input.payment_bank_name);
     const accountNumber = clean(input.payment_account_number);
     const accountHolder = clean(input.payment_account_holder);
@@ -718,155 +883,182 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     if (!accountHolder) return { ok: false, error: 'Atas Nama wajib diisi.' };
 
     const s = stateRef.current;
-    const nextSplitConfig: ProfitSplitConfig = {
-      ...s.splitConfig,
-      payment_bank_name: bankName,
-      payment_account_number: accountNumber,
-      payment_account_holder: accountHolder,
-    };
-    const nextInvoices = s.invoices.map((inv) =>
-      inv.payment_status === 'PAID'
-        ? inv
-        : {
-            ...inv,
-            payment_bank_name: bankName,
-            payment_account_number: accountNumber,
-            payment_account_holder: accountHolder,
-          }
-    );
-    commit({ ...s, splitConfig: nextSplitConfig, invoices: nextInvoices });
-
-    if (isSupabaseConfigured) {
-      setIsSyncing(true);
-      setSyncError(null);
-      const supabase = getSupabaseClient();
-      void updatePaymentAccountInSupabase(supabase, {
+    if (!isSupabaseConfigured) {
+      const nextSplitConfig: ProfitSplitConfig = {
+        ...s.splitConfig,
         payment_bank_name: bankName,
         payment_account_number: accountNumber,
         payment_account_holder: accountHolder,
-      })
-        .then((ok) => {
-          if (!ok) {
-            handleCloudError('Gagal menyimpan rekening pembayaran ke Supabase. Mengembalikan data server…');
-            return;
-          }
-          return pullFromSupabase();
-        })
-        .catch(() => {
-          handleCloudError('Gagal menyimpan rekening pembayaran ke Supabase. Mengembalikan data server…');
-        })
-        .finally(() => setIsSyncing(false));
+      };
+      const nextInvoices = s.invoices.map((inv) =>
+        inv.payment_status === 'PAID'
+          ? inv
+          : {
+              ...inv,
+              payment_bank_name: bankName,
+              payment_account_number: accountNumber,
+              payment_account_holder: accountHolder,
+            }
+      );
+      commit({ ...s, splitConfig: nextSplitConfig, invoices: nextInvoices });
+      return { ok: true };
     }
-    return { ok: true };
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const rpcRes = await updateAppSettingsRpc(supabase, {
+        teamSharePct: s.splitConfig.team_share_pct,
+        coopSharePct: s.splitConfig.cooperative_share_pct,
+        bankName,
+        accountNumber,
+        accountHolder,
+      });
+      if (!rpcRes.ok) {
+        handleCloudError(`Gagal menyimpan rekening pembayaran: ${rpcRes.error}`);
+        return { ok: false, error: rpcRes.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menyimpan rekening pembayaran ke Supabase.';
+      handleCloudError(`Gagal menyimpan rekening pembayaran: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
-  const deleteKitchen = (kitchenId: string): MasterSaveResult => {
+  const deleteKitchen = async (kitchenId: string): Promise<MasterSaveResult> => {
     const s = stateRef.current;
     if (s.deliveries.some((d) => d.kitchen_id === kitchenId)) {
       return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki order aktif/histori.' };
     }
-    const nextKitchens = s.kitchens.filter((k) => k.id !== kitchenId);
-    commit({ ...s, kitchens: nextKitchens });
-    if (isSupabaseConfigured) {
-      setIsSyncing(true);
-      setSyncError(null);
-      const supabase = getSupabaseClient();
-      void deleteKitchenFromSupabase(supabase, kitchenId)
-        .then((res) => {
-          if (!res.ok) {
-            handleCloudError(res.error);
-            return;
-          }
-          return pullFromSupabase();
-        })
-        .catch(() => {
-          handleCloudError('Gagal menghapus dapur di Supabase. Mengembalikan data server…');
-        })
-        .finally(() => setIsSyncing(false));
+    if (!isSupabaseConfigured) {
+      commit({ ...s, kitchens: s.kitchens.filter((k) => k.id !== kitchenId) });
+      return { ok: true };
     }
-    return { ok: true };
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const res = await deleteKitchenFromSupabase(supabase, kitchenId);
+      if (!res.ok) {
+        handleCloudError(res.error);
+        return { ok: false, error: res.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menghapus dapur di Supabase.';
+      handleCloudError(msg);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
   };
 
-  const deleteItem = (itemId: string): MasterSaveResult => {
+  const deleteItem = async (itemId: string): Promise<MasterSaveResult> => {
     const s = stateRef.current;
     if (s.deliveryItems.some((di) => di.item_id === itemId)) {
       return { ok: false, error: 'Barang tidak dapat dihapus karena sedang digunakan pada order dapur.' };
     }
-    const nextItems = s.items.filter((i) => i.id !== itemId);
-    commit({ ...s, items: nextItems });
-    if (isSupabaseConfigured) {
-      setIsSyncing(true);
-      setSyncError(null);
-      const supabase = getSupabaseClient();
-      void deleteProductFromSupabase(supabase, itemId)
-        .then((res) => {
-          if (!res.ok) {
-            handleCloudError(res.error);
-            return;
-          }
-          return pullFromSupabase();
-        })
-        .catch(() => {
-          handleCloudError('Gagal menghapus barang di Supabase. Mengembalikan data server…');
-        })
-        .finally(() => setIsSyncing(false));
+    if (!isSupabaseConfigured) {
+      commit({ ...s, items: s.items.filter((i) => i.id !== itemId) });
+      return { ok: true };
     }
-    return { ok: true };
-  };
 
-  const resetSimulationData = (adminPin?: string) => {
-    const pin = adminPin ?? stateRef.current.splitConfig.admin_pin ?? '1122';
-    const fresh = createInitialSeedState();
-    commit({ ...fresh, activeRole: stateRef.current.activeRole, activeTab: stateRef.current.activeTab });
-    commitCourier(buildSafeCourierItems(fresh));
-    if (isSupabaseConfigured) {
-      setIsSyncing(true);
-      setSyncError(null);
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
       const supabase = getSupabaseClient();
-      void resetToSimulationSeedRpc(supabase, pin)
-        .then((res) => {
-          if (!res.ok) {
-            handleCloudError(`Gagal mereset data simulasi: ${res.error}`);
-            return;
-          }
-          return pullFromSupabase();
-        })
-        .catch(() => {
-          handleCloudError('Gagal mereset data simulasi di Supabase. Mengembalikan data server…');
-        })
-        .finally(() => setIsSyncing(false));
+      const res = await deleteProductFromSupabase(supabase, itemId);
+      if (!res.ok) {
+        handleCloudError(res.error);
+        return { ok: false, error: res.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal menghapus barang di Supabase.';
+      handleCloudError(msg);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
     }
   };
 
-  const clearAllTransactions = (adminPin?: string) => {
+  /**
+   * RPC #6: Resets simulation seed data via `rpc_admin_reset_data('RESET_SEED', p_admin_pin)`.
+   */
+  const resetSimulationData = async (adminPin?: string): Promise<ActionResult> => {
     const pin = adminPin ?? stateRef.current.splitConfig.admin_pin ?? '1122';
-    const s = stateRef.current;
-    const cleared: MbgState = {
-      ...s,
-      deliveries: [],
-      deliveryItems: [],
-      invoices: [],
-      ledgerEntries: [],
-      payoutBatches: [],
-    };
-    commit(cleared);
-    commitCourier([]);
-    if (isSupabaseConfigured) {
-      setIsSyncing(true);
-      setSyncError(null);
+    if (!isSupabaseConfigured) {
+      const fresh = createInitialSeedState();
+      commit({ ...fresh, activeRole: stateRef.current.activeRole, activeTab: stateRef.current.activeTab });
+      commitCourier(buildSafeCourierItems(fresh));
+      return { ok: true };
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
       const supabase = getSupabaseClient();
-      void clearAllTransactionsRpc(supabase, pin)
-        .then((res) => {
-          if (!res.ok) {
-            handleCloudError(`Gagal mengosongkan transaksi: ${res.error}`);
-            return;
-          }
-          return pullFromSupabase();
-        })
-        .catch(() => {
-          handleCloudError('Gagal mengosongkan transaksi di Supabase. Mengembalikan data server…');
-        })
-        .finally(() => setIsSyncing(false));
+      const res = await adminResetDataRpc(supabase, 'RESET_SEED', pin);
+      if (!res.ok) {
+        handleCloudError(`Gagal mereset data simulasi: ${res.error}`);
+        return { ok: false, error: res.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal mereset data simulasi di Supabase.';
+      handleCloudError(`Gagal mereset data simulasi: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  /**
+   * RPC #6: Clears all transactions via `rpc_admin_reset_data('CLEAR_TRANSACTIONS', p_admin_pin)`.
+   */
+  const clearAllTransactions = async (adminPin?: string): Promise<ActionResult> => {
+    const pin = adminPin ?? stateRef.current.splitConfig.admin_pin ?? '1122';
+    if (!isSupabaseConfigured) {
+      const s = stateRef.current;
+      const cleared: MbgState = {
+        ...s,
+        deliveries: [],
+        deliveryItems: [],
+        invoices: [],
+        ledgerEntries: [],
+        payoutBatches: [],
+      };
+      commit(cleared);
+      commitCourier([]);
+      return { ok: true };
+    }
+
+    setIsSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const res = await adminResetDataRpc(supabase, 'CLEAR_TRANSACTIONS', pin);
+      if (!res.ok) {
+        handleCloudError(`Gagal mengosongkan transaksi: ${res.error}`);
+        return { ok: false, error: res.error };
+      }
+      await pullFromSupabase();
+      return { ok: true };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal mengosongkan transaksi di Supabase.';
+      handleCloudError(`Gagal mengosongkan transaksi: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setIsSyncing(false);
     }
   };
 

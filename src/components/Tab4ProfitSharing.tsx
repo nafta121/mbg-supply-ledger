@@ -58,14 +58,14 @@ export function Tab4ProfitSharing() {
   const BENEFICIARY_LABEL: Record<BeneficiaryType, string> = { TEAM: 'Tim', COOPERATIVE: 'Koperasi' };
 
   // Tim & Koperasi are disbursed independently — field transfers often happen on different days.
-  const handlePayout = (who: BeneficiaryType | 'ALL') => {
+  const handlePayout = async (who: BeneficiaryType | 'ALL') => {
     if (!isAdmin) return;
     const targets: BeneficiaryType[] = who === 'ALL' ? ['TEAM', 'COOPERATIVE'] : [who];
     const amounts = { TEAM: availTeam, COOPERATIVE: availCoop };
     const paid = targets.filter((t) => amounts[t] > 0);
     if (paid.length === 0) return;
     for (const t of paid) {
-      const res = executePayout(t);
+      const res = await executePayout(t);
       if (!res.ok) {
         setToast({ kind: 'error', text: res.error });
         return;
@@ -76,12 +76,12 @@ export function Tab4ProfitSharing() {
     setToast({ kind: 'ok', text: `${label} ${formatRp(total)} berhasil dicairkan.` });
   };
 
-  const applySplit = (teamVal: number) => {
+  const applySplit = async (teamVal: number) => {
     if (!isAdmin || !Number.isFinite(teamVal)) return;
     const team = Math.max(0, Math.min(100, Math.round(teamVal * 100) / 100));
     const coop = Math.round((100 - team) * 100) / 100;
     setTeamPctInput(String(team));
-    const res = updateProfitSplitPercentage(team, coop);
+    const res = await updateProfitSplitPercentage(team, coop);
     if (!res.ok) {
       setToast({ kind: 'error', text: res.error });
       return;

@@ -139,5 +139,42 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
     expect(restored.deliveryItems[1]!.qty_accepted_kg).toBe(0.2);
     expect(restored.deliveryItems[1]!.qty_shrinkage_kg).toBe(0);
   });
+
+  it('preserves separate team_paid_out_at and coop_paid_out_at timestamps and dynamic payment account info', () => {
+    const seed = createInitialSeedState();
+    const rows = toSupabaseRows(seed);
+    rows.ledgerEntries[0]!.team_paid_out = true;
+    rows.ledgerEntries[0]!.team_paid_out_at = '2026-10-16T16:00:00.000Z';
+    rows.ledgerEntries[0]!.coop_paid_out = true;
+    rows.ledgerEntries[0]!.coop_paid_out_at = '2026-10-17T10:30:00.000Z';
+    rows.appSettings.payment_bank_name = 'BRI';
+    rows.appSettings.payment_account_number = '388801005597504';
+    rows.appSettings.payment_account_holder = 'Yoga Eko Setiawan';
+
+    const restored = fromSupabaseRows({
+      kitchens: rows.kitchens,
+      products: rows.products,
+      orders: rows.orders,
+      orderItems: rows.orderItems,
+      invoices: rows.invoices,
+      ledgerEntries: rows.ledgerEntries,
+      splitConfigs: [rows.splitConfig],
+      appSettings: [rows.appSettings],
+      payoutBatches: rows.payoutBatches,
+    });
+
+    const teamEntry = restored.ledgerEntries.find(
+      (e) => e.delivery_item_id === rows.ledgerEntries[0]!.order_item_id && e.beneficiary_type === 'TEAM'
+    )!;
+    const coopEntry = restored.ledgerEntries.find(
+      (e) => e.delivery_item_id === rows.ledgerEntries[0]!.order_item_id && e.beneficiary_type === 'COOPERATIVE'
+    )!;
+    expect(teamEntry.paid_out_at).toBe('2026-10-16T16:00:00.000Z');
+    expect(coopEntry.paid_out_at).toBe('2026-10-17T10:30:00.000Z');
+    expect(restored.splitConfig.payment_bank_name).toBe('BRI');
+    expect(restored.splitConfig.payment_account_number).toBe('388801005597504');
+    expect(restored.splitConfig.payment_account_holder).toBe('Yoga Eko Setiawan');
+  });
 });
+
 

@@ -311,7 +311,7 @@ export function AppShell() {
             )}
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 const expected = splitConfig.admin_pin || '1122';
                 if (resetPin.trim() !== expected) {
                   setResetPinError('Masukkan PIN Admin yang benar sebelum mereset database.');
@@ -321,7 +321,11 @@ export function AppShell() {
                   typeof window === 'undefined' ||
                   window.confirm('Kembalikan database Supabase ke 5 Order Dapur simulasi awal (16 Oktober 2026)?')
                 ) {
-                  resetSimulationData(resetPin.trim());
+                  const res = await resetSimulationData(resetPin.trim());
+                  if (!res.ok) {
+                    setResetPinError(res.error);
+                    return;
+                  }
                   setResetSheetOpen(false);
                 }
               }}
@@ -331,7 +335,7 @@ export function AppShell() {
             </button>
             <button
               type="button"
-              onClick={() => {
+              onClick={async () => {
                 const expected = splitConfig.admin_pin || '1122';
                 if (resetPin.trim() !== expected) {
                   setResetPinError('Masukkan PIN Admin yang benar sebelum mengosongkan transaksi.');
@@ -343,7 +347,11 @@ export function AppShell() {
                     'Kosongkan seluruh transaksi (Order, Invoice, Bagi Hasil) di Supabase? Master Dapur & Master Barang tetap disimpan.'
                   )
                 ) {
-                  clearAllTransactions(resetPin.trim());
+                  const res = await clearAllTransactions(resetPin.trim());
+                  if (!res.ok) {
+                    setResetPinError(res.error);
+                    return;
+                  }
                   setResetSheetOpen(false);
                 }
               }}
