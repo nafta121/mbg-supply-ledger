@@ -103,11 +103,27 @@ function MasterForm<T extends { id?: string }>({
 }
 
 export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { activeRole, kitchens, items, saveKitchen, saveItem, deleteKitchen, deleteItem } = useMbgStore();
+  const { activeRole, kitchens, items, splitConfig, saveKitchen, saveItem, savePaymentAccount, deleteKitchen, deleteItem } =
+    useMbgStore();
   const [tab, setTab] = useState<MasterTab>('kitchens');
   // `null` = no form open, `'new'` = create form, otherwise the id being edited.
   const [editing, setEditing] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
+
+  const [bankName, setBankName] = useState<string>(splitConfig.payment_bank_name ?? 'BRI');
+  const [accountNumber, setAccountNumber] = useState<string>(
+    splitConfig.payment_account_number ?? '0000-0000-0000-000'
+  );
+  const [accountHolder, setAccountHolder] = useState<string>(
+    splitConfig.payment_account_holder ?? 'Bendahara Supplier MBG'
+  );
+  const [bankError, setBankError] = useState<string | null>(null);
+
+  React.useEffect(() => {
+    setBankName(splitConfig.payment_bank_name ?? 'BRI');
+    setAccountNumber(splitConfig.payment_account_number ?? '0000-0000-0000-000');
+    setAccountHolder(splitConfig.payment_account_holder ?? 'Bendahara Supplier MBG');
+  }, [splitConfig.payment_bank_name, splitConfig.payment_account_number, splitConfig.payment_account_holder]);
 
   // Master data is Admin-only (Invariant 5).
   if (activeRole !== 'OWNER_ADMIN') return null;
@@ -125,6 +141,21 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
     return res;
   };
 
+  const submitBankAccount = (e: React.FormEvent) => {
+    e.preventDefault();
+    setBankError(null);
+    const res = savePaymentAccount({
+      payment_bank_name: bankName,
+      payment_account_number: accountNumber,
+      payment_account_holder: accountHolder,
+    });
+    if (!res.ok) {
+      setBankError(res.error);
+      return;
+    }
+    setToast({ kind: 'ok', text: 'Rekening pembayaran invoice berhasil disimpan ke Supabase.' });
+  };
+
   const addLabel: Record<MasterTab, string> = {
     kitchens: '+ Tambah Dapur',
     items: '+ Tambah Barang',
@@ -138,13 +169,74 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   return (
     <BottomSheet
       open={open}
-      title="⚙️ Data Master (Supabase)"
+      title="⚙️ Pengaturan / Data Master"
       onClose={() => {
         setEditing(null);
         onClose();
       }}
     >
       <div className="space-y-3">
+        <Toast toast={toast} onClose={() => setToast(null)} />
+
+        {/* Rekening Pembayaran Invoice Dapur (Tersimpan di Supabase) */}
+        <form
+          onSubmit={submitBankAccount}
+          className="space-y-2.5 rounded-lg bg-slate-50 p-3 ring-1 ring-inset ring-slate-200"
+        >
+          <div className="text-xs font-extrabold uppercase tracking-wide text-slate-800">
+            Rekening Pembayaran Invoice Dapur
+          </div>
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <div>
+              <label htmlFor="md-bank-name" className="mb-1 block text-xs font-semibold text-slate-700">
+                Nama Bank <span className="text-rose-600">*</span>
+              </label>
+              <input
+                id="md-bank-name"
+                type="text"
+                placeholder="Contoh: BRI / BCA / Mandiri"
+                value={bankName}
+                onChange={(e) => setBankName(e.target.value)}
+                className="field-input"
+              />
+            </div>
+            <div>
+              <label htmlFor="md-bank-number" className="mb-1 block text-xs font-semibold text-slate-700">
+                Nomor Rekening <span className="text-rose-600">*</span>
+              </label>
+              <input
+                id="md-bank-number"
+                type="text"
+                placeholder="Contoh: 0000-0000-0000-000"
+                value={accountNumber}
+                onChange={(e) => setAccountNumber(e.target.value)}
+                className="field-input font-mono"
+              />
+            </div>
+          </div>
+          <div>
+            <label htmlFor="md-bank-holder" className="mb-1 block text-xs font-semibold text-slate-700">
+              Atas Nama <span className="text-rose-600">*</span>
+            </label>
+            <input
+              id="md-bank-holder"
+              type="text"
+              placeholder="Contoh: Bendahara Supplier MBG"
+              value={accountHolder}
+              onChange={(e) => setAccountHolder(e.target.value)}
+              className="field-input"
+            />
+          </div>
+          {bankError && (
+            <p role="alert" className="text-xs font-medium text-rose-700">
+              {bankError}
+            </p>
+          )}
+          <button type="submit" className="btn-primary min-h-[40px] w-full text-xs">
+            Simpan Rekening Pembayaran
+          </button>
+        </form>
+
         <SegmentedControl<MasterTab>
           label="Jenis data master"
           value={tab}
@@ -154,8 +246,6 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
             { value: 'items', label: `Barang (${items.length})` },
           ]}
         />
-
-        <Toast toast={toast} onClose={() => setToast(null)} />
 
         {editing === 'new' ? (
           tab === 'kitchens' ? (

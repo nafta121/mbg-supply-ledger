@@ -97,6 +97,12 @@ export interface KitchenDeliveryItem {
   updated_at: string;
 }
 
+export interface PaymentAccountInfo {
+  payment_bank_name: string;
+  payment_account_number: string;
+  payment_account_holder: string;
+}
+
 // 6. public.kitchen_invoices — 1 Invoice Dapur Gabungan per Order Dapur
 export interface KitchenInvoice {
   id: string;
@@ -111,6 +117,9 @@ export interface KitchenInvoice {
   payment_proof_url: string | null;
   paid_at: string | null;
   verified_by: string | null;
+  payment_bank_name?: string;
+  payment_account_number?: string;
+  payment_account_holder?: string;
   created_at: string;
   updated_at: string;
 }
@@ -121,6 +130,9 @@ export interface ProfitSplitConfig {
   config_name: string;
   team_share_pct: number; // NUMERIC(5,2)
   cooperative_share_pct: number; // NUMERIC(5,2)
+  payment_bank_name?: string;
+  payment_account_number?: string;
+  payment_account_holder?: string;
   is_active: boolean;
   effective_from: string;
   created_at: string;

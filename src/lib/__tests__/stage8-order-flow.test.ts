@@ -267,7 +267,7 @@ describe('Stage 8 — seed scenario (16 Okt 2026)', () => {
     expect(progress('DPR-05')).toBe('PARTIALLY_WEIGHED');
   });
 
-  it('DPR-01 invoice: Wortel 35 × 14.000 + Kubis 25 × 10.000 = Rp 740.000 (Lunas)', () => {
+  it('DPR-01 invoice: Wortel 35 × 14.000 + Kubis 25 × 10.000 = Rp 740.000 (Lunas) with bank account and no Jatuh Tempo', () => {
     const inv = seed.invoices.find((i) => i.kitchen_id === 'kitchen-01')!;
     expect(inv.payment_status).toBe('PAID');
     expect(buildInvoiceLines(seed, inv).map(formatInvoiceLine)).toEqual([
@@ -278,6 +278,27 @@ describe('Stage 8 — seed scenario (16 Okt 2026)', () => {
     const wa = buildInvoiceWaText(seed, inv);
     expect(wa).toContain('Total Tagihan: Rp 740.000');
     expect(wa).toContain('Status: Lunas');
+    expect(wa).toContain('TRANSFER PEMBAYARAN KE REKENING:');
+    expect(wa).toContain('BRI • 0000-0000-0000-000');
+    expect(wa).toContain('a.n. Bendahara Supplier MBG');
+    expect(wa).not.toMatch(/jatuh tempo/i);
+    expect(wa).not.toContain(',00');
+
+    // Custom configurable bank account on unpaid invoice
+    const unpaidInv = seed.invoices.find((i) => i.kitchen_id === 'kitchen-03')!;
+    const customState = {
+      ...seed,
+      splitConfig: {
+        ...seed.splitConfig,
+        payment_bank_name: 'BCA',
+        payment_account_number: '8888-9999-00',
+        payment_account_holder: 'Koperasi MBG Pusat',
+      },
+    };
+    const customWa = buildInvoiceWaText(customState, unpaidInv);
+    expect(customWa).toContain('BCA • 8888-9999-00');
+    expect(customWa).toContain('a.n. Koperasi MBG Pusat');
+    expect(customWa).not.toMatch(/jatuh tempo/i);
   });
 
   it('bagi hasil: Siap Dicairkan Tim Rp 218.100 / Koperasi Rp 145.400; sisanya Menunggu Dapur Bayar', () => {
@@ -302,3 +323,4 @@ describe('Stage 8 — seed scenario (16 Okt 2026)', () => {
     expect(text).not.toMatch(/supplier/i);
   });
 });
+

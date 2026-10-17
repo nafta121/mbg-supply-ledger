@@ -4,7 +4,7 @@
  * amount already stored on the order line (Invariant 3) — nothing is
  * re-priced. Tagihan per baris = qty_accepted_kg × Harga Dapur / kg (Invariant 2).
  */
-import type { KitchenInvoice, LedgerPayoutStatus } from '../types/mbg';
+import type { KitchenInvoice, LedgerPayoutStatus, PaymentAccountInfo, ProfitSplitConfig } from '../types/mbg';
 import { gramsToKg, idrToSen, kgToGrams, senToIdr } from './financial-engine';
 import { describeShrinkReason } from './courier-view';
 import { linesForDelivery, type MbgData, orderProgress } from './order-engine';
@@ -70,12 +70,38 @@ export function summarizeInvoice(lines: InvoiceLineView[]): InvoiceSummary {
   };
 }
 
+export function resolvePaymentAccount(
+  data: { splitConfig?: ProfitSplitConfig },
+  invoice?: Partial<KitchenInvoice>
+): PaymentAccountInfo {
+  const isPaid = invoice?.payment_status === 'PAID';
+  const cfg = data.splitConfig;
+  return {
+    payment_bank_name:
+      (isPaid ? invoice?.payment_bank_name : cfg?.payment_bank_name || invoice?.payment_bank_name) ||
+      cfg?.payment_bank_name ||
+      invoice?.payment_bank_name ||
+      'BRI',
+    payment_account_number:
+      (isPaid ? invoice?.payment_account_number : cfg?.payment_account_number || invoice?.payment_account_number) ||
+      cfg?.payment_account_number ||
+      invoice?.payment_account_number ||
+      '0000-0000-0000-000',
+    payment_account_holder:
+      (isPaid ? invoice?.payment_account_holder : cfg?.payment_account_holder || invoice?.payment_account_holder) ||
+      cfg?.payment_account_holder ||
+      invoice?.payment_account_holder ||
+      'Bendahara Supplier MBG',
+  };
+}
+
 export function buildInvoiceWaText(
-  data: Pick<MbgData, 'deliveryItems' | 'items' | 'kitchens'>,
+  data: Pick<MbgData, 'deliveryItems' | 'items' | 'kitchens'> & { splitConfig?: ProfitSplitConfig },
   invoice: KitchenInvoice
 ): string {
   const kitchen = data.kitchens.find((k) => k.id === invoice.kitchen_id);
   const lines = buildInvoiceLines(data, invoice);
+  const account = resolvePaymentAccount(data, invoice);
   const out = [
     `Invoice Tagihan Dapur ${invoice.invoice_number}`,
     kitchen ? `${kitchen.kitchen_code} • ${shortKitchenName(kitchen.name)}` : '-',
@@ -93,7 +119,10 @@ export function buildInvoiceWaText(
   out.push('');
   out.push(`Total Tagihan: ${formatRp(invoice.total_invoice_amount)}`);
   out.push(`Status: ${INVOICE_LABEL[invoice.payment_status]}`);
-  out.push(`Jatuh tempo: ${invoice.due_date}`);
+  out.push('');
+  out.push('TRANSFER PEMBAYARAN KE REKENING:');
+  out.push(`${account.payment_bank_name} • ${account.payment_account_number}`);
+  out.push(`a.n. ${account.payment_account_holder}`);
   return out.join('\n');
 }
 

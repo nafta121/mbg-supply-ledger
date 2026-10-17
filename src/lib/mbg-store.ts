@@ -1,7 +1,15 @@
 'use client';
 
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
-import type { BeneficiaryType, Item, Kitchen, ProfitSplitConfig, SafeCourierBastItem, UserRole } from '../types/mbg';
+import type {
+  BeneficiaryType,
+  Item,
+  Kitchen,
+  PaymentAccountInfo,
+  ProfitSplitConfig,
+  SafeCourierBastItem,
+  UserRole,
+} from '../types/mbg';
 import { idrToSen, roundKg, senToIdr } from './financial-engine';
 import {
   applyBastWeights,
@@ -32,10 +40,12 @@ import {
   subscribeToMbgRealtime,
   syncMbgDataToSupabase,
   updateAppSettingsSplitInSupabase,
+  updatePaymentAccountInSupabase,
 } from './supabase-sync';
 
 export { buildSafeCourierItems } from './order-engine';
 export type { CreateOrderInput, OrderLineInput, UpdateBastInput } from './order-engine';
+export type { PaymentAccountInfo } from '../types/mbg';
 
 /** Business date of the operational day ("hari ini" for Order Dapur & kurir). */
 export const BUSINESS_DATE = '2026-10-16';
@@ -89,6 +99,7 @@ export interface MbgContextValue extends MbgState {
   executePayout: (beneficiary_type: BeneficiaryType, notes?: string) => ActionResult;
   saveKitchen: (input: KitchenMasterInput) => MasterSaveResult;
   saveItem: (input: ItemMasterInput) => MasterSaveResult;
+  savePaymentAccount: (input: PaymentAccountInfo) => MasterSaveResult;
   deleteKitchen: (kitchen_id: string) => MasterSaveResult;
   deleteItem: (item_id: string) => MasterSaveResult;
   /** Restores simulation seed data in Supabase via `reset_to_simulation_seed()` RPC. */
@@ -256,6 +267,9 @@ export function createEmptyCloudState(): MbgState {
     config_name: 'Skema Bagi Hasil Standar Tim 60% : Koperasi 40%',
     team_share_pct: 60.0,
     cooperative_share_pct: 40.0,
+    payment_bank_name: 'BRI',
+    payment_account_number: '0000-0000-0000-000',
+    payment_account_holder: 'Bendahara Supplier MBG',
     is_active: true,
     effective_from: BUSINESS_DATE,
     created_at: nowIso,
@@ -313,6 +327,9 @@ export function createInitialSeedState(): MbgState {
     config_name: 'Skema Bagi Hasil Standar Tim 60% : Koperasi 40%',
     team_share_pct: 60.0,
     cooperative_share_pct: 40.0,
+    payment_bank_name: 'BRI',
+    payment_account_number: '0000-0000-0000-000',
+    payment_account_holder: 'Bendahara Supplier MBG',
     is_active: true,
     effective_from: BUSINESS_DATE,
     created_at: nowIso,
@@ -653,6 +670,47 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     return { ok: true };
   };
 
+  const savePaymentAccount = (input: PaymentAccountInfo): MasterSaveResult => {
+    const bankName = clean(input.payment_bank_name);
+    const accountNumber = clean(input.payment_account_number);
+    const accountHolder = clean(input.payment_account_holder);
+    if (!bankName) return { ok: false, error: 'Nama Bank wajib diisi.' };
+    if (!accountNumber) return { ok: false, error: 'Nomor Rekening wajib diisi.' };
+    if (!accountHolder) return { ok: false, error: 'Atas Nama wajib diisi.' };
+
+    const s = stateRef.current;
+    const nextSplitConfig: ProfitSplitConfig = {
+      ...s.splitConfig,
+      payment_bank_name: bankName,
+      payment_account_number: accountNumber,
+      payment_account_holder: accountHolder,
+    };
+    const nextInvoices = s.invoices.map((inv) =>
+      inv.payment_status === 'PAID'
+        ? inv
+        : {
+            ...inv,
+            payment_bank_name: bankName,
+            payment_account_number: accountNumber,
+            payment_account_holder: accountHolder,
+          }
+    );
+    commit({ ...s, splitConfig: nextSplitConfig, invoices: nextInvoices });
+
+    if (isSupabaseConfigured) {
+      setIsSyncing(true);
+      const supabase = getSupabaseClient();
+      void updatePaymentAccountInSupabase(supabase, {
+        payment_bank_name: bankName,
+        payment_account_number: accountNumber,
+        payment_account_holder: accountHolder,
+      })
+        .then(() => pullFromSupabase())
+        .finally(() => setIsSyncing(false));
+    }
+    return { ok: true };
+  };
+
   const deleteKitchen = (kitchenId: string): MasterSaveResult => {
     const s = stateRef.current;
     if (s.deliveries.some((d) => d.kitchen_id === kitchenId)) {
@@ -744,6 +802,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     executePayout,
     saveKitchen,
     saveItem,
+    savePaymentAccount,
     deleteKitchen,
     deleteItem,
     resetSimulationData,

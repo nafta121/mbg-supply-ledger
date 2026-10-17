@@ -103,6 +103,9 @@ export interface KitchenInvoiceRow {
   amount_paid_rp?: number | string | null;
   status: 'UNPAID' | 'PAID';
   paid_at?: string | null;
+  payment_bank_name?: string | null;
+  payment_account_number?: string | null;
+  payment_account_holder?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -134,6 +137,9 @@ export interface ProfitSplitConfigRow {
   config_name: string;
   team_share_pct: number | string;
   cooperative_share_pct: number | string;
+  payment_bank_name?: string | null;
+  payment_account_number?: string | null;
+  payment_account_holder?: string | null;
   is_active: boolean;
   effective_from: string;
   created_at?: string | null;
@@ -145,6 +151,9 @@ export interface AppSettingsRow {
   coop_share_pct: number | string;
   admin_pin: string;
   coop_pin: string;
+  payment_bank_name?: string | null;
+  payment_account_number?: string | null;
+  payment_account_holder?: string | null;
   updated_at?: string | null;
 }
 
@@ -271,6 +280,10 @@ export function toSupabaseRows(data: MbgData): {
     };
   });
 
+  const bankName = data.splitConfig.payment_bank_name ?? 'BRI';
+  const accountNumber = data.splitConfig.payment_account_number ?? '0000-0000-0000-000';
+  const accountHolder = data.splitConfig.payment_account_holder ?? 'Bendahara Supplier MBG';
+
   const invoices: KitchenInvoiceRow[] = data.invoices.map((inv) => ({
     id: inv.id,
     invoice_code: inv.invoice_number,
@@ -282,6 +295,9 @@ export function toSupabaseRows(data: MbgData): {
     amount_paid_rp: inv.amount_paid,
     status: inv.payment_status === 'PAID' ? 'PAID' : 'UNPAID',
     paid_at: inv.paid_at,
+    payment_bank_name: inv.payment_bank_name ?? bankName,
+    payment_account_number: inv.payment_account_number ?? accountNumber,
+    payment_account_holder: inv.payment_account_holder ?? accountHolder,
     created_at: inv.created_at,
     updated_at: inv.updated_at,
   }));
@@ -347,6 +363,9 @@ export function toSupabaseRows(data: MbgData): {
     config_name: data.splitConfig.config_name,
     team_share_pct: data.splitConfig.team_share_pct,
     cooperative_share_pct: data.splitConfig.cooperative_share_pct,
+    payment_bank_name: bankName,
+    payment_account_number: accountNumber,
+    payment_account_holder: accountHolder,
     is_active: data.splitConfig.is_active,
     effective_from: data.splitConfig.effective_from,
     created_at: data.splitConfig.created_at,
@@ -358,6 +377,9 @@ export function toSupabaseRows(data: MbgData): {
     coop_share_pct: data.splitConfig.cooperative_share_pct,
     admin_pin: '1234',
     coop_pin: '5678',
+    payment_bank_name: bankName,
+    payment_account_number: accountNumber,
+    payment_account_holder: accountHolder,
   };
 
   const payoutBatches: ProfitPayoutBatchRow[] = data.payoutBatches.map((pb) => ({
@@ -466,6 +488,15 @@ export function fromSupabaseRows(rows: {
     };
   });
 
+  const appSetting = rows.appSettings?.[0];
+  const scRow = rows.splitConfigs[0];
+  const teamPctVal = appSetting ? num(appSetting.team_share_pct) : scRow ? num(scRow.team_share_pct) : 60.0;
+  const coopPctVal = appSetting ? num(appSetting.coop_share_pct) : scRow ? num(scRow.cooperative_share_pct) : 40.0;
+  const cfgBankName = appSetting?.payment_bank_name || scRow?.payment_bank_name || 'BRI';
+  const cfgAccountNumber = appSetting?.payment_account_number || scRow?.payment_account_number || '0000-0000-0000-000';
+  const cfgAccountHolder =
+    appSetting?.payment_account_holder || scRow?.payment_account_holder || 'Bendahara Supplier MBG';
+
   const invoices: KitchenInvoice[] = rows.invoices.map((inv) => {
     const total = num(inv.total_amount_rp);
     const paid = inv.status === 'PAID';
@@ -482,21 +513,22 @@ export function fromSupabaseRows(rows: {
       payment_proof_url: null,
       paid_at: inv.paid_at ?? null,
       verified_by: null,
+      payment_bank_name: inv.payment_bank_name || cfgBankName,
+      payment_account_number: inv.payment_account_number || cfgAccountNumber,
+      payment_account_holder: inv.payment_account_holder || cfgAccountHolder,
       created_at: inv.created_at ?? DEFAULT_ISO,
       updated_at: inv.updated_at ?? DEFAULT_ISO,
     };
   });
-
-  const appSetting = rows.appSettings?.[0];
-  const scRow = rows.splitConfigs[0];
-  const teamPctVal = appSetting ? num(appSetting.team_share_pct) : scRow ? num(scRow.team_share_pct) : 60.0;
-  const coopPctVal = appSetting ? num(appSetting.coop_share_pct) : scRow ? num(scRow.cooperative_share_pct) : 40.0;
 
   const splitConfig: ProfitSplitConfig = {
     id: scRow?.id ?? 'split-default-60-40',
     config_name: scRow?.config_name ?? `Skema Bagi Hasil Standar Tim ${teamPctVal}% : Koperasi ${coopPctVal}%`,
     team_share_pct: teamPctVal,
     cooperative_share_pct: coopPctVal,
+    payment_bank_name: cfgBankName,
+    payment_account_number: cfgAccountNumber,
+    payment_account_holder: cfgAccountHolder,
     is_active: true,
     effective_from: scRow?.effective_from ?? DEFAULT_DATE,
     created_at: scRow?.created_at ?? DEFAULT_ISO,
@@ -757,6 +789,46 @@ export async function updateAppSettingsSplitInSupabase(
     { onConflict: 'id' }
   );
   return !error;
+}
+
+export async function updatePaymentAccountInSupabase(
+  supabase: SupabaseClient,
+  account: {
+    payment_bank_name: string;
+    payment_account_number: string;
+    payment_account_holder: string;
+  }
+): Promise<boolean> {
+  const nowIso = new Date().toISOString();
+  const [settingsRes, splitRes] = await Promise.all([
+    supabase
+      .from('app_settings')
+      .update({
+        payment_bank_name: account.payment_bank_name,
+        payment_account_number: account.payment_account_number,
+        payment_account_holder: account.payment_account_holder,
+        updated_at: nowIso,
+      })
+      .eq('id', 'default'),
+    supabase
+      .from('profit_split_configs')
+      .update({
+        payment_bank_name: account.payment_bank_name,
+        payment_account_number: account.payment_account_number,
+        payment_account_holder: account.payment_account_holder,
+      })
+      .eq('is_active', true),
+  ]);
+  await supabase
+    .from('kitchen_invoices')
+    .update({
+      payment_bank_name: account.payment_bank_name,
+      payment_account_number: account.payment_account_number,
+      payment_account_holder: account.payment_account_holder,
+      updated_at: nowIso,
+    })
+    .neq('status', 'PAID');
+  return !settingsRes.error && !splitRes.error;
 }
 
 export async function deleteKitchenFromSupabase(supabase: SupabaseClient, kitchenId: string): Promise<{ ok: true } | { ok: false; error: string }> {

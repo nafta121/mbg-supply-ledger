@@ -1,5 +1,14 @@
 /** Browser share helpers (clipboard + WhatsApp deep link). */
+import type { PaymentAccountInfo } from '../types/mbg';
 import { toWaNumber } from './ui-format';
+
+export function formatPaymentAccountWaBlock(account: PaymentAccountInfo): string {
+  return [
+    'TRANSFER PEMBAYARAN KE REKENING:',
+    `${account.payment_bank_name} • ${account.payment_account_number}`,
+    `a.n. ${account.payment_account_holder}`,
+  ].join('\n');
+}
 
 export async function copyText(text: string): Promise<boolean> {
   try {
@@ -37,3 +46,4 @@ export function shareToWhatsApp(phone: string | null | undefined, text: string):
   window.open(url, '_blank', 'noopener,noreferrer');
   return copied;
 }
+
