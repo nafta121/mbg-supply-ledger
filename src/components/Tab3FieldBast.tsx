@@ -21,7 +21,7 @@ export function Tab3FieldBast() {
   const safeItems = getSafeBastItemsForFieldTeam();
   const canEdit = activeRole !== 'COOPERATIVE_VIEWER';
 
-  const [filter, setFilter] = useState<Filter>('pending');
+  const [filter, setFilter] = useState<Filter>(canEdit ? 'pending' : 'done');
   const [query, setQuery] = useState('');
   const [draftWeights, setDraftWeights] = useState<Record<string, string>>({});
   const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
@@ -145,25 +145,34 @@ export function Tab3FieldBast() {
                     {formatKgNum(it.qty_dispatched_kg)} <span className="text-sm font-semibold">kg</span>
                   </div>
                 </div>
-                <div>
-                  <label htmlFor={weightId} className="block text-xs font-medium text-slate-600">
-                    Diterima (kg)
-                  </label>
-                  <input
-                    id={weightId}
-                    type="number"
-                    inputMode="decimal"
-                    step="0.001"
-                    min="0"
-                    max={it.qty_dispatched_kg}
-                    disabled={!canEdit}
-                    value={inputStr}
-                    onChange={(e) => setDraftWeights((p) => ({ ...p, [id]: e.target.value }))}
-                    className={`mt-0.5 h-11 w-full rounded-lg border-2 px-3 text-right text-lg font-bold tabular-nums text-slate-900 focus:border-emerald-600 disabled:bg-slate-100 ${
-                      overGrams ? 'border-rose-500' : 'border-slate-300'
-                    }`}
-                  />
-                </div>
+                {canEdit ? (
+                  <div>
+                    <label htmlFor={weightId} className="block text-xs font-medium text-slate-600">
+                      Diterima (kg)
+                    </label>
+                    <input
+                      id={weightId}
+                      type="number"
+                      inputMode="decimal"
+                      step="0.001"
+                      min="0"
+                      max={it.qty_dispatched_kg}
+                      value={inputStr}
+                      onChange={(e) => setDraftWeights((p) => ({ ...p, [id]: e.target.value }))}
+                      className={`mt-0.5 h-11 w-full rounded-lg border-2 px-3 text-right text-lg font-bold tabular-nums text-slate-900 focus:border-emerald-600 ${
+                        overGrams ? 'border-rose-500' : 'border-slate-300'
+                      }`}
+                    />
+                  </div>
+                ) : (
+                  // Koperasi: read-only static value — must not look like an editable form.
+                  <div className="rounded-lg bg-slate-100 px-3 py-2">
+                    <div className="text-xs font-medium text-slate-600">Diterima</div>
+                    <div className="text-lg font-bold tabular-nums text-slate-900">
+                      {formatKgNum(it.qty_accepted_kg)} <span className="text-sm font-semibold">kg</span>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Shrinkage line */}
@@ -172,7 +181,7 @@ export function Tab3FieldBast() {
                   <div className="rounded-md bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-700 ring-1 ring-inset ring-rose-200 tabular-nums">
                     Susut -{formatKgNum(gramsToKg(shrinkGrams))} kg (Potong Tagihan Supplier)
                   </div>
-                  {canEdit && (
+                  {canEdit ? (
                     <>
                       <label htmlFor={noteId} className="sr-only">
                         Catatan susut {name}
@@ -186,10 +195,15 @@ export function Tab3FieldBast() {
                         className="field-input min-h-[40px]"
                       />
                     </>
+                  ) : (
+                    <p className="text-xs leading-snug text-slate-700">
+                      <span className="font-semibold">Catatan:</span>{' '}
+                      {it.rejection_reason || 'Tidak ada keterangan susut.'}
+                    </p>
                   )}
                 </div>
               )}
-              {overGrams && (
+              {canEdit && overGrams && (
                 <p role="alert" className="text-xs font-semibold text-rose-700">
                   Melebihi berat kirim.
                 </p>

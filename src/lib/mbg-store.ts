@@ -27,7 +27,7 @@ import {
   senToIdr,
 } from './financial-engine';
 
-const STORAGE_KEY = 'mbg_supply_ledger_state_v1';
+const STORAGE_KEY = 'mbg_supply_ledger_state_v2';
 const SIM_DATE = '2026-10-16';
 
 export type ActiveTab = 'batches' | 'matrix' | 'bast' | 'invoices' | 'ledger';
@@ -72,6 +72,33 @@ export interface UpdateBastInput {
   bast_signed_by_name?: string;
 }
 
+/** Master data inputs (Admin only). `id` present = edit, absent = create. */
+export interface KitchenMasterInput {
+  id?: string;
+  name: string;
+  address: string;
+  pic_name: string;
+  pic_phone: string;
+}
+
+export interface SupplierMasterInput {
+  id?: string;
+  name: string;
+  contact_person: string;
+  phone: string;
+  bank_name: string;
+  bank_account_number: string;
+  bank_account_holder: string;
+}
+
+export interface ItemMasterInput {
+  id?: string;
+  name: string;
+  category: string;
+}
+
+export type MasterSaveResult = { ok: true } | { ok: false; error: string };
+
 export interface MbgContextValue extends MbgState {
   setActiveRole: (role: UserRole) => void;
   setActiveTab: (tab: ActiveTab) => void;
@@ -83,9 +110,133 @@ export interface MbgContextValue extends MbgState {
   markSupplierSettlementPaid: (settlement_id: string) => void;
   updateProfitSplitPercentage: (team_share_pct: number, cooperative_share_pct: number) => void;
   executePayout: (beneficiary_type: BeneficiaryType, notes?: string) => void;
+  saveKitchen: (input: KitchenMasterInput) => MasterSaveResult;
+  saveSupplier: (input: SupplierMasterInput) => MasterSaveResult;
+  saveItem: (input: ItemMasterInput) => MasterSaveResult;
   resetSimulationData: () => void;
   getBatchRemainingKg: (batch_id: string) => number;
   getSafeBastItemsForFieldTeam: () => SafeDeliveryItemBastView[];
+}
+
+// ---------- Master data (pure helpers) ----------
+// Editing master records never touches price snapshots on deliveries/invoices
+// (Invariant 3) — historical rows reference master data by id only.
+
+const clean = (v: string | null | undefined): string => (v ?? '').trim();
+const orNull = (v: string | null | undefined): string | null => clean(v) || null;
+
+function nextCode(prefix: string, suffix: string, existing: string[]): string {
+  const taken = new Set(existing);
+  let n = existing.length + 1;
+  let code = `${prefix}${String(n).padStart(2, '0')}${suffix}`;
+  while (taken.has(code)) {
+    n += 1;
+    code = `${prefix}${String(n).padStart(2, '0')}${suffix}`;
+  }
+  return code;
+}
+
+export function validateKitchenInput(input: KitchenMasterInput): string | null {
+  if (!clean(input.name)) return 'Nama dapur wajib diisi.';
+  if (!clean(input.pic_name)) return 'Nama PIC wajib diisi.';
+  if (!clean(input.pic_phone)) return 'No. WA PIC wajib diisi.';
+  return null;
+}
+
+export function validateSupplierInput(input: SupplierMasterInput): string | null {
+  if (!clean(input.name)) return 'Nama supplier wajib diisi.';
+  return null;
+}
+
+export function validateItemInput(input: ItemMasterInput): string | null {
+  if (!clean(input.name)) return 'Nama bahan baku wajib diisi.';
+  return null;
+}
+
+export function upsertKitchenRecord(
+  list: Kitchen[],
+  input: KitchenMasterInput,
+  nowIso: string
+): Kitchen[] {
+  const fields = {
+    name: clean(input.name),
+    address: clean(input.address) || '-',
+    pic_name: clean(input.pic_name),
+    pic_phone: clean(input.pic_phone),
+  };
+  if (input.id) {
+    return list.map((k) => (k.id === input.id ? { ...k, ...fields } : k));
+  }
+  const code = nextCode('DPR-', '', list.map((k) => k.kitchen_code));
+  return [
+    ...list,
+    {
+      id: `kitchen-${code.toLowerCase()}-${Date.now()}`,
+      kitchen_code: code,
+      ...fields,
+      default_markup_per_kg: 0,
+      is_active: true,
+      created_at: nowIso,
+    },
+  ];
+}
+
+export function upsertSupplierRecord(
+  list: Supplier[],
+  input: SupplierMasterInput,
+  nowIso: string
+): Supplier[] {
+  const fields = {
+    name: clean(input.name),
+    contact_person: orNull(input.contact_person),
+    phone: orNull(input.phone),
+    bank_name: orNull(input.bank_name),
+    bank_account_number: orNull(input.bank_account_number),
+    bank_account_holder: orNull(input.bank_account_holder),
+  };
+  if (input.id) {
+    return list.map((s) => (s.id === input.id ? { ...s, ...fields } : s));
+  }
+  const code = nextCode('SUP-', '', list.map((s) => s.supplier_code));
+  return [
+    ...list,
+    {
+      id: `sup-${code.toLowerCase()}-${Date.now()}`,
+      supplier_code: code,
+      ...fields,
+      is_active: true,
+      created_at: nowIso,
+    },
+  ];
+}
+
+export function upsertItemRecord(list: Item[], input: ItemMasterInput, nowIso: string): Item[] {
+  const fields = {
+    name: clean(input.name),
+    category: clean(input.category) || 'Lainnya',
+    base_unit: 'kg' as const, // Invariant 1: unit is always locked to kg
+  };
+  if (input.id) {
+    return list.map((i) => (i.id === input.id ? { ...i, ...fields } : i));
+  }
+  const sku = nextCode('ITM', '-KG', list.map((i) => i.sku));
+  return [
+    ...list,
+    {
+      id: `item-${sku.toLowerCase()}-${Date.now()}`,
+      sku,
+      ...fields,
+      is_active: true,
+      created_at: nowIso,
+    },
+  ];
+}
+
+/** `#B05` — chronological batch sequence (batches are stored newest-first). */
+export function batchShortCode(batchId: string, batches: SupplierProcurementBatch[]): string {
+  const idx = batches.findIndex((b) => b.id === batchId);
+  if (idx < 0) return '#B--';
+  return `#B${String(batches.length - idx).padStart(2, '0')}`;
 }
 
 export function formatKg(kg: number): string {
@@ -319,7 +470,7 @@ export function createInitialSeedState(): MbgState {
       amountPaid: 1950000.0,
     },
     {
-      kitchenIdx: 2, // Dapur C (03) - PARTIALLY_PAID
+      kitchenIdx: 2, // Dapur C (03) - ISSUED (Belum Bayar)
       batchId: 'batch-sup-a-ayam',
       supplierId: 'sup-a',
       itemId: 'item-ayam',
@@ -328,8 +479,8 @@ export function createInitialSeedState(): MbgState {
       costSnapshot: 36000.0,
       priceSnapshot: 40000.0,
       rejectionReason: null,
-      invoiceStatus: 'PARTIALLY_PAID' as const,
-      amountPaid: 1000000.0,
+      invoiceStatus: 'ISSUED' as const,
+      amountPaid: 0.0,
     },
     {
       kitchenIdx: 3, // Dapur D (04) - Reject 1.750 kg
@@ -1045,6 +1196,36 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
+  const saveKitchen = (input: KitchenMasterInput): MasterSaveResult => {
+    const error = validateKitchenInput(input);
+    if (error) return { ok: false, error };
+    setState((prev) => ({
+      ...prev,
+      kitchens: upsertKitchenRecord(prev.kitchens, input, new Date().toISOString()),
+    }));
+    return { ok: true };
+  };
+
+  const saveSupplier = (input: SupplierMasterInput): MasterSaveResult => {
+    const error = validateSupplierInput(input);
+    if (error) return { ok: false, error };
+    setState((prev) => ({
+      ...prev,
+      suppliers: upsertSupplierRecord(prev.suppliers, input, new Date().toISOString()),
+    }));
+    return { ok: true };
+  };
+
+  const saveItem = (input: ItemMasterInput): MasterSaveResult => {
+    const error = validateItemInput(input);
+    if (error) return { ok: false, error };
+    setState((prev) => ({
+      ...prev,
+      items: upsertItemRecord(prev.items, input, new Date().toISOString()),
+    }));
+    return { ok: true };
+  };
+
   const resetSimulationData = () => {
     const fresh = createInitialSeedState();
     setState(fresh);
@@ -1100,6 +1281,9 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     markSupplierSettlementPaid,
     updateProfitSplitPercentage,
     executePayout,
+    saveKitchen,
+    saveSupplier,
+    saveItem,
     resetSimulationData,
     getBatchRemainingKg,
     getSafeBastItemsForFieldTeam,

@@ -147,7 +147,7 @@ export function BottomSheet({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative w-full max-w-md rounded-t-2xl bg-white p-4 pb-6 shadow-xl"
+        className="relative max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-2xl bg-white p-4 pb-6 shadow-xl"
       >
         <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-slate-300" />
         <div className="mb-3 flex items-center justify-between">

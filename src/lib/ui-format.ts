@@ -76,11 +76,13 @@ export const PAYOUT_LABEL: Record<LedgerPayoutStatus, string> = {
   PAID_OUT: 'Sudah Cair',
 };
 
+// Kitchen bills are shown with exactly 2 operational statuses: "Belum Bayar" / "Lunas".
+// Any not-fully-paid state stays "Belum Bayar" (profit share remains locked — Invariant 4).
 export const INVOICE_LABEL: Record<InvoicePaymentStatus, string> = {
-  DRAFT: 'Draf',
+  DRAFT: 'Belum Bayar',
   ISSUED: 'Belum Bayar',
   UNPAID: 'Belum Bayar',
-  PARTIALLY_PAID: 'Bayar Sebagian',
+  PARTIALLY_PAID: 'Belum Bayar',
   PAID: 'Lunas',
 };
 
@@ -93,9 +95,7 @@ export const SETTLEMENT_LABEL: Record<SettlementStatus, string> = {
 export type Tone = 'green' | 'amber' | 'red' | 'slate';
 
 export function invoiceTone(status: InvoicePaymentStatus): Tone {
-  if (status === 'PAID') return 'green';
-  if (status === 'PARTIALLY_PAID') return 'amber';
-  return 'red';
+  return status === 'PAID' ? 'green' : 'red';
 }
 
 export function payoutTone(status: LedgerPayoutStatus): Tone {

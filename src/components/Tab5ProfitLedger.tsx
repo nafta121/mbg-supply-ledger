@@ -50,11 +50,19 @@ export function Tab5ProfitLedger() {
   const teamPct = splitConfig.team_share_pct;
   const coopPct = splitConfig.cooperative_share_pct;
 
-  const handlePayout = () => {
-    if (!isAdmin || availTotal <= 0) return;
-    if (availTeam > 0) executePayout('TEAM');
-    if (availCoop > 0) executePayout('COOPERATIVE');
-    setToast({ kind: 'ok', text: `${formatRp(availTotal)} berhasil dicairkan.` });
+  const BENEFICIARY_LABEL: Record<BeneficiaryType, string> = { TEAM: 'Tim', COOPERATIVE: 'Koperasi' };
+
+  // Tim & Koperasi are disbursed independently — field transfers often happen on different days.
+  const handlePayout = (who: BeneficiaryType | 'ALL') => {
+    if (!isAdmin) return;
+    const targets: BeneficiaryType[] = who === 'ALL' ? ['TEAM', 'COOPERATIVE'] : [who];
+    const amounts = { TEAM: availTeam, COOPERATIVE: availCoop };
+    const paid = targets.filter((t) => amounts[t] > 0);
+    if (paid.length === 0) return;
+    for (const t of paid) executePayout(t);
+    const total = sumIdr(paid.map((t) => amounts[t]));
+    const label = paid.map((t) => `Hak ${BENEFICIARY_LABEL[t]}`).join(' & ');
+    setToast({ kind: 'ok', text: `${label} ${formatRp(total)} berhasil dicairkan.` });
   };
 
   const applySplit = (teamVal: number) => {
@@ -84,14 +92,34 @@ export function Tab5ProfitLedger() {
           <StatRow label={`Koperasi (${coopPct}%)`} value={formatRp(availCoop)} />
         </div>
         {isAdmin && (
-          <button
-            type="button"
-            disabled={availTotal <= 0}
-            onClick={handlePayout}
-            className="btn-primary w-full"
-          >
-            Cairkan Sekarang
-          </button>
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={availTeam <= 0}
+                onClick={() => handlePayout('TEAM')}
+                className="btn-primary min-h-[48px] w-full px-2 text-sm"
+              >
+                Cairkan Hak Tim
+              </button>
+              <button
+                type="button"
+                disabled={availCoop <= 0}
+                onClick={() => handlePayout('COOPERATIVE')}
+                className="btn-primary min-h-[48px] w-full px-2 text-sm"
+              >
+                Cairkan Hak Koperasi
+              </button>
+            </div>
+            <button
+              type="button"
+              disabled={availTeam <= 0 || availCoop <= 0}
+              onClick={() => handlePayout('ALL')}
+              className="btn-secondary min-h-[40px] w-full text-xs"
+            >
+              Cairkan Semua ({formatRp(availTotal)})
+            </button>
+          </div>
         )}
       </Card>
 
@@ -218,8 +246,9 @@ export function Tab5ProfitLedger() {
             const team = entries.find((e) => e.beneficiary_type === 'TEAM');
             const coop = entries.find((e) => e.beneficiary_type === 'COOPERATIVE');
             const markup = sumIdr([team?.profit_amount ?? 0, coop?.profit_amount ?? 0]);
-            const status: LedgerPayoutStatus =
-              coop?.payout_status ?? team?.payout_status ?? 'LOCKED_UNPAID';
+            const teamStatus: LedgerPayoutStatus = team?.payout_status ?? 'LOCKED_UNPAID';
+            const coopStatus: LedgerPayoutStatus = coop?.payout_status ?? teamStatus;
+            const split = teamStatus !== coopStatus;
 
             return (
               <li key={inv.id} className="space-y-1.5 px-3 py-2.5">
@@ -232,7 +261,7 @@ export function Tab5ProfitLedger() {
                       {formatKgNum(coop?.qty_accepted_kg ?? team?.qty_accepted_kg ?? 0)} kg
                     </div>
                   </div>
-                  <Badge tone={payoutTone(status)}>{PAYOUT_LABEL[status]}</Badge>
+                  {!split && <Badge tone={payoutTone(coopStatus)}>{PAYOUT_LABEL[coopStatus]}</Badge>}
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-xs">
                   <div className="min-w-0">
@@ -246,12 +275,22 @@ export function Tab5ProfitLedger() {
                     <div className="truncate font-semibold tabular-nums text-slate-900">
                       {formatRp(team?.profit_amount ?? 0)}
                     </div>
+                    {split && (
+                      <div className="mt-1">
+                        <Badge tone={payoutTone(teamStatus)}>{PAYOUT_LABEL[teamStatus]}</Badge>
+                      </div>
+                    )}
                   </div>
                   <div className="min-w-0 text-right">
                     <div className="truncate text-slate-500">Hak Koperasi</div>
                     <div className="truncate font-semibold tabular-nums text-slate-900">
                       {formatRp(coop?.profit_amount ?? 0)}
                     </div>
+                    {split && (
+                      <div className="mt-1">
+                        <Badge tone={payoutTone(coopStatus)}>{PAYOUT_LABEL[coopStatus]}</Badge>
+                      </div>
+                    )}
                   </div>
                 </div>
               </li>

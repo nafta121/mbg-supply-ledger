@@ -63,10 +63,45 @@ export function Tab4InvoicesAndSettlements() {
     setTimeout(() => window.print(), 150);
   };
 
-  const openWhatsApp = (phone: string | null | undefined, text: string) => {
+  const copyText = async (text: string): Promise<boolean> => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // fall through to legacy copy
+    }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
+  };
+
+  const shareToWhatsApp = (phone: string | null | undefined, text: string) => {
+    // Start the copy while this document still has focus, then open WhatsApp
+    // synchronously inside the click handler so popup blockers allow it.
+    const copied = copyText(text);
     const num = toWaNumber(phone);
     const url = `https://wa.me/${num}?text=${encodeURIComponent(text)}`;
     window.open(url, '_blank', 'noopener,noreferrer');
+    void copied.then((ok) =>
+      setToast(
+        ok
+          ? { kind: 'ok', text: 'Ringkasan tagihan disalin & siap ditempel ke Grup WA' }
+          : { kind: 'error', text: 'Gagal menyalin otomatis. WhatsApp tetap dibuka.' }
+      )
+    );
   };
 
   return (
@@ -107,8 +142,8 @@ export function Tab4InvoicesAndSettlements() {
               {(
                 [
                   { v: 'unpaid', l: `Belum Bayar (${unpaidCount})` },
-                  { v: 'paid', l: 'Lunas' },
-                  { v: 'all', l: 'Semua' },
+                  { v: 'paid', l: `Lunas (${invoices.length - unpaidCount})` },
+                  { v: 'all', l: `Semua (${invoices.length})` },
                 ] as const
               ).map((f) => (
                 <button
@@ -200,7 +235,7 @@ export function Tab4InvoicesAndSettlements() {
                           </button>
                           <button
                             type="button"
-                            onClick={() => openWhatsApp(kitchen?.pic_phone, waText)}
+                            onClick={() => shareToWhatsApp(kitchen?.pic_phone, waText)}
                             className="btn-secondary min-h-[40px] px-1 text-xs"
                           >
                             💬 WA

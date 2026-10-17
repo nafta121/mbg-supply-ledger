@@ -1,15 +1,18 @@
 'use client';
 
 import React, { useState } from 'react';
-import { useMbgStore } from '../lib/mbg-store';
+import { batchShortCode, useMbgStore } from '../lib/mbg-store';
 import { formatKgNum, formatRp, sumKg } from '../lib/ui-format';
 import { BottomSheet, Card, NoAccess, Toast, type ToastState } from './ui';
+
+type StockFilter = 'available' | 'empty' | 'all';
 
 export function Tab1SupplierBatches({ onAllocate }: { onAllocate: (batchId: string) => void }) {
   const { activeRole, suppliers, items, batches, addSupplierBatch, getBatchRemainingKg } =
     useMbgStore();
 
   const [sheetOpen, setSheetOpen] = useState(false);
+  const [stockFilter, setStockFilter] = useState<StockFilter>('available');
   const [supplierId, setSupplierId] = useState<string>(suppliers[0]?.id ?? '');
   const [itemId, setItemId] = useState<string>(items[0]?.id ?? '');
   const [qtyKg, setQtyKg] = useState('');
@@ -26,9 +29,18 @@ export function Tab1SupplierBatches({ onAllocate }: { onAllocate: (batchId: stri
     supplier: suppliers.find((s) => s.id === b.supplier_id),
     item: items.find((i) => i.id === b.item_id),
     remainingKg: getBatchRemainingKg(b.id),
+    code: batchShortCode(b.id, batches),
   }));
-  const totalRemainingKg = sumKg(rows.map((r) => r.remainingKg));
-  const activeCount = rows.filter((r) => r.remainingKg > 0).length;
+  const availableRows = rows.filter((r) => r.remainingKg > 0);
+  const emptyRows = rows.filter((r) => r.remainingKg <= 0);
+  const visibleRows =
+    stockFilter === 'available' ? availableRows : stockFilter === 'empty' ? emptyRows : rows;
+  const visibleRemainingKg = sumKg(visibleRows.map((r) => r.remainingKg));
+  const titleByFilter: Record<StockFilter, string> = {
+    available: 'Stok Tersedia',
+    empty: 'Stok Habis',
+    all: 'Semua Batch',
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,55 +77,90 @@ export function Tab1SupplierBatches({ onAllocate }: { onAllocate: (batchId: stri
 
       <Toast toast={toast} onClose={() => setToast(null)} />
 
+      <div role="group" aria-label="Filter stok" className="flex gap-2">
+        {(
+          [
+            { v: 'available', l: `Tersedia (${availableRows.length})` },
+            { v: 'empty', l: `Habis (${emptyRows.length})` },
+            { v: 'all', l: `Semua (${rows.length})` },
+          ] as const
+        ).map((f) => (
+          <button
+            key={f.v}
+            type="button"
+            aria-pressed={stockFilter === f.v}
+            onClick={() => setStockFilter(f.v)}
+            className={`min-h-[36px] rounded-full px-3 text-xs font-semibold tabular-nums transition ${
+              stockFilter === f.v
+                ? 'bg-slate-900 text-white'
+                : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100'
+            }`}
+          >
+            {f.l}
+          </button>
+        ))}
+      </div>
+
       <Card as="section" className="overflow-hidden">
         <div className="flex items-baseline justify-between border-b border-slate-200 px-3 py-2.5">
-          <h2 className="text-sm font-bold text-slate-900">Stok Batch Aktif ({activeCount})</h2>
+          <h2 className="text-sm font-bold text-slate-900">
+            {titleByFilter[stockFilter]} ({visibleRows.length})
+          </h2>
           <span className="text-xs font-semibold text-slate-600 tabular-nums">
-            Sisa {formatKgNum(totalRemainingKg)} kg
+            Sisa {formatKgNum(visibleRemainingKg)} kg
           </span>
         </div>
 
         <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-2 border-b border-slate-100 bg-slate-50 px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
-          <span>Barang</span>
+          <span>Bahan Baku</span>
           <span className="w-[76px] text-right">HPP/kg</span>
           <span className="w-[64px] text-right">Sisa kg</span>
           <span className="w-[76px]" aria-hidden="true" />
         </div>
 
+        {visibleRows.length === 0 && (
+          <p className="px-3 py-6 text-center text-sm font-medium text-slate-600">
+            {stockFilter === 'available' ? 'Semua stok sudah habis dialokasikan.' : 'Tidak ada batch.'}
+          </p>
+        )}
+
         <ul className="divide-y divide-slate-100">
-          {rows.map(({ batch, supplier, item, remainingKg }) => {
+          {visibleRows.map(({ batch, supplier, item, remainingKg, code }) => {
             const empty = remainingKg <= 0;
             return (
-              <li
-                key={batch.id}
-                className={`grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-2 px-3 py-2 ${
-                  empty ? 'opacity-60' : ''
-                }`}
-              >
-                <div className="min-w-0">
-                  <div className="truncate text-sm font-semibold text-slate-900">
-                    {item?.name ?? '-'}
-                  </div>
-                  <div className="truncate text-xs text-slate-500">{supplier?.name ?? '-'}</div>
+              <li key={batch.id} className={`space-y-1 px-3 py-2.5 ${empty ? 'opacity-60' : ''}`}>
+                {/* Row 1: full commodity name (never truncated) */}
+                <div className="break-words text-sm font-semibold leading-snug text-slate-900">
+                  {item?.name ?? '-'}
                 </div>
-                <span className="w-[76px] text-right text-sm font-semibold tabular-nums text-slate-800">
-                  {formatRp(batch.supplier_actual_cost_per_kg)}
-                </span>
-                <span
-                  className={`w-[64px] text-right text-sm font-bold tabular-nums ${
-                    empty ? 'text-slate-400' : 'text-emerald-700'
-                  }`}
-                >
-                  {formatKgNum(remainingKg)}
-                </span>
-                <button
-                  type="button"
-                  disabled={empty}
-                  onClick={() => onAllocate(batch.id)}
-                  className="w-[76px] min-h-[36px] rounded-md bg-emerald-600 px-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-500"
-                >
-                  {empty ? 'Habis' : 'Alokasikan'}
-                </button>
+                {/* Row 2: supplier • batch code + numbers */}
+                <div className="grid grid-cols-[minmax(0,1fr)_auto_auto_auto] items-center gap-x-2">
+                  <div className="min-w-0 text-xs leading-snug text-slate-500">
+                    <span className="break-words">{supplier?.name ?? '-'}</span>
+                    <span aria-hidden="true"> • </span>
+                    <span className="font-semibold tabular-nums text-slate-700" title={batch.batch_code}>
+                      {code}
+                    </span>
+                  </div>
+                  <span className="w-[76px] text-right text-sm font-semibold tabular-nums text-slate-800">
+                    {formatRp(batch.supplier_actual_cost_per_kg)}
+                  </span>
+                  <span
+                    className={`w-[64px] text-right text-sm font-bold tabular-nums ${
+                      empty ? 'text-slate-400' : 'text-emerald-700'
+                    }`}
+                  >
+                    {formatKgNum(remainingKg)}
+                  </span>
+                  <button
+                    type="button"
+                    disabled={empty}
+                    onClick={() => onAllocate(batch.id)}
+                    className="w-[76px] min-h-[36px] rounded-md bg-emerald-600 px-2 text-xs font-bold text-white transition hover:bg-emerald-700 disabled:bg-slate-200 disabled:text-slate-500"
+                  >
+                    {empty ? 'Habis' : 'Alokasikan'}
+                  </button>
+                </div>
               </li>
             );
           })}

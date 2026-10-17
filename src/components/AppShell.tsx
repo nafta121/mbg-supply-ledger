@@ -11,6 +11,7 @@ import {
   RefreshResetIcon,
   ScaleBastIcon,
 } from './Icons';
+import { MasterDataSheet } from './MasterDataSheet';
 import { Tab1SupplierBatches } from './Tab1SupplierBatches';
 import { Tab2KitchenMatrix } from './Tab2KitchenMatrix';
 import { Tab3FieldBast } from './Tab3FieldBast';
@@ -65,6 +66,7 @@ export function AppShell() {
   const { activeRole, activeTab, setActiveRole, setActiveTab, resetSimulationData } =
     useMbgStore();
   const [preselectBatchId, setPreselectBatchId] = useState<string | null>(null);
+  const [masterOpen, setMasterOpen] = useState(false);
 
   const visibleTabs = NAV_TABS.filter((t) => t.roles.includes(activeRole));
   // Never render a tab the active role is not allowed to see (Invariant 5).
@@ -96,9 +98,9 @@ export function AppShell() {
 
       <div className="mx-auto flex min-h-[100dvh] max-w-md flex-col border-x border-slate-200 bg-slate-50 pb-20">
         {/* 1-row sticky header (56px) */}
-        <header className="no-print sticky top-0 z-30 flex h-14 items-center justify-between gap-2 border-b border-slate-200 bg-white px-3">
+        <header className="no-print sticky top-0 z-30 flex h-14 items-center justify-between gap-1.5 border-b border-slate-200 bg-white px-3">
           <h1 className="shrink-0 text-base font-extrabold tracking-tight text-slate-900">
-            MBG Ledger
+            MBG<span className="hidden min-[400px]:inline"> Ledger</span>
           </h1>
 
           <div
@@ -126,16 +128,34 @@ export function AppShell() {
             })}
           </div>
 
-          <button
-            type="button"
-            onClick={handleReset}
-            aria-label="Reset data"
-            title="Reset data"
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
-          >
-            <RefreshResetIcon className="h-4 w-4" />
-          </button>
+          <div className="flex shrink-0 items-center">
+            {activeRole === 'OWNER_ADMIN' && (
+              <button
+                type="button"
+                onClick={() => setMasterOpen(true)}
+                aria-label="Data Master"
+                title="Data Master (Dapur, Supplier, Barang)"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-base transition hover:bg-slate-100"
+              >
+                <span aria-hidden="true">⚙️</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={handleReset}
+              aria-label="Reset data"
+              title="Reset data"
+              className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
+            >
+              <RefreshResetIcon className="h-4 w-4" />
+            </button>
+          </div>
         </header>
+
+        <MasterDataSheet
+          open={masterOpen && activeRole === 'OWNER_ADMIN'}
+          onClose={() => setMasterOpen(false)}
+        />
 
         <main id="main-content" className="flex-1 px-3 py-3">
           {currentTab === 'batches' && <Tab1SupplierBatches onAllocate={openAllocation} />}
@@ -145,7 +165,7 @@ export function AppShell() {
               initialBatchId={preselectBatchId}
             />
           )}
-          {currentTab === 'bast' && <Tab3FieldBast />}
+          {currentTab === 'bast' && <Tab3FieldBast key={activeRole} />}
           {currentTab === 'invoices' && <Tab4InvoicesAndSettlements />}
           {currentTab === 'ledger' && <Tab5ProfitLedger />}
         </main>
