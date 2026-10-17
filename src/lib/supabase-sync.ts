@@ -1,21 +1,17 @@
 /**
- * Supabase real-time synchronization layer for MBG Order-Driven Workflow (Stage 8).
+ * Supabase real-time synchronization & atomic RPC/CRUD layer for MBG Order-Driven Workflow (Stage 8).
  *
- * Bridges the pure TypeScript `MbgData` state (`src/lib/order-engine.ts`) with the
- * PostgreSQL schema defined in `.agents/agents/backend-supabase-agent.md` and
- * `supabase/migrations/0005_order_driven_supabase_sync.sql`:
- * - `kitchens`
- * - `products`
- * - `kitchen_orders`
- * - `kitchen_order_items` (INTEGER `qty_ordered_kg` & `qty_accepted_kg`)
- * - `kitchen_invoices`
- * - `profit_ledger_entries`
- * - `profit_split_configs`
- * - `profit_payout_batches`
- * - `v_courier_kitchen_orders` (price-free security-barrier view)
+ * 100% Pure Supabase Cloud Backend (Single Source of Truth in PostgreSQL):
+ * - Role `FIELD_TEAM` (Lapangan): ONLY queries `v_courier_kitchen_orders` and invokes
+ *   `submit_courier_weighing` RPC (Invariant 5: zero price/margin exposure in Network Inspector).
+ * - Roles `OWNER_ADMIN` / `FINANCE` / `COOPERATIVE_VIEWER`: queries relational tables
+ *   (`kitchens`, `products`, `kitchen_orders`, `kitchen_order_items`, `kitchen_invoices`,
+ *   `profit_ledger_entries`, `app_settings`, `profit_payout_batches`) and executes direct
+ *   Supabase `INSERT` / `UPDATE` / `DELETE` / `RPC` operations.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type {
+  BeneficiaryType,
   Item,
   Kitchen,
   KitchenDelivery,
@@ -29,12 +25,12 @@ import type {
 } from '../types/mbg';
 import { composeShrinkReason, parseShrinkReason, type ShrinkReason } from './courier-view';
 import { idrToSen, senToIdr, toWholeKg } from './financial-engine';
-import type { MbgData } from './order-engine';
+import type { MbgData, UpdateBastInput } from './order-engine';
 
 const DEFAULT_DATE = '2026-10-16';
 const DEFAULT_ISO = '2026-10-16T06:00:00.000Z';
 
-// ---------- Row interfaces matching 0005_order_driven_supabase_sync.sql ----------
+// ---------- Row interfaces matching 0005 & 0006 migrations ----------
 
 export interface KitchenRow {
   id: string;
@@ -107,6 +103,7 @@ export interface KitchenInvoiceRow {
 export interface ProfitLedgerRow {
   id: string;
   invoice_id: string;
+  order_id?: string | null;
   order_item_id?: string | null;
   kitchen_id: string;
   gross_margin_rp: number | string;
@@ -135,6 +132,15 @@ export interface ProfitSplitConfigRow {
   created_at?: string | null;
 }
 
+export interface AppSettingsRow {
+  id: string;
+  team_share_pct: number | string;
+  coop_share_pct: number | string;
+  admin_pin: string;
+  coop_pin: string;
+  updated_at?: string | null;
+}
+
 export interface ProfitPayoutBatchRow {
   id: string;
   payout_reference: string;
@@ -148,26 +154,30 @@ export interface ProfitPayoutBatchRow {
 }
 
 export interface CourierKitchenOrderViewRow {
-  order_item_id: string;
   order_id: string;
   order_code: string;
-  order_date: string;
-  order_status: string;
+  order_date?: string;
+  order_status?: string;
   kitchen_id: string;
   kitchen_code: string;
   kitchen_name: string;
-  kitchen_pic_name: string;
-  kitchen_pic_phone: string;
-  product_id: string;
-  product_name: string;
-  base_unit: 'kg';
+  pic_name?: string;
+  pic_phone?: string;
+  kitchen_pic_name?: string;
+  kitchen_pic_phone?: string;
+  item_id?: string;
+  order_item_id?: string;
+  product_id?: string;
+  product_name_snapshot?: string;
+  product_name?: string;
+  base_unit?: 'kg';
   qty_ordered_kg: number;
   qty_accepted_kg: number | null;
-  qty_shrinkage_kg: number;
+  qty_shrinkage_kg?: number;
   is_weighed: boolean;
   shrinkage_reason: string | null;
   shrinkage_note: string | null;
-  is_locked: boolean;
+  is_locked?: boolean;
 }
 
 // ---------- Pure conversion helpers (MbgData <-> Supabase DB rows) ----------
@@ -189,6 +199,7 @@ export function toSupabaseRows(data: MbgData): {
   invoices: KitchenInvoiceRow[];
   ledgerEntries: ProfitLedgerRow[];
   splitConfig: ProfitSplitConfigRow;
+  appSettings: AppSettingsRow;
   payoutBatches: ProfitPayoutBatchRow[];
 } {
   const itemById = new Map(data.items.map((i) => [i.id, i]));
@@ -268,7 +279,6 @@ export function toSupabaseRows(data: MbgData): {
     updated_at: inv.updated_at,
   }));
 
-  // Group TEAM + COOPERATIVE ledger entries by delivery_item_id into combined profit_ledger_entries rows
   const byDeliveryItem = new Map<string, { team?: ProfitLedgerEntry; coop?: ProfitLedgerEntry }>();
   for (const le of data.ledgerEntries) {
     const pair = byDeliveryItem.get(le.delivery_item_id) ?? {};
@@ -284,6 +294,7 @@ export function toSupabaseRows(data: MbgData): {
     const inv = invoiceById.get(sample.invoice_id);
     const deliv = inv ? deliveryById.get(inv.delivery_id) : undefined;
     const kitchenId = inv?.kitchen_id ?? deliv?.kitchen_id ?? data.kitchens[0]?.id ?? 'kitchen-01';
+    const orderId = inv?.delivery_id ?? deliv?.id ?? null;
     const teamAmt = pair.team?.profit_amount ?? 0;
     const coopAmt = pair.coop?.profit_amount ?? 0;
     const gross = senToIdr(idrToSen(teamAmt) + idrToSen(coopAmt));
@@ -304,6 +315,7 @@ export function toSupabaseRows(data: MbgData): {
     ledgerEntries.push({
       id: `ple-${deliveryItemId}`,
       invoice_id: sample.invoice_id,
+      order_id: orderId,
       order_item_id: deliveryItemId,
       kitchen_id: kitchenId,
       gross_margin_rp: gross,
@@ -333,6 +345,14 @@ export function toSupabaseRows(data: MbgData): {
     created_at: data.splitConfig.created_at,
   };
 
+  const appSettings: AppSettingsRow = {
+    id: 'default',
+    team_share_pct: data.splitConfig.team_share_pct,
+    coop_share_pct: data.splitConfig.cooperative_share_pct,
+    admin_pin: '1234',
+    coop_pin: '5678',
+  };
+
   const payoutBatches: ProfitPayoutBatchRow[] = data.payoutBatches.map((pb) => ({
     id: pb.id,
     payout_reference: pb.payout_reference,
@@ -353,6 +373,7 @@ export function toSupabaseRows(data: MbgData): {
     invoices,
     ledgerEntries,
     splitConfig,
+    appSettings,
     payoutBatches,
   };
 }
@@ -365,6 +386,7 @@ export function fromSupabaseRows(rows: {
   invoices: KitchenInvoiceRow[];
   ledgerEntries: ProfitLedgerRow[];
   splitConfigs: ProfitSplitConfigRow[];
+  appSettings?: AppSettingsRow[];
   payoutBatches: ProfitPayoutBatchRow[];
 }): MbgData {
   const kitchens: Kitchen[] = rows.kitchens.map((k) => ({
@@ -412,13 +434,10 @@ export function fromSupabaseRows(rows: {
     const shrinkKg = Math.max(0, orderedKg - acceptedKg);
     const unitPrice = num(oi.kitchen_unit_price_rp);
     const marginPerKg = num(oi.margin_per_kg_rp);
-    const lineInvoice = senToIdr((BigInt(acceptedKg) * idrToSen(unitPrice)));
-    const lineMargin = senToIdr((BigInt(acceptedKg) * idrToSen(marginPerKg)));
+    const lineInvoice = senToIdr(BigInt(acceptedKg) * idrToSen(unitPrice));
+    const lineMargin = senToIdr(BigInt(acceptedKg) * idrToSen(marginPerKg));
     const rejectionReason = oi.shrinkage_reason
-      ? composeShrinkReason(
-          (oi.shrinkage_reason as ShrinkReason) ?? 'Susut',
-          oi.shrinkage_note ?? ''
-        )
+      ? composeShrinkReason((oi.shrinkage_reason as ShrinkReason) ?? 'Susut', oi.shrinkage_note ?? '')
       : null;
 
     return {
@@ -460,26 +479,20 @@ export function fromSupabaseRows(rows: {
     };
   });
 
+  const appSetting = rows.appSettings?.[0];
   const scRow = rows.splitConfigs[0];
-  const splitConfig: ProfitSplitConfig = scRow
-    ? {
-        id: scRow.id,
-        config_name: scRow.config_name,
-        team_share_pct: num(scRow.team_share_pct),
-        cooperative_share_pct: num(scRow.cooperative_share_pct),
-        is_active: scRow.is_active,
-        effective_from: scRow.effective_from,
-        created_at: scRow.created_at ?? DEFAULT_ISO,
-      }
-    : {
-        id: 'split-default-60-40',
-        config_name: 'Skema Bagi Hasil Standar Tim 60% : Koperasi 40%',
-        team_share_pct: 60.0,
-        cooperative_share_pct: 40.0,
-        is_active: true,
-        effective_from: DEFAULT_DATE,
-        created_at: DEFAULT_ISO,
-      };
+  const teamPctVal = appSetting ? num(appSetting.team_share_pct) : scRow ? num(scRow.team_share_pct) : 60.0;
+  const coopPctVal = appSetting ? num(appSetting.coop_share_pct) : scRow ? num(scRow.cooperative_share_pct) : 40.0;
+
+  const splitConfig: ProfitSplitConfig = {
+    id: scRow?.id ?? 'split-default-60-40',
+    config_name: scRow?.config_name ?? `Skema Bagi Hasil Standar Tim ${teamPctVal}% : Koperasi ${coopPctVal}%`,
+    team_share_pct: teamPctVal,
+    cooperative_share_pct: coopPctVal,
+    is_active: true,
+    effective_from: scRow?.effective_from ?? DEFAULT_DATE,
+    created_at: scRow?.created_at ?? DEFAULT_ISO,
+  };
 
   const itemById = new Map(deliveryItems.map((di) => [di.id, di]));
   const invById = new Map(invoices.map((inv) => [inv.id, inv]));
@@ -561,44 +574,96 @@ export function fromSupabaseRows(rows: {
   };
 }
 
-/** Converts rows from `v_courier_kitchen_orders` into `SafeCourierBastItem[]` (Invariant 5 — no prices). */
+/** Converts rows from `v_courier_kitchen_orders` into `SafeCourierBastItem[]` (Invariant 5 — zero prices). */
 export function fromCourierViewRows(rows: CourierKitchenOrderViewRow[]): SafeCourierBastItem[] {
   return rows.map((r) => {
     const orderedKg = toWholeKg(r.qty_ordered_kg);
     const acceptedKg = r.is_weighed && r.qty_accepted_kg !== null ? toWholeKg(r.qty_accepted_kg) : orderedKg;
     const shrinkKg = Math.max(0, orderedKg - acceptedKg);
     const rejectionReason = r.shrinkage_reason
-      ? composeShrinkReason(
-          (r.shrinkage_reason as ShrinkReason) ?? 'Susut',
-          r.shrinkage_note ?? ''
-        )
+      ? composeShrinkReason((r.shrinkage_reason as ShrinkReason) ?? 'Susut', r.shrinkage_note ?? '')
       : null;
 
+    const itemId = r.order_item_id ?? r.item_id ?? '';
+    const productName = r.product_name_snapshot ?? r.product_name ?? '';
+    const picName = r.pic_name ?? r.kitchen_pic_name ?? '';
+    const picPhone = r.pic_phone ?? r.kitchen_pic_phone ?? '';
+
     return {
-      delivery_item_id: r.order_item_id,
+      delivery_item_id: itemId,
       delivery_id: r.order_id,
       delivery_number: r.order_code,
-      delivery_date: r.order_date,
+      delivery_date: r.order_date ?? DEFAULT_DATE,
       kitchen_id: r.kitchen_id,
       kitchen_name: r.kitchen_name,
-      item_id: r.product_id,
-      item_name: r.product_name,
+      item_id: r.product_id ?? productName,
+      item_name: productName,
       base_unit: 'kg',
       qty_dispatched_kg: orderedKg,
       qty_accepted_kg: acceptedKg,
       qty_shrinkage_kg: shrinkKg,
       rejection_reason: rejectionReason,
       kitchen_code: r.kitchen_code,
-      kitchen_pic_name: r.kitchen_pic_name,
-      kitchen_pic_phone: r.kitchen_pic_phone,
+      kitchen_pic_name: picName,
+      kitchen_pic_phone: picPhone,
       is_weighed: r.is_weighed,
-      is_locked: r.is_locked,
+      is_locked: Boolean(r.is_locked),
     };
   });
 }
 
-// ---------- Remote Supabase I/O & Realtime Subscription ----------
+// ---------- Direct Cloud Fetching & RPC Operations ----------
 
+/**
+ * Fetches ONLY from `v_courier_kitchen_orders` for role `FIELD_TEAM` (Lapangan).
+ * Guarantees zero price/margin columns ever appear in the browser Network Inspector (Invariant 5).
+ */
+export async function fetchCourierOrdersFromSupabase(
+  supabase: SupabaseClient
+): Promise<SafeCourierBastItem[] | null> {
+  try {
+    const { data, error } = await supabase
+      .from('v_courier_kitchen_orders')
+      .select(
+        'order_id,order_code,order_date,order_status,kitchen_id,kitchen_code,kitchen_name,pic_name,pic_phone,item_id,order_item_id,product_id,product_name_snapshot,qty_ordered_kg,qty_accepted_kg,qty_shrinkage_kg,is_weighed,shrinkage_reason,shrinkage_note,is_locked'
+      );
+    if (error || !data) return null;
+    return fromCourierViewRows(data as CourierKitchenOrderViewRow[]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Invokes `submit_courier_weighing` SECURITY DEFINER RPC for each weighed item.
+ * Server triggers automatically recalculate `kitchen_invoices` and `profit_ledger_entries`.
+ */
+export async function submitCourierWeighingBatchRpc(
+  supabase: SupabaseClient,
+  lines: UpdateBastInput[]
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    for (const line of lines) {
+      const parsed = parseShrinkReason(line.rejection_reason ?? null);
+      const { error } = await supabase.rpc('submit_courier_weighing', {
+        p_item_id: line.delivery_item_id,
+        p_qty_accepted_kg: toWholeKg(line.qty_accepted_kg),
+        p_shrinkage_reason: parsed.reason,
+        p_shrinkage_note: parsed.note || null,
+      });
+      if (error) {
+        return { ok: false, error: error.message };
+      }
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan timbangan ke Supabase.' };
+  }
+}
+
+/**
+ * Fetches full relational data from Supabase for Admin / Finance / Cooperative roles.
+ */
 export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promise<MbgData | null> {
   try {
     const [
@@ -609,6 +674,7 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
       invoicesRes,
       ledgerRes,
       splitRes,
+      settingsRes,
       payoutsRes,
     ] = await Promise.all([
       supabase.from('kitchens').select('*').order('code', { ascending: true }),
@@ -618,6 +684,7 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
       supabase.from('kitchen_invoices').select('*').order('created_at', { ascending: true }),
       supabase.from('profit_ledger_entries').select('*').order('created_at', { ascending: true }),
       supabase.from('profit_split_configs').select('*').order('created_at', { ascending: false }),
+      supabase.from('app_settings').select('*').eq('id', 'default'),
       supabase.from('profit_payout_batches').select('*').order('disbursed_at', { ascending: false }),
     ]);
 
@@ -632,7 +699,7 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
       return null;
     }
 
-    if (!kitchensRes.data || kitchensRes.data.length === 0 || !productsRes.data || productsRes.data.length === 0) {
+    if (!kitchensRes.data || !productsRes.data) {
       return null;
     }
 
@@ -644,11 +711,66 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
       invoices: (invoicesRes.data ?? []) as KitchenInvoiceRow[],
       ledgerEntries: (ledgerRes.data ?? []) as ProfitLedgerRow[],
       splitConfigs: (splitRes.data ?? []) as ProfitSplitConfigRow[],
+      appSettings: (settingsRes.data ?? []) as AppSettingsRow[],
       payoutBatches: (payoutsRes.data ?? []) as ProfitPayoutBatchRow[],
     });
   } catch {
     return null;
   }
+}
+
+/**
+ * Targeted cloud operations for Admin / Finance actions.
+ */
+export async function markInvoicePaidInSupabase(
+  supabase: SupabaseClient,
+  invoiceId: string,
+  paidAtIso: string
+): Promise<boolean> {
+  const { error } = await supabase
+    .from('kitchen_invoices')
+    .update({ status: 'PAID', paid_at: paidAtIso, updated_at: paidAtIso })
+    .eq('id', invoiceId);
+  return !error;
+}
+
+export async function updateAppSettingsSplitInSupabase(
+  supabase: SupabaseClient,
+  teamSharePct: number,
+  coopSharePct: number
+): Promise<boolean> {
+  const { error } = await supabase.from('app_settings').upsert(
+    {
+      id: 'default',
+      team_share_pct: teamSharePct,
+      coop_share_pct: coopSharePct,
+      updated_at: new Date().toISOString(),
+    },
+    { onConflict: 'id' }
+  );
+  return !error;
+}
+
+export async function deleteKitchenFromSupabase(supabase: SupabaseClient, kitchenId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabase.from('kitchens').delete().eq('id', kitchenId);
+  if (error) return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki histori order.' };
+  return { ok: true };
+}
+
+export async function deleteProductFromSupabase(supabase: SupabaseClient, productId: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const { error } = await supabase.from('products').delete().eq('id', productId);
+  if (error) return { ok: false, error: 'Barang tidak dapat dihapus karena masih digunakan di order dapur.' };
+  return { ok: true };
+}
+
+export async function resetToSimulationSeedRpc(supabase: SupabaseClient): Promise<boolean> {
+  const { error } = await supabase.rpc('reset_to_simulation_seed');
+  return !error;
+}
+
+export async function clearAllTransactionsRpc(supabase: SupabaseClient): Promise<boolean> {
+  const { error } = await supabase.rpc('clear_all_transactions');
+  return !error;
 }
 
 export async function syncMbgDataToSupabase(
@@ -659,16 +781,29 @@ export async function syncMbgDataToSupabase(
   try {
     const rows = toSupabaseRows(next);
 
-    // 1. Upsert master tables & split config
-    const [kRes, pRes, scRes] = await Promise.all([
+    // 1. Upsert master tables, app_settings & split config
+    const [kRes, pRes, scRes, asRes] = await Promise.all([
       supabase.from('kitchens').upsert(rows.kitchens, { onConflict: 'id' }),
       supabase.from('products').upsert(rows.products, { onConflict: 'id' }),
       supabase.from('profit_split_configs').upsert([rows.splitConfig], { onConflict: 'id' }),
+      supabase.from('app_settings').upsert([rows.appSettings], { onConflict: 'id' }),
     ]);
-    if (kRes.error || pRes.error || scRes.error) return false;
+    if (kRes.error || pRes.error || scRes.error || asRes.error) return false;
 
-    // 2. Delete removed orders or order items first (cascade handles dependent rows)
+    // 2. Delete removed kitchens, products, orders, or order items
     if (prev) {
+      const nextKitchenIds = new Set(next.kitchens.map((k) => k.id));
+      const deletedKitchenIds = prev.kitchens.filter((k) => !nextKitchenIds.has(k.id)).map((k) => k.id);
+      if (deletedKitchenIds.length > 0) {
+        await supabase.from('kitchens').delete().in('id', deletedKitchenIds);
+      }
+
+      const nextProductIds = new Set(next.items.map((i) => i.id));
+      const deletedProductIds = prev.items.filter((i) => !nextProductIds.has(i.id)).map((i) => i.id);
+      if (deletedProductIds.length > 0) {
+        await supabase.from('products').delete().in('id', deletedProductIds);
+      }
+
       const nextOrderIds = new Set(next.deliveries.map((d) => d.id));
       const deletedOrderIds = prev.deliveries.filter((d) => !nextOrderIds.has(d.id)).map((d) => d.id);
       if (deletedOrderIds.length > 0) {
@@ -684,20 +819,20 @@ export async function syncMbgDataToSupabase(
       }
     }
 
-    // 3. Upsert orders, items, invoices, payout batches, and ledger entries in FK order
+    // 3. Upsert orders, invoices, items, payout batches, and ledger entries in FK order
     if (rows.orders.length > 0) {
       const oRes = await supabase.from('kitchen_orders').upsert(rows.orders, { onConflict: 'id' });
       if (oRes.error) return false;
     }
 
-    if (rows.orderItems.length > 0) {
-      const oiRes = await supabase.from('kitchen_order_items').upsert(rows.orderItems, { onConflict: 'id' });
-      if (oiRes.error) return false;
-    }
-
     if (rows.invoices.length > 0) {
       const invRes = await supabase.from('kitchen_invoices').upsert(rows.invoices, { onConflict: 'id' });
       if (invRes.error) return false;
+    }
+
+    if (rows.orderItems.length > 0) {
+      const oiRes = await supabase.from('kitchen_order_items').upsert(rows.orderItems, { onConflict: 'id' });
+      if (oiRes.error) return false;
     }
 
     if (rows.payoutBatches.length > 0) {
@@ -716,7 +851,11 @@ export async function syncMbgDataToSupabase(
   }
 }
 
-export function subscribeToMbgRealtime(supabase: SupabaseClient, onRemoteChange: () => void): () => void {
+export function subscribeToMbgRealtime(
+  supabase: SupabaseClient,
+  onRemoteChange: () => void,
+  onStatusChange?: (connected: boolean) => void
+): () => void {
   const channel = supabase
     .channel('mbg-order-driven-realtime')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchens' }, onRemoteChange)
@@ -726,8 +865,13 @@ export function subscribeToMbgRealtime(supabase: SupabaseClient, onRemoteChange:
     .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_invoices' }, onRemoteChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_ledger_entries' }, onRemoteChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_split_configs' }, onRemoteChange)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, onRemoteChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_payout_batches' }, onRemoteChange)
-    .subscribe();
+    .subscribe((status) => {
+      if (onStatusChange) {
+        onStatusChange(status === 'SUBSCRIBED');
+      }
+    });
 
   return () => {
     void supabase.removeChannel(channel);

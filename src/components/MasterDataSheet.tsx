@@ -103,7 +103,7 @@ function MasterForm<T extends { id?: string }>({
 }
 
 export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { activeRole, kitchens, items, saveKitchen, saveItem } = useMbgStore();
+  const { activeRole, kitchens, items, saveKitchen, saveItem, deleteKitchen, deleteItem } = useMbgStore();
   const [tab, setTab] = useState<MasterTab>('kitchens');
   // `null` = no form open, `'new'` = create form, otherwise the id being edited.
   const [editing, setEditing] = useState<string | null>(null);
@@ -131,12 +131,14 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   };
 
   const rowBtn =
-    'min-h-[36px] shrink-0 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100';
+    'min-h-[36px] shrink-0 rounded-md border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100';
+  const delBtn =
+    'min-h-[36px] shrink-0 rounded-md border border-rose-200 bg-white px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50';
 
   return (
     <BottomSheet
       open={open}
-      title="⚙️ Data Master"
+      title="⚙️ Data Master (Supabase)"
       onClose={() => {
         setEditing(null);
         onClose();
@@ -162,7 +164,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               fields={KITCHEN_FIELDS}
               initial={EMPTY_KITCHEN}
               onCancel={() => setEditing(null)}
-              onSave={(v) => done(saveKitchen(v), `Dapur "${v.name.trim()}" ditambahkan.`)}
+              onSave={(v) => done(saveKitchen(v), `Dapur "${v.name.trim()}" disimpan ke Supabase.`)}
             />
           ) : (
             <MasterForm<ItemMasterInput>
@@ -170,7 +172,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               fields={ITEM_FIELDS}
               initial={EMPTY_ITEM}
               onCancel={() => setEditing(null)}
-              onSave={(v) => done(saveItem(v), `Barang "${v.name.trim()}" ditambahkan.`)}
+              onSave={(v) => done(saveItem(v), `Barang "${v.name.trim()}" disimpan ke Supabase.`)}
               extra={<UnitLockedField id="md-i-new-unit" />}
             />
           )
@@ -196,7 +198,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                       pic_phone: k.pic_phone,
                     }}
                     onCancel={() => setEditing(null)}
-                    onSave={(v) => done(saveKitchen(v), `Dapur ${k.kitchen_code} diperbarui.`)}
+                    onSave={(v) => done(saveKitchen(v), `Dapur ${k.kitchen_code} diperbarui di Supabase.`)}
                   />
                 </li>
               ) : (
@@ -209,9 +211,26 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                       {k.kitchen_code} • PIC {k.pic_name} • {k.pic_phone}
                     </div>
                   </div>
-                  <button type="button" onClick={() => setEditing(k.id)} className={rowBtn}>
-                    Ubah
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button type="button" onClick={() => setEditing(k.id)} className={rowBtn}>
+                      Ubah
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== 'undefined' && !window.confirm(`Hapus dapur ${k.name}?`)) return;
+                        const res = deleteKitchen(k.id);
+                        setToast(
+                          res.ok
+                            ? { kind: 'ok', text: `Dapur ${k.kitchen_code} dihapus dari Supabase.` }
+                            : { kind: 'error', text: res.error }
+                        );
+                      }}
+                      className={delBtn}
+                    >
+                      Hapus
+                    </button>
+                  </div>
                 </li>
               )
             )}
@@ -231,7 +250,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                       default_margin_per_kg: formatThousands(it.default_margin_per_kg),
                     }}
                     onCancel={() => setEditing(null)}
-                    onSave={(v) => done(saveItem(v), `Barang ${it.name} diperbarui.`)}
+                    onSave={(v) => done(saveItem(v), `Barang ${it.name} diperbarui di Supabase.`)}
                     extra={<UnitLockedField id={`md-i-${it.id}-unit`} />}
                   />
                 </li>
@@ -246,9 +265,26 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                       {formatRp(it.default_margin_per_kg)}/kg
                     </div>
                   </div>
-                  <button type="button" onClick={() => setEditing(it.id)} className={rowBtn}>
-                    Ubah
-                  </button>
+                  <div className="flex shrink-0 items-center gap-1.5">
+                    <button type="button" onClick={() => setEditing(it.id)} className={rowBtn}>
+                      Ubah
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (typeof window !== 'undefined' && !window.confirm(`Hapus barang ${it.name}?`)) return;
+                        const res = deleteItem(it.id);
+                        setToast(
+                          res.ok
+                            ? { kind: 'ok', text: `Barang ${it.name} dihapus dari Supabase.` }
+                            : { kind: 'error', text: res.error }
+                        );
+                      }}
+                      className={delBtn}
+                    >
+                      Hapus
+                    </button>
+                  </div>
                 </li>
               )
             )}

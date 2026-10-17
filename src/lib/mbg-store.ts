@@ -1,6 +1,6 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import type { BeneficiaryType, Item, Kitchen, ProfitSplitConfig, SafeCourierBastItem, UserRole } from '../types/mbg';
 import { idrToSen, senToIdr, toWholeKg } from './financial-engine';
 import {
@@ -19,15 +19,25 @@ import {
   type UpdateBastInput,
   updateProfitSplit,
 } from './order-engine';
-import { fetchMbgDataFromSupabase, subscribeToMbgRealtime, syncMbgDataToSupabase } from './supabase-sync';
-import { createClient as createSupabaseClient, isSupabaseConfigured } from '../utils/supabase/client';
+import { getSupabaseClient, isSupabaseConfigured } from './supabase';
+import {
+  clearAllTransactionsRpc,
+  deleteKitchenFromSupabase,
+  deleteProductFromSupabase,
+  fetchCourierOrdersFromSupabase,
+  fetchMbgDataFromSupabase,
+  markInvoicePaidInSupabase,
+  resetToSimulationSeedRpc,
+  submitCourierWeighingBatchRpc,
+  subscribeToMbgRealtime,
+  syncMbgDataToSupabase,
+  updateAppSettingsSplitInSupabase,
+} from './supabase-sync';
 
 export { buildSafeCourierItems } from './order-engine';
 export type { CreateOrderInput, OrderLineInput, UpdateBastInput } from './order-engine';
 
-// v5 (Stage 8): order-driven model (no supplier batches) — older local state is discarded.
-const STORAGE_KEY = 'mbg_supply_ledger_state_v5';
-/** Business date of the simulation ("hari ini" for Order Dapur & kurir). */
+/** Business date of the operational day ("hari ini" for Order Dapur & kurir). */
 export const BUSINESS_DATE = '2026-10-16';
 
 export type ActiveTab = 'orders' | 'bast' | 'invoices' | 'ledger';
@@ -60,6 +70,12 @@ export type MasterSaveResult = { ok: true } | { ok: false; error: string };
 export type ActionResult = { ok: true; merged?: boolean; count?: number } | { ok: false; error: string };
 
 export interface MbgContextValue extends MbgState {
+  /** True while initial data is loading from Supabase PostgreSQL. */
+  isLoading: boolean;
+  /** True while an INSERT / UPDATE / DELETE / RPC is in-flight to Supabase. */
+  isSyncing: boolean;
+  /** True when connected to the live Supabase cloud backend. */
+  isSupabaseLive: boolean;
   setActiveRole: (role: UserRole) => void;
   setActiveTab: (tab: ActiveTab) => void;
   /** "Simpan Order & Kirim ke Daftar Kurir". */
@@ -73,7 +89,12 @@ export interface MbgContextValue extends MbgState {
   executePayout: (beneficiary_type: BeneficiaryType, notes?: string) => ActionResult;
   saveKitchen: (input: KitchenMasterInput) => MasterSaveResult;
   saveItem: (input: ItemMasterInput) => MasterSaveResult;
+  deleteKitchen: (kitchen_id: string) => MasterSaveResult;
+  deleteItem: (item_id: string) => MasterSaveResult;
+  /** Restores simulation seed data in Supabase via `reset_to_simulation_seed()` RPC. */
   resetSimulationData: () => void;
+  /** Truncates/clears transactions in Supabase while keeping Master Dapur & Master Barang. */
+  clearAllTransactions: () => void;
   /** Price-free courier projection (Invariant 5) used by the Timbang screen. */
   getSafeCourierItems: () => SafeCourierBastItem[];
 }
@@ -179,7 +200,7 @@ export function formatIdr(idr: number): string {
   }).format(exact);
 }
 
-// ---------- Seed data (real Phase-1 scenario) ----------
+// ---------- Canonical Seed Builder (used by unit tests & reset_to_simulation_seed parity) ----------
 
 const KITCHEN_LOCATIONS: Array<{ name: string; pic: string; area: string }> = [
   { name: 'SPPG Dapur 01 - Tebet (Dapur A)', pic: 'Budi Santoso', area: 'Jl. Tebet Raya No. 12, Jakarta Selatan' },
@@ -222,14 +243,33 @@ function unwrap<T extends MbgData>(res: EngineResult<T>, step: string): T {
   return res.data;
 }
 
+export function createEmptyCloudState(): MbgState {
+  const nowIso = '2026-10-16T06:00:00.000Z';
+  const splitConfig: ProfitSplitConfig = {
+    id: 'split-default-60-40',
+    config_name: 'Skema Bagi Hasil Standar Tim 60% : Koperasi 40%',
+    team_share_pct: 60.0,
+    cooperative_share_pct: 40.0,
+    is_active: true,
+    effective_from: BUSINESS_DATE,
+    created_at: nowIso,
+  };
+  return {
+    activeRole: 'OWNER_ADMIN',
+    activeTab: 'orders',
+    kitchens: [],
+    items: [],
+    deliveries: [],
+    deliveryItems: [],
+    invoices: [],
+    splitConfig,
+    ledgerEntries: [],
+    payoutBatches: [],
+  };
+}
+
 /**
- * Seed (16 Okt 2026) — 5 Order Dapur, harga dapur & margin per kg, berat kilogram bulat:
- * - DPR-01: Wortel 35 + Kubis 25 → ditimbang utuh, invoice LUNAS (Rp 740.000).
- * - DPR-02: Daging Ayam 50 (diterima 49, susut -1) + Telur 20 → LUNAS.
- * - DPR-03: Wortel 35 (diterima 33, reject -2) + Beras 50 → Selesai BAST, Belum Bayar.
- * - DPR-04: Wortel 35 + Kubis 50 + Daging Ayam 50 → Menunggu Kurir.
- * - DPR-05: Daging Ayam 50 (tertimbang) + Telur 25 (belum) → Sebagian Tertimbang.
- * Muatan kurir: Wortel 105 kg • Kubis 75 kg • Daging Ayam 150 kg • Telur 45 kg • Beras 50 kg.
+ * Canonical simulation seed (16 Okt 2026) — matches `reset_to_simulation_seed()` in PostgreSQL.
  */
 export function createInitialSeedState(): MbgState {
   const nowIso = '2026-10-16T06:00:00.000Z';
@@ -338,7 +378,7 @@ export function createInitialSeedState(): MbgState {
   return { activeRole: 'OWNER_ADMIN', activeTab: 'orders', ...data };
 }
 
-// ---------- React store ----------
+// ---------- 100% Pure Supabase Cloud React Store (No localStorage business data) ----------
 
 const MbgContext = createContext<MbgContextValue | null>(null);
 
@@ -351,96 +391,106 @@ function runtimeCtx(): EngineCtx {
   };
 }
 
-function isCompatibleState(parsed: unknown): parsed is MbgState {
-  const s = parsed as Partial<MbgState> | null;
-  return (
-    !!s &&
-    Array.isArray(s.kitchens) &&
-    s.kitchens.length > 0 &&
-    Array.isArray(s.items) &&
-    Array.isArray(s.deliveryItems) &&
-    Array.isArray(s.invoices) &&
-    Array.isArray(s.ledgerEntries) &&
-    !!s.splitConfig
-  );
-}
-
 export function MbgProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<MbgState>(() => createInitialSeedState());
-  const [hydrated, setHydrated] = useState(false);
-  // Latest committed state, so several actions inside one click handler
-  // (e.g. "Cairkan Semua") build on each other instead of a stale render.
-  const stateRef = useRef<MbgState>(state);
+  const [state, setState] = useState<MbgState>(() => createEmptyCloudState());
+  const [courierItems, setCourierItems] = useState<SafeCourierBastItem[]>([]);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [isSupabaseLive, setIsSupabaseLive] = useState<boolean>(isSupabaseConfigured);
 
-  const commit = (next: MbgState) => {
+  const stateRef = useRef<MbgState>(state);
+  const courierItemsRef = useRef<SafeCourierBastItem[]>(courierItems);
+
+  const commit = useCallback((next: MbgState) => {
     stateRef.current = next;
     setState(next);
-  };
-
-  const commitAndSync = (next: MbgState) => {
-    const prev = stateRef.current;
-    commit(next);
-    if (isSupabaseConfigured) {
-      const supabase = createSupabaseClient();
-      void syncMbgDataToSupabase(supabase, prev, next);
-    }
-  };
-
-  useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed: unknown = JSON.parse(raw);
-        if (isCompatibleState(parsed)) commit(parsed);
-      }
-    } catch {
-      // Fallback to default seed data if localStorage is unavailable or corrupt
-    }
-    setHydrated(true);
-
-    if (!isSupabaseConfigured) return;
-
-    const supabase = createSupabaseClient();
-    let active = true;
-
-    const pullRemote = async () => {
-      const remoteData = await fetchMbgDataFromSupabase(supabase);
-      if (!active) return;
-      if (remoteData) {
-        commit({
-          ...stateRef.current,
-          ...remoteData,
-        });
-      } else {
-        // Seed remote database if tables exist and are currently empty
-        void syncMbgDataToSupabase(supabase, null, stateRef.current);
-      }
-    };
-
-    void pullRemote();
-    const unsubscribe = subscribeToMbgRealtime(supabase, () => {
-      void pullRemote();
-    });
-
-    return () => {
-      active = false;
-      unsubscribe();
-    };
   }, []);
 
+  const commitCourier = useCallback((items: SafeCourierBastItem[]) => {
+    courierItemsRef.current = items;
+    setCourierItems(items);
+  }, []);
+
+  /**
+   * Pulls data from Supabase according to the active role:
+   * - `FIELD_TEAM` (Lapangan): ONLY queries `v_courier_kitchen_orders` (zero price/margin columns).
+   * - `OWNER_ADMIN` / `FINANCE` / `COOPERATIVE_VIEWER`: queries relational tables.
+   */
+  const pullFromSupabase = useCallback(
+    async (roleOverride?: UserRole) => {
+      if (!isSupabaseConfigured) {
+        setIsLoading(false);
+        return;
+      }
+      const supabase = getSupabaseClient();
+      const role = roleOverride ?? stateRef.current.activeRole;
+
+      if (role === 'FIELD_TEAM') {
+        const safeRows = await fetchCourierOrdersFromSupabase(supabase);
+        if (safeRows) {
+          commitCourier(safeRows);
+          setIsSupabaseLive(true);
+        }
+        setIsLoading(false);
+        return;
+      }
+
+      const remoteData = await fetchMbgDataFromSupabase(supabase);
+      if (remoteData) {
+        const next: MbgState = {
+          ...stateRef.current,
+          activeRole: role,
+          ...remoteData,
+        };
+        commit(next);
+        commitCourier(buildSafeCourierItems(next));
+        setIsSupabaseLive(true);
+      }
+      setIsLoading(false);
+    },
+    [commit, commitCourier]
+  );
+
   useEffect(() => {
-    if (!hydrated) return;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch {
-      // Ignore storage quota errors
+    if (!isSupabaseConfigured) {
+      setIsLoading(false);
+      return;
     }
-  }, [state, hydrated]);
+    const supabase = getSupabaseClient();
+    void pullFromSupabase();
+
+    const unsubscribe = subscribeToMbgRealtime(
+      supabase,
+      () => {
+        void pullFromSupabase();
+      },
+      (connected) => {
+        if (connected) setIsSupabaseLive(true);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
+  }, [pullFromSupabase]);
+
+  const commitAndSyncCloud = (next: MbgState) => {
+    const prev = stateRef.current;
+    commit(next);
+    commitCourier(buildSafeCourierItems(next));
+    if (isSupabaseConfigured) {
+      setIsSyncing(true);
+      const supabase = getSupabaseClient();
+      void syncMbgDataToSupabase(supabase, prev, next).finally(() => {
+        setIsSyncing(false);
+      });
+    }
+  };
 
   const run = (fn: (current: MbgState) => EngineResult<MbgState>): ActionResult => {
     const res = fn(stateRef.current);
     if (!res.ok) return { ok: false, error: res.error };
-    commitAndSync(res.data);
+    commitAndSyncCloud(res.data);
     return { ok: true, merged: res.merged, count: res.count };
   };
 
@@ -454,6 +504,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       nextTab = 'ledger';
     }
     commit({ ...prev, activeRole: role, activeTab: nextTab });
+    void pullFromSupabase(role);
   };
 
   const setActiveTab = (tab: ActiveTab) => commit({ ...stateRef.current, activeTab: tab });
@@ -464,13 +515,105 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
   const deleteOrder = (id: string) => run((s) => deleteKitchenOrder(s, id));
 
-  const saveKitchenBast = (lines: UpdateBastInput[]) =>
-    run((s) => applyBastWeights(s, lines, runtimeCtx().nowIso));
+  /**
+   * Saves courier BAST weights:
+   * - Always calls `submit_courier_weighing` SECURITY DEFINER RPC in Supabase so server triggers
+   *   automatically recalculate `kitchen_invoices` and `profit_ledger_entries`.
+   * - When `activeRole === 'FIELD_TEAM'`, updates `courierItems` and refreshes from `v_courier_kitchen_orders`
+   *   without ever touching price tables.
+   */
+  const saveKitchenBast = (lines: UpdateBastInput[]): ActionResult => {
+    if (lines.length === 0) return { ok: false, error: 'Pilih minimal 1 barang untuk disimpan.' };
 
-  const markInvoicePaid = (id: string) => run((s) => markInvoicePaidEngine(s, id, runtimeCtx().nowIso));
+    if (stateRef.current.activeRole === 'FIELD_TEAM') {
+      const currentMap = new Map(courierItemsRef.current.map((c) => [c.delivery_item_id, c]));
+      for (const l of lines) {
+        const row = currentMap.get(l.delivery_item_id);
+        if (!row) return { ok: false, error: 'Barang pengiriman tidak ditemukan.' };
+        if (row.is_locked) return { ok: false, error: 'Invoice dapur sudah lunas — timbangan terkunci.' };
+        const kg = toWholeKg(l.qty_accepted_kg);
+        if (kg < 0) return { ok: false, error: 'Berat diterima tidak boleh negatif.' };
+        if (kg > row.qty_dispatched_kg) {
+          return {
+            ok: false,
+            error: `${row.item_name}: berat diterima (${kg} kg) melebihi berat order (${row.qty_dispatched_kg} kg).`,
+          };
+        }
+      }
 
-  const updateProfitSplitPercentage = (team: number, coop: number) =>
-    run((s) => updateProfitSplit(s, team, coop, runtimeCtx().nowIso));
+      // Optimistic update on price-free courier view items
+      const patchById = new Map(lines.map((l) => [l.delivery_item_id, l]));
+      const updatedCourier = courierItemsRef.current.map((item) => {
+        const p = patchById.get(item.delivery_item_id);
+        if (!p) return item;
+        const acceptedKg = toWholeKg(p.qty_accepted_kg);
+        const shrinkKg = Math.max(0, item.qty_dispatched_kg - acceptedKg);
+        return {
+          ...item,
+          qty_accepted_kg: acceptedKg,
+          qty_shrinkage_kg: shrinkKg,
+          rejection_reason: shrinkKg > 0 ? p.rejection_reason ?? 'Susut' : null,
+          is_weighed: true,
+        };
+      });
+      commitCourier(updatedCourier);
+
+      if (isSupabaseConfigured) {
+        setIsSyncing(true);
+        const supabase = getSupabaseClient();
+        void submitCourierWeighingBatchRpc(supabase, lines)
+          .then(() => pullFromSupabase('FIELD_TEAM'))
+          .finally(() => setIsSyncing(false));
+      }
+      return { ok: true, count: lines.length };
+    }
+
+    const res = applyBastWeights(stateRef.current, lines, runtimeCtx().nowIso);
+    if (!res.ok) return { ok: false, error: res.error };
+    commit(res.data);
+    commitCourier(buildSafeCourierItems(res.data));
+
+    if (isSupabaseConfigured) {
+      setIsSyncing(true);
+      const supabase = getSupabaseClient();
+      void submitCourierWeighingBatchRpc(supabase, lines)
+        .then(() => pullFromSupabase())
+        .finally(() => setIsSyncing(false));
+    }
+    return { ok: true, count: res.count };
+  };
+
+  const markInvoicePaid = (id: string): ActionResult => {
+    const nowIso = runtimeCtx().nowIso;
+    const res = markInvoicePaidEngine(stateRef.current, id, nowIso);
+    if (!res.ok) return { ok: false, error: res.error };
+    commit(res.data);
+    commitCourier(buildSafeCourierItems(res.data));
+
+    if (isSupabaseConfigured) {
+      setIsSyncing(true);
+      const supabase = getSupabaseClient();
+      void markInvoicePaidInSupabase(supabase, id, nowIso)
+        .then(() => pullFromSupabase())
+        .finally(() => setIsSyncing(false));
+    }
+    return { ok: true };
+  };
+
+  const updateProfitSplitPercentage = (team: number, coop: number): ActionResult => {
+    const res = updateProfitSplit(stateRef.current, team, coop, runtimeCtx().nowIso);
+    if (!res.ok) return { ok: false, error: res.error };
+    commit(res.data);
+
+    if (isSupabaseConfigured) {
+      setIsSyncing(true);
+      const supabase = getSupabaseClient();
+      void updateAppSettingsSplitInSupabase(supabase, team, coop)
+        .then(() => pullFromSupabase())
+        .finally(() => setIsSyncing(false));
+    }
+    return { ok: true };
+  };
 
   const executePayout = (who: BeneficiaryType, notes?: string) =>
     run((s) => executePayoutEngine(s, who, runtimeCtx(), notes));
@@ -479,7 +622,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     const error = validateKitchenInput(input);
     if (error) return { ok: false, error };
     const s = stateRef.current;
-    commitAndSync({ ...s, kitchens: upsertKitchenRecord(s.kitchens, input, new Date().toISOString()) });
+    commitAndSyncCloud({ ...s, kitchens: upsertKitchenRecord(s.kitchens, input, new Date().toISOString()) });
     return { ok: true };
   };
 
@@ -487,24 +630,90 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     const error = validateItemInput(input);
     if (error) return { ok: false, error };
     const s = stateRef.current;
-    commitAndSync({ ...s, items: upsertItemRecord(s.items, input, new Date().toISOString()) });
+    commitAndSyncCloud({ ...s, items: upsertItemRecord(s.items, input, new Date().toISOString()) });
+    return { ok: true };
+  };
+
+  const deleteKitchen = (kitchenId: string): MasterSaveResult => {
+    const s = stateRef.current;
+    if (s.deliveries.some((d) => d.kitchen_id === kitchenId)) {
+      return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki order aktif/histori.' };
+    }
+    const nextKitchens = s.kitchens.filter((k) => k.id !== kitchenId);
+    commit({ ...s, kitchens: nextKitchens });
+    if (isSupabaseConfigured) {
+      setIsSyncing(true);
+      const supabase = getSupabaseClient();
+      void deleteKitchenFromSupabase(supabase, kitchenId)
+        .then(() => pullFromSupabase())
+        .finally(() => setIsSyncing(false));
+    }
+    return { ok: true };
+  };
+
+  const deleteItem = (itemId: string): MasterSaveResult => {
+    const s = stateRef.current;
+    if (s.deliveryItems.some((di) => di.item_id === itemId)) {
+      return { ok: false, error: 'Barang tidak dapat dihapus karena sedang digunakan pada order dapur.' };
+    }
+    const nextItems = s.items.filter((i) => i.id !== itemId);
+    commit({ ...s, items: nextItems });
+    if (isSupabaseConfigured) {
+      setIsSyncing(true);
+      const supabase = getSupabaseClient();
+      void deleteProductFromSupabase(supabase, itemId)
+        .then(() => pullFromSupabase())
+        .finally(() => setIsSyncing(false));
+    }
     return { ok: true };
   };
 
   const resetSimulationData = () => {
     const fresh = createInitialSeedState();
-    commitAndSync(fresh);
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
-    } catch {
-      // Ignore storage errors
+    commit({ ...fresh, activeRole: stateRef.current.activeRole, activeTab: stateRef.current.activeTab });
+    commitCourier(buildSafeCourierItems(fresh));
+    if (isSupabaseConfigured) {
+      setIsSyncing(true);
+      const supabase = getSupabaseClient();
+      void resetToSimulationSeedRpc(supabase)
+        .then(() => pullFromSupabase())
+        .finally(() => setIsSyncing(false));
     }
   };
 
-  const getSafeCourierItems = (): SafeCourierBastItem[] => buildSafeCourierItems(state);
+  const clearAllTransactions = () => {
+    const s = stateRef.current;
+    const cleared: MbgState = {
+      ...s,
+      deliveries: [],
+      deliveryItems: [],
+      invoices: [],
+      ledgerEntries: [],
+      payoutBatches: [],
+    };
+    commit(cleared);
+    commitCourier([]);
+    if (isSupabaseConfigured) {
+      setIsSyncing(true);
+      const supabase = getSupabaseClient();
+      void clearAllTransactionsRpc(supabase)
+        .then(() => pullFromSupabase())
+        .finally(() => setIsSyncing(false));
+    }
+  };
+
+  const getSafeCourierItems = (): SafeCourierBastItem[] => {
+    if (state.activeRole === 'FIELD_TEAM') {
+      return courierItems;
+    }
+    return buildSafeCourierItems(state);
+  };
 
   const value: MbgContextValue = {
     ...state,
+    isLoading,
+    isSyncing,
+    isSupabaseLive,
     setActiveRole,
     setActiveTab,
     createOrder,
@@ -516,7 +725,10 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     executePayout,
     saveKitchen,
     saveItem,
+    deleteKitchen,
+    deleteItem,
     resetSimulationData,
+    clearAllTransactions,
     getSafeCourierItems,
   };
 

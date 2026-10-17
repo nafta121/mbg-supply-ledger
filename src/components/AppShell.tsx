@@ -9,6 +9,7 @@ import { Tab1KitchenOrders } from './Tab1KitchenOrders';
 import { Tab2CourierWeighing } from './Tab2CourierWeighing';
 import { Tab3KitchenInvoices } from './Tab3KitchenInvoices';
 import { Tab4ProfitSharing } from './Tab4ProfitSharing';
+import { BottomSheet } from './ui';
 
 const ROLE_PILLS: Array<{ role: UserRole; label: string }> = [
   { role: 'OWNER_ADMIN', label: 'Admin' },
@@ -50,9 +51,19 @@ const NAV_TABS: Array<{
 ];
 
 export function AppShell() {
-  const { activeRole, activeTab, setActiveRole, setActiveTab, resetSimulationData } =
-    useMbgStore();
+  const {
+    activeRole,
+    activeTab,
+    isLoading,
+    isSyncing,
+    isSupabaseLive,
+    setActiveRole,
+    setActiveTab,
+    resetSimulationData,
+    clearAllTransactions,
+  } = useMbgStore();
   const [masterOpen, setMasterOpen] = useState(false);
+  const [resetSheetOpen, setResetSheetOpen] = useState(false);
 
   const visibleTabs = NAV_TABS.filter((t) => t.roles.includes(activeRole));
   // Never render a tab the active role is not allowed to see (Invariant 5).
@@ -61,13 +72,6 @@ export function AppShell() {
     : visibleTabs[0]?.id ?? 'bast';
   // Single-courier focus mode: no bottom nav when there is only one screen.
   const showNav = visibleTabs.length > 1;
-
-  const handleReset = () => {
-    if (typeof window !== 'undefined' && !window.confirm('Kembalikan semua data ke awal?')) {
-      return;
-    }
-    resetSimulationData();
-  };
 
   return (
     <div className="min-h-[100dvh] bg-slate-50 text-slate-900">
@@ -85,9 +89,22 @@ export function AppShell() {
       >
         {/* 1-row sticky header (56px) */}
         <header className="no-print sticky top-0 z-30 flex h-14 items-center justify-between gap-1.5 border-b border-slate-200 bg-white px-3">
-          <h1 className="shrink-0 text-base font-extrabold tracking-tight text-slate-900">
-            MBG<span className="hidden min-[400px]:inline"> Ledger</span>
-          </h1>
+          <div className="flex min-w-0 shrink-0 flex-col">
+            <h1 className="truncate text-sm font-extrabold leading-tight tracking-tight text-slate-900">
+              MBG<span className="hidden min-[400px]:inline"> Ledger</span>
+            </h1>
+            <span
+              aria-live="polite"
+              className="inline-flex items-center gap-1 text-[10px] font-semibold text-emerald-700"
+            >
+              <span
+                className={`h-1.5 w-1.5 rounded-full ${
+                  isSyncing ? 'animate-ping bg-amber-500' : isSupabaseLive ? 'bg-emerald-500' : 'bg-slate-400'
+                }`}
+              />
+              {isSyncing ? 'Menyimpan…' : '● Live Supabase'}
+            </span>
+          </div>
 
           <div
             role="group"
@@ -126,15 +143,17 @@ export function AppShell() {
                 <span aria-hidden="true">⚙️</span>
               </button>
             )}
-            <button
-              type="button"
-              onClick={handleReset}
-              aria-label="Reset data"
-              title="Reset data"
-              className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
-            >
-              <RefreshResetIcon className="h-4 w-4" />
-            </button>
+            {activeRole === 'OWNER_ADMIN' && (
+              <button
+                type="button"
+                onClick={() => setResetSheetOpen(true)}
+                aria-label="Reset data"
+                title="Reset / Kosongkan Transaksi Supabase"
+                className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
+              >
+                <RefreshResetIcon className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </header>
 
@@ -143,45 +162,99 @@ export function AppShell() {
           onClose={() => setMasterOpen(false)}
         />
 
+        <BottomSheet
+          open={resetSheetOpen && activeRole === 'OWNER_ADMIN'}
+          title="🔄 Kelola Data Database Supabase"
+          onClose={() => setResetSheetOpen(false)}
+        >
+          <div className="space-y-3 text-sm text-slate-700">
+            <p className="text-xs text-slate-600">
+              Pilih tindakan pada database cloud Supabase (<span className="font-mono">nrdepkayabbbshnmyrvc</span>):
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  typeof window === 'undefined' ||
+                  window.confirm('Kembalikan database Supabase ke 5 Order Dapur simulasi awal (16 Oktober 2026)?')
+                ) {
+                  resetSimulationData();
+                  setResetSheetOpen(false);
+                }
+              }}
+              className="btn-primary w-full"
+            >
+              🔄 Reset ke Seed Simulasi Awal (5 Order)
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  typeof window === 'undefined' ||
+                  window.confirm(
+                    'Kosongkan seluruh transaksi (Order, Invoice, Bagi Hasil) di Supabase? Master Dapur & Master Barang tetap disimpan.'
+                  )
+                ) {
+                  clearAllTransactions();
+                  setResetSheetOpen(false);
+                }
+              }}
+              className="btn-secondary w-full border-rose-300 text-rose-700 hover:bg-rose-50"
+            >
+              🧹 Kosongkan Transaksi (Mulai Operasional Bersih)
+            </button>
+          </div>
+        </BottomSheet>
+
         <main id="main-content" className="flex-1 px-3 py-3">
-          {currentTab === 'orders' && <Tab1KitchenOrders />}
-          {currentTab === 'bast' && <Tab2CourierWeighing key={activeRole} />}
-          {currentTab === 'invoices' && <Tab3KitchenInvoices />}
-          {currentTab === 'ledger' && <Tab4ProfitSharing />}
+          {isLoading ? (
+            <div aria-label="Memuat data dari Supabase" className="space-y-3">
+              <div className="h-24 animate-pulse rounded-xl bg-slate-200/80" />
+              <div className="h-40 animate-pulse rounded-xl bg-slate-200/80" />
+              <div className="h-40 animate-pulse rounded-xl bg-slate-200/80" />
+            </div>
+          ) : (
+            <>
+              {currentTab === 'orders' && <Tab1KitchenOrders />}
+              {currentTab === 'bast' && <Tab2CourierWeighing key={activeRole} />}
+              {currentTab === 'invoices' && <Tab3KitchenInvoices />}
+              {currentTab === 'ledger' && <Tab4ProfitSharing />}
+            </>
+          )}
         </main>
 
         {showNav && (
-        <nav aria-label="Navigasi utama" className="no-print fixed bottom-0 left-0 right-0 z-30">
-          <div className="mx-auto max-w-md border-t border-slate-200 bg-white px-1.5 pb-[env(safe-area-inset-bottom)]">
-            <div
-              className="grid"
-              style={{ gridTemplateColumns: `repeat(${visibleTabs.length}, minmax(0, 1fr))` }}
-            >
-              {visibleTabs.map((tab) => {
-                const isActive = currentTab === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    aria-current={isActive ? 'page' : undefined}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`relative flex min-h-[60px] flex-col items-center justify-center gap-1 px-1 transition ${
-                      isActive ? 'text-emerald-700' : 'text-slate-500 hover:text-slate-800'
-                    }`}
-                  >
-                    {isActive && (
-                      <span className="absolute inset-x-4 top-0 h-0.5 rounded-full bg-emerald-600" />
-                    )}
-                    {tab.renderIcon('h-5 w-5')}
-                    <span className={`max-w-full truncate text-[11px] ${isActive ? 'font-bold' : 'font-medium'}`}>
-                      {tab.label}
-                    </span>
-                  </button>
-                );
-              })}
+          <nav aria-label="Navigasi utama" className="no-print fixed bottom-0 left-0 right-0 z-30">
+            <div className="mx-auto max-w-md border-t border-slate-200 bg-white px-1.5 pb-[env(safe-area-inset-bottom)]">
+              <div
+                className="grid"
+                style={{ gridTemplateColumns: `repeat(${visibleTabs.length}, minmax(0, 1fr))` }}
+              >
+                {visibleTabs.map((tab) => {
+                  const isActive = currentTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      aria-current={isActive ? 'page' : undefined}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`relative flex min-h-[60px] flex-col items-center justify-center gap-1 px-1 transition ${
+                        isActive ? 'text-emerald-700' : 'text-slate-500 hover:text-slate-800'
+                      }`}
+                    >
+                      {isActive && (
+                        <span className="absolute inset-x-4 top-0 h-0.5 rounded-full bg-emerald-600" />
+                      )}
+                      {tab.renderIcon('h-5 w-5')}
+                      <span className={`max-w-full truncate text-[11px] ${isActive ? 'font-bold' : 'font-medium'}`}>
+                        {tab.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
-          </div>
-        </nav>
+          </nav>
         )}
       </div>
     </div>
