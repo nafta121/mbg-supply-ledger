@@ -31,7 +31,7 @@ describe('ui-format helpers', () => {
 
   it('maps technical statuses to operational labels', () => {
     expect(PAYOUT_LABEL.LOCKED_UNPAID).toBe('Menunggu Dapur Bayar');
-    expect(PAYOUT_LABEL.AVAILABLE_FOR_PAYOUT).toBe('Siap Cair');
+    expect(PAYOUT_LABEL.AVAILABLE_FOR_PAYOUT).toBe('Siap Dicairkan');
     expect(ROLE_LABEL.OWNER_ADMIN).toBe('Admin');
     expect(ROLE_LABEL.FIELD_TEAM).toBe('Tim Lapangan');
     expect(ROLE_LABEL.COOPERATIVE_VIEWER).toBe('Koperasi');

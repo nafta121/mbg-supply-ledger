@@ -1,8 +1,9 @@
 /**
- * Strict TypeScript Domain Definitions for MBG B2B Supply Chain, Invoicing & Profit-Sharing Ledger
- * Mirrors the 12 core PostgreSQL tables and security-barrier view `v_safe_delivery_items_bast`.
+ * Strict TypeScript Domain Definitions for MBG B2B Kitchen Order, Invoicing & Profit-Sharing Ledger
+ * Stage 8 (Order-Driven Flow): Order Dapur -> Timbang BAST Kurir -> Invoice Dapur Gabungan -> Bagi Hasil.
+ * Supplier stock batches and supplier settlements are NOT part of Phase 1.
  *
- * Invariant 1: All weights are WHOLE kilograms (`kg`, no decimals — e.g. 50, 49, -3)
+ * Invariant 1: All weights are WHOLE kilograms (`kg`, no decimals — e.g. 35, 33, -2)
  *              and all monetary values are in IDR (`NUMERIC(15,2)`).
  */
 
@@ -10,9 +11,10 @@ export type UserRole = 'FIELD_TEAM' | 'COOPERATIVE_VIEWER' | 'FINANCE' | 'OWNER_
 
 export type DeliveryStatus = 'ALLOCATED' | 'IN_TRANSIT' | 'BAST_VERIFIED' | 'INVOICED';
 
-export type InvoicePaymentStatus = 'DRAFT' | 'ISSUED' | 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
+/** Derived order progress shown on the "Order Dapur" list. */
+export type OrderProgress = 'WAITING_COURIER' | 'PARTIALLY_WEIGHED' | 'BAST_DONE';
 
-export type SettlementStatus = 'PENDING_BAST' | 'READY_TO_PAY' | 'PAID';
+export type InvoicePaymentStatus = 'DRAFT' | 'ISSUED' | 'UNPAID' | 'PARTIALLY_PAID' | 'PAID';
 
 export type BeneficiaryType = 'TEAM' | 'COOPERATIVE';
 
@@ -45,46 +47,22 @@ export interface Kitchen {
   created_at: string;
 }
 
-// 3. public.suppliers
-export interface Supplier {
-  id: string;
-  supplier_code: string;
-  name: string;
-  contact_person: string | null;
-  phone: string | null;
-  bank_name: string | null;
-  bank_account_number: string | null;
-  bank_account_holder: string | null;
-  is_active: boolean;
-  created_at: string;
-}
-
-// 4. public.items (Invariant 1: base_unit must always be 'kg')
+// 3. public.items (Invariant 1: base_unit must always be 'kg')
 export interface Item {
   id: string;
   sku: string;
   name: string;
   category: string;
   base_unit: BaseUnitKg;
+  /** Default "Harga Dapur / kg" auto-filled on a new order line (editable per order). */
+  default_kitchen_price_per_kg: number; // NUMERIC(15,2)
+  /** Default "Margin Kita / kg" (basis bagi hasil Tim & Koperasi). */
+  default_margin_per_kg: number; // NUMERIC(15,2)
   is_active: boolean;
   created_at: string;
 }
 
-// 5. public.supplier_procurement_batches (Invariant 3: Actual Cost per Batch)
-export interface SupplierProcurementBatch {
-  id: string;
-  batch_code: string;
-  supplier_id: string;
-  item_id: string;
-  procurement_date: string;
-  qty_procured_kg: number; // NUMERIC(10,3)
-  supplier_actual_cost_per_kg: number; // NUMERIC(15,2)
-  notes: string | null;
-  created_by: string | null;
-  created_at: string;
-}
-
-// 6. public.kitchen_deliveries
+// 4. public.kitchen_deliveries — header "Order Dapur" (1 order = 1 kartu kurir = 1 invoice)
 export interface KitchenDelivery {
   id: string;
   delivery_number: string;
@@ -100,27 +78,26 @@ export interface KitchenDelivery {
   updated_at: string;
 }
 
-// 7. public.kitchen_delivery_items
+// 5. public.kitchen_delivery_items — 1 baris barang di dalam Order Dapur
 export interface KitchenDeliveryItem {
   id: string;
   delivery_id: string;
   item_id: string;
-  supplier_batch_id: string;
-  qty_dispatched_kg: number; // NUMERIC(10,3)
-  qty_accepted_kg: number; // NUMERIC(10,3)
+  qty_dispatched_kg: number; // Berat Order = Berat Kirim (whole kg, NUMERIC(10,3))
+  qty_accepted_kg: number; // Berat diterima dapur saat BAST (whole kg)
   qty_shrinkage_kg: number; // GENERATED: qty_dispatched_kg - qty_accepted_kg
-  supplier_actual_cost_snapshot: number; // NUMERIC(15,2)
-  kitchen_unit_price_snapshot: number; // NUMERIC(15,2)
+  kitchen_unit_price_snapshot: number; // NUMERIC(15,2) — Harga Dapur / kg (immutable snapshot)
+  margin_per_kg_snapshot: number; // NUMERIC(15,2) — Margin Kita / kg (immutable snapshot)
   line_invoice_amount: number; // GENERATED: ROUND(qty_accepted_kg * kitchen_unit_price_snapshot, 2)
-  line_supplier_payable_amount: number; // GENERATED: ROUND(qty_accepted_kg * supplier_actual_cost_snapshot, 2)
-  line_supplier_claim_amount: number; // GENERATED: ROUND((qty_dispatched_kg - qty_accepted_kg) * supplier_actual_cost_snapshot, 2)
-  line_total_markup_amount: number; // GENERATED: ROUND(qty_accepted_kg * (kitchen_unit_price_snapshot - supplier_actual_cost_snapshot), 2)
+  line_margin_amount: number; // GENERATED: ROUND(qty_accepted_kg * margin_per_kg_snapshot, 2)
+  /** `null` = Perlu Ditimbang; set when the courier saves the BAST weight. */
+  weighed_at: string | null;
   rejection_reason: string | null;
   created_at: string;
   updated_at: string;
 }
 
-// 8. public.kitchen_invoices
+// 6. public.kitchen_invoices — 1 Invoice Dapur Gabungan per Order Dapur
 export interface KitchenInvoice {
   id: string;
   invoice_number: string;
@@ -128,7 +105,7 @@ export interface KitchenInvoice {
   delivery_id: string;
   invoice_date: string;
   due_date: string;
-  total_invoice_amount: number; // NUMERIC(15,2)
+  total_invoice_amount: number; // NUMERIC(15,2) = Σ line_invoice_amount
   amount_paid: number; // NUMERIC(15,2)
   payment_status: InvoicePaymentStatus;
   payment_proof_url: string | null;
@@ -138,27 +115,7 @@ export interface KitchenInvoice {
   updated_at: string;
 }
 
-// 9. public.supplier_settlements (Invariant 2: Zero-Shrinkage Risk / Supplier bears shrinkage)
-export interface SupplierSettlement {
-  id: string;
-  settlement_number: string;
-  supplier_id: string;
-  supplier_batch_id: string;
-  total_dispatched_kg: number; // NUMERIC(10,3)
-  total_accepted_by_kitchens_kg: number; // NUMERIC(10,3)
-  total_shrinkage_claim_kg: number; // GENERATED: total_dispatched_kg - total_accepted_by_kitchens_kg
-  supplier_actual_cost_per_kg: number; // NUMERIC(15,2)
-  gross_payable_amount: number; // GENERATED: ROUND(total_dispatched_kg * supplier_actual_cost_per_kg, 2)
-  shrinkage_claim_deduction_amount: number; // GENERATED: ROUND((total_dispatched_kg - total_accepted_by_kitchens_kg) * supplier_actual_cost_per_kg, 2)
-  net_payable_amount: number; // GENERATED: ROUND(total_accepted_by_kitchens_kg * supplier_actual_cost_per_kg, 2)
-  status: SettlementStatus;
-  payment_proof_url: string | null;
-  paid_at: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-// 10. public.profit_split_configs
+// 7. public.profit_split_configs
 export interface ProfitSplitConfig {
   id: string;
   config_name: string;
@@ -169,7 +126,7 @@ export interface ProfitSplitConfig {
   created_at: string;
 }
 
-// 11. public.profit_payout_batches
+// 8. public.profit_payout_batches
 export interface ProfitPayoutBatch {
   id: string;
   payout_reference: string;
@@ -182,7 +139,7 @@ export interface ProfitPayoutBatch {
   created_at: string;
 }
 
-// 12. public.profit_ledger_entries (Invariant 4: Cash-Basis Profit Sharing)
+// 9. public.profit_ledger_entries (Invariant 4: Cash-Basis Profit Sharing)
 export interface ProfitLedgerEntry {
   id: string;
   invoice_id: string;
@@ -190,7 +147,7 @@ export interface ProfitLedgerEntry {
   split_config_id: string;
   beneficiary_type: BeneficiaryType;
   qty_accepted_kg: number; // NUMERIC(10,3)
-  unit_markup_snapshot: number; // NUMERIC(15,2)
+  unit_markup_snapshot: number; // NUMERIC(15,2) — margin per kg snapshot
   share_pct_snapshot: number; // NUMERIC(5,2)
   profit_amount: number; // NUMERIC(15,2)
   payout_status: LedgerPayoutStatus;
@@ -218,14 +175,16 @@ export interface SafeDeliveryItemBastView {
   rejection_reason: string | null;
 }
 
-// Extended courier projection of `v_safe_delivery_items_bast` (migration 0002).
-// Adds only non-financial context for the kitchen-centric courier view:
-// batch code (traceability), kitchen code/PIC, and delivery status.
-// Still contains NO cost, price, invoice, or markup fields (Invariant 5).
+// Courier projection of `v_safe_delivery_items_bast` (migration 0004).
+// Adds only non-financial context for the kitchen-order courier card:
+// kitchen code/PIC, per-line weighed flag, and whether the order is locked (invoice paid).
+// Still contains NO price, invoice amount, or margin fields (Invariant 5).
 export interface SafeCourierBastItem extends SafeDeliveryItemBastView {
-  batch_code: string;
   kitchen_code: string;
   kitchen_pic_name: string;
   kitchen_pic_phone: string;
-  delivery_status: DeliveryStatus;
+  /** Line already weighed at the kitchen (BAST saved). */
+  is_weighed: boolean;
+  /** Order is closed (kitchen invoice already Lunas) — weights can no longer change. */
+  is_locked: boolean;
 }

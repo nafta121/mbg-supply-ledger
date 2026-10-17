@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
+import { buildInvoiceProfit } from '../lib/invoice-view';
 import { useMbgStore } from '../lib/mbg-store';
 import type { BeneficiaryType, LedgerPayoutStatus } from '../types/mbg';
 import {
@@ -13,7 +14,11 @@ import {
 } from '../lib/ui-format';
 import { Badge, Card, NoAccess, StatRow, Toast, type ToastState } from './ui';
 
-export function Tab5ProfitLedger() {
+/**
+ * Tab 4 — "Bagi Hasil" (Tim vs Koperasi, Cash Basis). Bagi hasil per barang =
+ * qty_accepted_kg × margin/kg; it unlocks only when the Invoice Dapur is Lunas.
+ */
+export function Tab4ProfitSharing() {
   const {
     activeRole,
     splitConfig,
@@ -59,7 +64,13 @@ export function Tab5ProfitLedger() {
     const amounts = { TEAM: availTeam, COOPERATIVE: availCoop };
     const paid = targets.filter((t) => amounts[t] > 0);
     if (paid.length === 0) return;
-    for (const t of paid) executePayout(t);
+    for (const t of paid) {
+      const res = executePayout(t);
+      if (!res.ok) {
+        setToast({ kind: 'error', text: res.error });
+        return;
+      }
+    }
     const total = sumIdr(paid.map((t) => amounts[t]));
     const label = paid.map((t) => `Hak ${BENEFICIARY_LABEL[t]}`).join(' & ');
     setToast({ kind: 'ok', text: `${label} ${formatRp(total)} berhasil dicairkan.` });
@@ -70,7 +81,11 @@ export function Tab5ProfitLedger() {
     const team = Math.max(0, Math.min(100, Math.round(teamVal * 100) / 100));
     const coop = Math.round((100 - team) * 100) / 100;
     setTeamPctInput(String(team));
-    updateProfitSplitPercentage(team, coop);
+    const res = updateProfitSplitPercentage(team, coop);
+    if (!res.ok) {
+      setToast({ kind: 'error', text: res.error });
+      return;
+    }
     setToast({ kind: 'ok', text: `Porsi diubah: Tim ${team}% • Koperasi ${coop}%.` });
   };
 
@@ -82,14 +97,14 @@ export function Tab5ProfitLedger() {
       <Card className="space-y-2.5 border-emerald-300 p-3.5">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-bold text-emerald-800">Siap Dicairkan</h2>
-          <span className="text-xs font-medium text-slate-500">Invoice lunas</span>
+          <span className="text-xs font-medium text-slate-500">Dari Invoice Dapur yang Sudah Lunas</span>
         </div>
         <div className="text-3xl font-extrabold tabular-nums tracking-tight text-slate-900">
           {formatRp(availTotal)}
         </div>
         <div className="space-y-1">
-          <StatRow label={`Tim (${teamPct}%)`} value={formatRp(availTeam)} />
-          <StatRow label={`Koperasi (${coopPct}%)`} value={formatRp(availCoop)} />
+          <StatRow label={`Hak Tim (${teamPct}%)`} value={formatRp(availTeam)} />
+          <StatRow label={`Hak Koperasi (${coopPct}%)`} value={formatRp(availCoop)} />
         </div>
         {isAdmin && (
           <div className="space-y-2">
@@ -127,14 +142,14 @@ export function Tab5ProfitLedger() {
       <Card className="space-y-2.5 border-amber-300 p-3.5">
         <div className="flex items-center justify-between gap-2">
           <h2 className="text-sm font-bold text-amber-800">Menunggu Dapur Bayar</h2>
-          <span className="text-xs font-medium text-slate-500">Tertahan</span>
+          <span className="text-xs font-medium text-slate-500">Dari Invoice Belum Lunas</span>
         </div>
         <div className="text-2xl font-extrabold tabular-nums tracking-tight text-slate-900">
           {formatRp(lockedTotal)}
         </div>
         <div className="space-y-1">
-          <StatRow label={`Tim (${teamPct}%)`} value={formatRp(lockedTeam)} />
-          <StatRow label={`Koperasi (${coopPct}%)`} value={formatRp(lockedCoop)} />
+          <StatRow label={`Hak Tim (${teamPct}%)`} value={formatRp(lockedTeam)} />
+          <StatRow label={`Hak Koperasi (${coopPct}%)`} value={formatRp(lockedCoop)} />
         </div>
       </Card>
 
@@ -237,17 +252,14 @@ export function Tab5ProfitLedger() {
       {/* Per-kitchen breakdown */}
       <Card as="section" className="overflow-hidden">
         <h2 className="border-b border-slate-200 px-3 py-2.5 text-sm font-bold text-slate-900">
-          Rincian per Dapur ({invoices.length})
+          Rincian per Invoice Dapur ({invoices.length})
         </h2>
         <ul className="divide-y divide-slate-100">
           {invoices.map((inv) => {
             const kitchen = kitchens.find((k) => k.id === inv.kitchen_id);
-            const entries = ledgerEntries.filter((le) => le.invoice_id === inv.id);
-            const team = entries.find((e) => e.beneficiary_type === 'TEAM');
-            const coop = entries.find((e) => e.beneficiary_type === 'COOPERATIVE');
-            const markup = sumIdr([team?.profit_amount ?? 0, coop?.profit_amount ?? 0]);
-            const teamStatus: LedgerPayoutStatus = team?.payout_status ?? 'LOCKED_UNPAID';
-            const coopStatus: LedgerPayoutStatus = coop?.payout_status ?? teamStatus;
+            const profit = buildInvoiceProfit({ ledgerEntries }, inv.id);
+            const teamStatus: LedgerPayoutStatus = profit.team_status;
+            const coopStatus: LedgerPayoutStatus = profit.coop_status;
             const split = teamStatus !== coopStatus;
 
             return (
@@ -258,22 +270,22 @@ export function Tab5ProfitLedger() {
                       {kitchen ? `${kitchen.kitchen_code} • ${shortKitchenName(kitchen.name)}` : '-'}
                     </div>
                     <div className="truncate text-xs text-slate-500 tabular-nums">
-                      {formatKgNum(coop?.qty_accepted_kg ?? team?.qty_accepted_kg ?? 0)} kg
+                      {inv.invoice_number} • {formatKgNum(profit.total_accepted_kg)} kg
                     </div>
                   </div>
                   {!split && <Badge tone={payoutTone(coopStatus)}>{PAYOUT_LABEL[coopStatus]}</Badge>}
                 </div>
                 <div className="grid grid-cols-3 gap-2 text-xs">
                   <div className="min-w-0">
-                    <div className="truncate text-slate-500">Markup</div>
+                    <div className="truncate text-slate-500">Total Margin</div>
                     <div className="truncate font-semibold tabular-nums text-slate-900">
-                      {formatRp(markup)}
+                      {formatRp(profit.total_margin)}
                     </div>
                   </div>
                   <div className="min-w-0">
                     <div className="truncate text-slate-500">Hak Tim</div>
                     <div className="truncate font-semibold tabular-nums text-slate-900">
-                      {formatRp(team?.profit_amount ?? 0)}
+                      {formatRp(profit.team_amount)}
                     </div>
                     {split && (
                       <div className="mt-1">
@@ -284,7 +296,7 @@ export function Tab5ProfitLedger() {
                   <div className="min-w-0 text-right">
                     <div className="truncate text-slate-500">Hak Koperasi</div>
                     <div className="truncate font-semibold tabular-nums text-slate-900">
-                      {formatRp(coop?.profit_amount ?? 0)}
+                      {formatRp(profit.coop_amount)}
                     </div>
                     {split && (
                       <div className="mt-1">

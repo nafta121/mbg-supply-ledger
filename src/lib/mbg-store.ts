@@ -1,78 +1,40 @@
 'use client';
 
-import React, { createContext, useContext, useEffect, useState } from 'react';
-import type {
-  BeneficiaryType,
-  Item,
-  Kitchen,
-  KitchenDelivery,
-  KitchenDeliveryItem,
-  KitchenInvoice,
-  ProfitLedgerEntry,
-  ProfitPayoutBatch,
-  ProfitSplitConfig,
-  SafeCourierBastItem,
-  SafeDeliveryItemBastView,
-  Supplier,
-  SupplierProcurementBatch,
-  SupplierSettlement,
-  UserRole,
-} from '../types/mbg';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import type { BeneficiaryType, Item, Kitchen, ProfitSplitConfig, SafeCourierBastItem, UserRole } from '../types/mbg';
+import { idrToSen, senToIdr, toWholeKg } from './financial-engine';
 import {
-  calculateProfitSplitEntry,
-  gramsToKg,
-  idrToSen,
-  kgToGrams,
-  reconcileKitchenDeliveryItem,
-  sanitizeDeliveryForFieldTeam,
-  senToIdr,
-  toWholeKg,
-} from './financial-engine';
+  applyBastWeights,
+  buildSafeCourierItems,
+  createKitchenOrder,
+  type CreateOrderInput,
+  deleteKitchenOrder,
+  type EngineCtx,
+  type EngineResult,
+  executePayout as executePayoutEngine,
+  markInvoicePaid as markInvoicePaidEngine,
+  type MbgData,
+  type OrderLineInput,
+  removeOrderLine as removeOrderLineEngine,
+  type UpdateBastInput,
+  updateProfitSplit,
+} from './order-engine';
+import { fetchMbgDataFromSupabase, subscribeToMbgRealtime, syncMbgDataToSupabase } from './supabase-sync';
+import { createClient as createSupabaseClient, isSupabaseConfigured } from '../utils/supabase/client';
 
-// v4 (Stage 7): seed switched to whole kilograms — old decimal-kg local state is discarded.
-const STORAGE_KEY = 'mbg_supply_ledger_state_v4';
-const SIM_DATE = '2026-10-16';
+export { buildSafeCourierItems } from './order-engine';
+export type { CreateOrderInput, OrderLineInput, UpdateBastInput } from './order-engine';
 
-export type ActiveTab = 'batches' | 'matrix' | 'bast' | 'invoices' | 'ledger';
+// v5 (Stage 8): order-driven model (no supplier batches) — older local state is discarded.
+const STORAGE_KEY = 'mbg_supply_ledger_state_v5';
+/** Business date of the simulation ("hari ini" for Order Dapur & kurir). */
+export const BUSINESS_DATE = '2026-10-16';
 
-export interface MbgState {
+export type ActiveTab = 'orders' | 'bast' | 'invoices' | 'ledger';
+
+export interface MbgState extends MbgData {
   activeRole: UserRole;
   activeTab: ActiveTab;
-  kitchens: Kitchen[];
-  suppliers: Supplier[];
-  items: Item[];
-  batches: SupplierProcurementBatch[];
-  deliveries: KitchenDelivery[];
-  deliveryItems: KitchenDeliveryItem[];
-  invoices: KitchenInvoice[];
-  supplierSettlements: SupplierSettlement[];
-  splitConfig: ProfitSplitConfig;
-  ledgerEntries: ProfitLedgerEntry[];
-  payoutBatches: ProfitPayoutBatch[];
-}
-
-export interface AddBatchInput {
-  supplier_id: string;
-  item_id: string;
-  qty_received_kg: number;
-  supplier_actual_cost_per_kg: number;
-  notes?: string;
-}
-
-export interface BatchKitchenAllocationInput {
-  supplier_batch_id: string;
-  kitchen_unit_price_per_kg: number;
-  allocations: Array<{
-    kitchen_id: string;
-    qty_dispatched_kg: number;
-  }>;
-}
-
-export interface UpdateBastInput {
-  delivery_item_id: string;
-  qty_accepted_kg: number;
-  rejection_reason?: string | null;
-  bast_signed_by_name?: string;
 }
 
 /** Master data inputs (Admin only). `id` present = edit, absent = create. */
@@ -84,53 +46,49 @@ export interface KitchenMasterInput {
   pic_phone: string;
 }
 
-export interface SupplierMasterInput {
-  id?: string;
-  name: string;
-  contact_person: string;
-  phone: string;
-  bank_name: string;
-  bank_account_number: string;
-  bank_account_holder: string;
-}
-
 export interface ItemMasterInput {
   id?: string;
   name: string;
   category: string;
+  /** Typed rupiah text, e.g. "14.000". */
+  default_kitchen_price_per_kg: string;
+  /** Typed rupiah text, e.g. "2.000". */
+  default_margin_per_kg: string;
 }
 
 export type MasterSaveResult = { ok: true } | { ok: false; error: string };
+export type ActionResult = { ok: true; merged?: boolean; count?: number } | { ok: false; error: string };
 
 export interface MbgContextValue extends MbgState {
   setActiveRole: (role: UserRole) => void;
   setActiveTab: (tab: ActiveTab) => void;
-  addSupplierBatch: (input: AddBatchInput) => void;
-  allocateBatchToKitchens: (input: BatchKitchenAllocationInput) => void;
-  updateBastAcceptance: (input: UpdateBastInput) => void;
-  acceptFullBast: (delivery_item_id: string) => void;
-  markInvoicePaid: (invoice_id: string) => void;
-  markSupplierSettlementPaid: (settlement_id: string) => void;
-  updateProfitSplitPercentage: (team_share_pct: number, cooperative_share_pct: number) => void;
-  executePayout: (beneficiary_type: BeneficiaryType, notes?: string) => void;
+  /** "Simpan Order & Kirim ke Daftar Kurir". */
+  createOrder: (input: CreateOrderInput) => ActionResult;
+  removeOrderLine: (delivery_item_id: string) => ActionResult;
+  deleteOrder: (delivery_id: string) => ActionResult;
+  /** Saves BAST weights for several items of one kitchen order at once. */
+  saveKitchenBast: (lines: UpdateBastInput[]) => ActionResult;
+  markInvoicePaid: (invoice_id: string) => ActionResult;
+  updateProfitSplitPercentage: (team_share_pct: number, cooperative_share_pct: number) => ActionResult;
+  executePayout: (beneficiary_type: BeneficiaryType, notes?: string) => ActionResult;
   saveKitchen: (input: KitchenMasterInput) => MasterSaveResult;
-  saveSupplier: (input: SupplierMasterInput) => MasterSaveResult;
   saveItem: (input: ItemMasterInput) => MasterSaveResult;
   resetSimulationData: () => void;
-  getBatchRemainingKg: (batch_id: string) => number;
-  getSafeBastItemsForFieldTeam: () => SafeDeliveryItemBastView[];
-  /** Price-free courier projection (Invariant 5) used by the kitchen-centric view. */
+  /** Price-free courier projection (Invariant 5) used by the Timbang screen. */
   getSafeCourierItems: () => SafeCourierBastItem[];
-  /** Saves BAST weights for several items of one kitchen stop at once. */
-  saveKitchenBast: (lines: UpdateBastInput[]) => void;
 }
 
 // ---------- Master data (pure helpers) ----------
-// Editing master records never touches price snapshots on deliveries/invoices
+// Editing master records never touches price snapshots on orders/invoices
 // (Invariant 3) — historical rows reference master data by id only.
 
 const clean = (v: string | null | undefined): string => (v ?? '').trim();
-const orNull = (v: string | null | undefined): string | null => clean(v) || null;
+
+/** "14.000" / "Rp 14.000" → 14000 (digits only; empty → 0). */
+function rupiahFromText(raw: string | null | undefined): number {
+  const digits = clean(raw).replace(/\D/g, '');
+  return digits ? Number(digits) : 0;
+}
 
 function nextCode(prefix: string, suffix: string, existing: string[]): string {
   const taken = new Set(existing);
@@ -150,21 +108,15 @@ export function validateKitchenInput(input: KitchenMasterInput): string | null {
   return null;
 }
 
-export function validateSupplierInput(input: SupplierMasterInput): string | null {
-  if (!clean(input.name)) return 'Nama supplier wajib diisi.';
-  return null;
-}
-
 export function validateItemInput(input: ItemMasterInput): string | null {
-  if (!clean(input.name)) return 'Nama bahan baku wajib diisi.';
+  if (!clean(input.name)) return 'Nama barang wajib diisi.';
+  const price = rupiahFromText(input.default_kitchen_price_per_kg);
+  const margin = rupiahFromText(input.default_margin_per_kg);
+  if (margin > price) return 'Margin default tidak boleh melebihi harga dapur default.';
   return null;
 }
 
-export function upsertKitchenRecord(
-  list: Kitchen[],
-  input: KitchenMasterInput,
-  nowIso: string
-): Kitchen[] {
+export function upsertKitchenRecord(list: Kitchen[], input: KitchenMasterInput, nowIso: string): Kitchen[] {
   const fields = {
     name: clean(input.name),
     address: clean(input.address) || '-',
@@ -188,40 +140,13 @@ export function upsertKitchenRecord(
   ];
 }
 
-export function upsertSupplierRecord(
-  list: Supplier[],
-  input: SupplierMasterInput,
-  nowIso: string
-): Supplier[] {
-  const fields = {
-    name: clean(input.name),
-    contact_person: orNull(input.contact_person),
-    phone: orNull(input.phone),
-    bank_name: orNull(input.bank_name),
-    bank_account_number: orNull(input.bank_account_number),
-    bank_account_holder: orNull(input.bank_account_holder),
-  };
-  if (input.id) {
-    return list.map((s) => (s.id === input.id ? { ...s, ...fields } : s));
-  }
-  const code = nextCode('SUP-', '', list.map((s) => s.supplier_code));
-  return [
-    ...list,
-    {
-      id: `sup-${code.toLowerCase()}-${Date.now()}`,
-      supplier_code: code,
-      ...fields,
-      is_active: true,
-      created_at: nowIso,
-    },
-  ];
-}
-
 export function upsertItemRecord(list: Item[], input: ItemMasterInput, nowIso: string): Item[] {
   const fields = {
     name: clean(input.name),
     category: clean(input.category) || 'Lainnya',
     base_unit: 'kg' as const, // Invariant 1: unit is always locked to kg
+    default_kitchen_price_per_kg: senToIdr(idrToSen(rupiahFromText(input.default_kitchen_price_per_kg))),
+    default_margin_per_kg: senToIdr(idrToSen(rupiahFromText(input.default_margin_per_kg))),
   };
   if (input.id) {
     return list.map((i) => (i.id === input.id ? { ...i, ...fields } : i));
@@ -239,14 +164,7 @@ export function upsertItemRecord(list: Item[], input: ItemMasterInput, nowIso: s
   ];
 }
 
-/** `#B05` — chronological batch sequence (batches are stored newest-first). */
-export function batchShortCode(batchId: string, batches: SupplierProcurementBatch[]): string {
-  const idx = batches.findIndex((b) => b.id === batchId);
-  if (idx < 0) return '#B--';
-  return `#B${String(batches.length - idx).padStart(2, '0')}`;
-}
-
-/** `50 kg` — whole kilograms only, never `50.000 kg` (Stage 7 Invariant 1). */
+/** `35 kg` — whole kilograms only, never `35.000 kg` (Invariant 1). */
 export function formatKg(kg: number): string {
   return `${toWholeKg(kg)} kg`;
 }
@@ -260,6 +178,8 @@ export function formatIdr(idr: number): string {
     maximumFractionDigits: 2,
   }).format(exact);
 }
+
+// ---------- Seed data (real Phase-1 scenario) ----------
 
 const KITCHEN_LOCATIONS: Array<{ name: string; pic: string; area: string }> = [
   { name: 'SPPG Dapur 01 - Tebet (Dapur A)', pic: 'Budi Santoso', area: 'Jl. Tebet Raya No. 12, Jakarta Selatan' },
@@ -289,10 +209,37 @@ const KITCHEN_LOCATIONS: Array<{ name: string; pic: string; area: string }> = [
   { name: 'SPPG Dapur 25 - Pulogadung', pic: 'Wahyu Kurniawan', area: 'Jl. Perintis Kemerdekaan No. 64, Jakarta Timur' },
 ];
 
+const SEED_ITEMS: Array<Pick<Item, 'id' | 'sku' | 'name' | 'category' | 'default_kitchen_price_per_kg' | 'default_margin_per_kg'>> = [
+  { id: 'item-wortel', sku: 'SYR-WRT-KG', name: 'Wortel', category: 'Sayuran Segar', default_kitchen_price_per_kg: 14000, default_margin_per_kg: 2000 },
+  { id: 'item-kubis', sku: 'SYR-KBS-KG', name: 'Kubis', category: 'Sayuran Segar', default_kitchen_price_per_kg: 10000, default_margin_per_kg: 1500 },
+  { id: 'item-ayam', sku: 'AYM-FIL-KG', name: 'Daging Ayam Fillet', category: 'Protein Hewani', default_kitchen_price_per_kg: 40000, default_margin_per_kg: 4000 },
+  { id: 'item-telur', sku: 'TLR-AYM-KG', name: 'Telur Ayam', category: 'Protein Hewani', default_kitchen_price_per_kg: 30500, default_margin_per_kg: 3000 },
+  { id: 'item-beras', sku: 'BRS-PRM-KG', name: 'Beras', category: 'Karbohidrat Utama', default_kitchen_price_per_kg: 15000, default_margin_per_kg: 1500 },
+];
+
+function unwrap<T extends MbgData>(res: EngineResult<T>, step: string): T {
+  if (!res.ok) throw new Error(`Seed gagal (${step}): ${res.error}`);
+  return res.data;
+}
+
+/**
+ * Seed (16 Okt 2026) — 5 Order Dapur, harga dapur & margin per kg, berat kilogram bulat:
+ * - DPR-01: Wortel 35 + Kubis 25 → ditimbang utuh, invoice LUNAS (Rp 740.000).
+ * - DPR-02: Daging Ayam 50 (diterima 49, susut -1) + Telur 20 → LUNAS.
+ * - DPR-03: Wortel 35 (diterima 33, reject -2) + Beras 50 → Selesai BAST, Belum Bayar.
+ * - DPR-04: Wortel 35 + Kubis 50 + Daging Ayam 50 → Menunggu Kurir.
+ * - DPR-05: Daging Ayam 50 (tertimbang) + Telur 25 (belum) → Sebagian Tertimbang.
+ * Muatan kurir: Wortel 105 kg • Kubis 75 kg • Daging Ayam 150 kg • Telur 45 kg • Beras 50 kg.
+ */
 export function createInitialSeedState(): MbgState {
   const nowIso = '2026-10-16T06:00:00.000Z';
+  let n = 0;
+  const ctx: EngineCtx = {
+    nowIso,
+    today: BUSINESS_DATE,
+    uid: (prefix) => `${prefix}-${String(++n).padStart(2, '0')}`,
+  };
 
-  // 1. 25 Kitchens (SPPG Dapur 01 s/d 25)
   const kitchens: Kitchen[] = KITCHEN_LOCATIONS.map((loc, idx) => {
     const num = String(idx + 1).padStart(2, '0');
     return {
@@ -302,523 +249,183 @@ export function createInitialSeedState(): MbgState {
       address: loc.area,
       pic_name: loc.pic,
       pic_phone: `0812-9000-00${num}`,
-      default_markup_per_kg: idx < 3 ? 4000 : 3000,
+      default_markup_per_kg: 0,
       is_active: true,
       created_at: nowIso,
     };
   });
 
-  // 2. 3 Suppliers
-  const suppliers: Supplier[] = [
-    {
-      id: 'sup-a',
-      supplier_code: 'SUP-A',
-      name: 'CV Tani Makmur',
-      contact_person: 'H. Ahmad Subarjo',
-      phone: '0811-2233-4401',
-      bank_name: 'BRI',
-      bank_account_number: '0123-01-009876-30-1',
-      bank_account_holder: 'CV Tani Makmur',
-      is_active: true,
-      created_at: nowIso,
-    },
-    {
-      id: 'sup-b',
-      supplier_code: 'SUP-B',
-      name: 'UD Berkah Unggas',
-      contact_person: 'Hj. Rahmawati',
-      phone: '0811-2233-4402',
-      bank_name: 'Bank Mandiri',
-      bank_account_number: '124-00-0987654-3',
-      bank_account_holder: 'UD Berkah Unggas',
-      is_active: true,
-      created_at: nowIso,
-    },
-    {
-      id: 'sup-c',
-      supplier_code: 'SUP-C',
-      name: 'PT Pangan Nusantara Segar',
-      contact_person: 'Ir. Gunawan Wibisono',
-      phone: '0811-2233-4403',
-      bank_name: 'BCA',
-      bank_account_number: '542-039811-2',
-      bank_account_holder: 'PT Pangan Nusantara Segar',
-      is_active: true,
-      created_at: nowIso,
-    },
-  ];
+  const items: Item[] = SEED_ITEMS.map((it) => ({
+    ...it,
+    base_unit: 'kg',
+    is_active: true,
+    created_at: nowIso,
+  }));
 
-  // 3. 5 Commodities (base_unit = 'kg' strictly)
-  const items: Item[] = [
-    {
-      id: 'item-ayam',
-      sku: 'AYM-FIL-KG',
-      name: 'Daging Ayam Fillet Tanpa Tulang',
-      category: 'Protein Hewani',
-      base_unit: 'kg',
-      is_active: true,
-      created_at: nowIso,
-    },
-    {
-      id: 'item-sapi',
-      sku: 'SAP-GIL-KG',
-      name: 'Daging Sapi Giling Segar',
-      category: 'Protein Hewani',
-      base_unit: 'kg',
-      is_active: true,
-      created_at: nowIso,
-    },
-    {
-      id: 'item-telur',
-      sku: 'TLR-AYM-KG',
-      name: 'Telur Ayam Negeri Grade A',
-      category: 'Protein Hewani',
-      base_unit: 'kg',
-      is_active: true,
-      created_at: nowIso,
-    },
-    {
-      id: 'item-beras',
-      sku: 'BRS-PRM-KG',
-      name: 'Beras Putih Premium SPPG',
-      category: 'Karbohidrat Utama',
-      base_unit: 'kg',
-      is_active: true,
-      created_at: nowIso,
-    },
-    {
-      id: 'item-wortel',
-      sku: 'SYR-WRT-KG',
-      name: 'Wortel & Sayur Brastagi Bersih',
-      category: 'Sayuran Segar',
-      base_unit: 'kg',
-      is_active: true,
-      created_at: nowIso,
-    },
-  ];
-
-  // 4. Active Profit Split Config (Tim 60% vs Koperasi 40%)
   const splitConfig: ProfitSplitConfig = {
     id: 'split-default-60-40',
     config_name: 'Skema Bagi Hasil Standar Tim 60% : Koperasi 40%',
     team_share_pct: 60.0,
     cooperative_share_pct: 40.0,
     is_active: true,
-    effective_from: SIM_DATE,
+    effective_from: BUSINESS_DATE,
     created_at: nowIso,
   };
 
-  // 5. Procurement Batches (matching docs/01 + extra batch for live matrix allocation demo)
-  const batches: SupplierProcurementBatch[] = [
-    {
-      id: 'batch-sup-a-ayam',
-      batch_code: 'BATCH-20261016-SUPA-AYM',
-      supplier_id: 'sup-a',
-      item_id: 'item-ayam',
-      procurement_date: SIM_DATE,
-      qty_procured_kg: 150.0,
-      supplier_actual_cost_per_kg: 36000.0,
-      notes: 'Pengadaan Ayam Fillet Batch 1 (CV Tani Makmur) untuk Dapur 01-03',
-      created_by: 'owner-1',
-      created_at: nowIso,
-    },
-    {
-      id: 'batch-sup-b-ayam',
-      batch_code: 'BATCH-20261016-SUPB-AYM',
-      supplier_id: 'sup-b',
-      item_id: 'item-ayam',
-      procurement_date: SIM_DATE,
-      qty_procured_kg: 100.0,
-      supplier_actual_cost_per_kg: 37000.0,
-      notes: 'Pengadaan Ayam Fillet Batch 2 (UD Berkah Unggas) untuk Dapur 04-05',
-      created_by: 'owner-1',
-      created_at: nowIso,
-    },
-    {
-      id: 'batch-sup-c-telur',
-      batch_code: 'BATCH-20261016-SUPC-TLR',
-      supplier_id: 'sup-c',
-      item_id: 'item-telur',
-      procurement_date: SIM_DATE,
-      qty_procured_kg: 500.0,
-      supplier_actual_cost_per_kg: 26500.0,
-      notes: 'Stok Siap Alokasi ke 25 Dapur MBG (Telur Ayam Negeri)',
-      created_by: 'owner-1',
-      created_at: nowIso,
-    },
-  ];
-
-  // 6. Seed 5 Kitchen Deliveries & Delivery Items from docs/01-domain-workflows-and-formulas.md
-  //    + Stage 6: 2 pending Telur deliveries to DPR-01 & DPR-02 so the courier view
-  //    shows kitchens with multiple items grouped on one card.
-  interface SeedScenario {
-    kitchenIdx: number;
-    batchId: string;
-    supplierId: string;
-    itemId: string;
-    dispatchedKg: number;
-    acceptedKg: number;
-    costSnapshot: number;
-    priceSnapshot: number;
-    rejectionReason: string | null;
-    invoiceStatus: 'PAID' | 'ISSUED' | 'UNPAID';
-    amountPaid: number;
-    deliveryStatus?: 'INVOICED' | 'IN_TRANSIT';
-  }
-  const seedScenarios: SeedScenario[] = [
-    {
-      kitchenIdx: 0, // Dapur A (01)
-      batchId: 'batch-sup-a-ayam',
-      supplierId: 'sup-a',
-      itemId: 'item-ayam',
-      dispatchedKg: 50.0,
-      acceptedKg: 50.0,
-      costSnapshot: 36000.0,
-      priceSnapshot: 40000.0,
-      rejectionReason: null,
-      invoiceStatus: 'PAID' as const,
-      amountPaid: 2000000.0,
-    },
-    {
-      kitchenIdx: 1, // Dapur B (02) - Susut 1 kg (diterima 49 kg)
-      batchId: 'batch-sup-a-ayam',
-      supplierId: 'sup-a',
-      itemId: 'item-ayam',
-      dispatchedKg: 50,
-      acceptedKg: 49,
-      costSnapshot: 36000.0,
-      priceSnapshot: 40000.0,
-      rejectionReason: 'Susut — susut air/perjalanan saat timbang BAST di Dapur 02',
-      invoiceStatus: 'PAID' as const,
-      amountPaid: 1960000.0,
-    },
-    {
-      kitchenIdx: 2, // Dapur C (03) - ISSUED (Belum Bayar)
-      batchId: 'batch-sup-a-ayam',
-      supplierId: 'sup-a',
-      itemId: 'item-ayam',
-      dispatchedKg: 50.0,
-      acceptedKg: 50.0,
-      costSnapshot: 36000.0,
-      priceSnapshot: 40000.0,
-      rejectionReason: null,
-      invoiceStatus: 'ISSUED' as const,
-      amountPaid: 0.0,
-    },
-    {
-      kitchenIdx: 3, // Dapur D (04) - Reject 2 kg (diterima 48 kg)
-      batchId: 'batch-sup-b-ayam',
-      supplierId: 'sup-b',
-      itemId: 'item-ayam',
-      dispatchedKg: 50,
-      acceptedKg: 48,
-      costSnapshot: 37000.0,
-      priceSnapshot: 40000.0,
-      rejectionReason: 'Barang Rusak/Reject — ayam memar dikembalikan ke Supplier',
-      invoiceStatus: 'PAID' as const,
-      amountPaid: 1920000.0,
-    },
-    {
-      kitchenIdx: 4, // Dapur E (05) - UNPAID
-      batchId: 'batch-sup-b-ayam',
-      supplierId: 'sup-b',
-      itemId: 'item-ayam',
-      dispatchedKg: 50.0,
-      acceptedKg: 50.0,
-      costSnapshot: 37000.0,
-      priceSnapshot: 40000.0,
-      rejectionReason: null,
-      invoiceStatus: 'UNPAID' as const,
-      amountPaid: 0.0,
-    },
-    // Stage 6: pending multi-item stops (same flow as Admin allocation — UNPAID / LOCKED_UNPAID).
-    {
-      kitchenIdx: 0, // DPR-01 Tebet: Ayam (done) + Telur (pending BAST)
-      batchId: 'batch-sup-c-telur',
-      supplierId: 'sup-c',
-      itemId: 'item-telur',
-      dispatchedKg: 20.0,
-      acceptedKg: 20.0,
-      costSnapshot: 26500.0,
-      priceSnapshot: 30500.0,
-      rejectionReason: null,
-      invoiceStatus: 'UNPAID',
-      amountPaid: 0.0,
-      deliveryStatus: 'IN_TRANSIT',
-    },
-    {
-      kitchenIdx: 1, // DPR-02 Cawang: Ayam (done) + Telur (pending BAST)
-      batchId: 'batch-sup-c-telur',
-      supplierId: 'sup-c',
-      itemId: 'item-telur',
-      dispatchedKg: 20.0,
-      acceptedKg: 20.0,
-      costSnapshot: 26500.0,
-      priceSnapshot: 30500.0,
-      rejectionReason: null,
-      invoiceStatus: 'UNPAID',
-      amountPaid: 0.0,
-      deliveryStatus: 'IN_TRANSIT',
-    },
-  ];
-
-  const deliveries: KitchenDelivery[] = [];
-  const deliveryItems: KitchenDeliveryItem[] = [];
-  const invoices: KitchenInvoice[] = [];
-  const ledgerEntries: ProfitLedgerEntry[] = [];
-
-  seedScenarios.forEach((sc, idx) => {
-    const num = String(idx + 1).padStart(2, '0');
-    const kitchen = kitchens[sc.kitchenIdx]!;
-    const deliveryId = `deliv-${num}`;
-    const deliveryItemId = `ditem-${num}`;
-    const invoiceId = `inv-${num}`;
-    const inTransit = sc.deliveryStatus === 'IN_TRANSIT';
-    const docSuffix = inTransit
-      ? `${kitchen.kitchen_code.replace('-', '')}-${num}`
-      : `DPR${num}`;
-
-    const reconciled = reconcileKitchenDeliveryItem({
-      supplier_batch_id: sc.batchId,
-      qty_dispatched_kg: sc.dispatchedKg,
-      qty_accepted_kg: sc.acceptedKg,
-      supplier_actual_cost_snapshot: sc.costSnapshot,
-      kitchen_unit_price_snapshot: sc.priceSnapshot,
-    });
-
-    deliveries.push({
-      id: deliveryId,
-      delivery_number: `SJ-20261016-${docSuffix}`,
-      kitchen_id: kitchen.id,
-      delivery_date: SIM_DATE,
-      status: inTransit ? 'IN_TRANSIT' : 'INVOICED',
-      courier_user_id: 'field-1',
-      bast_signed_by_name: kitchen.pic_name,
-      bast_photo_url: inTransit ? null : `https://storage.mbg.local/bast/SJ-20261016-${docSuffix}.jpg`,
-      bast_verified_at: inTransit ? null : nowIso,
-      notes: sc.rejectionReason,
-      created_at: nowIso,
-      updated_at: nowIso,
-    });
-
-    deliveryItems.push({
-      id: deliveryItemId,
-      delivery_id: deliveryId,
-      item_id: sc.itemId,
-      supplier_batch_id: sc.batchId,
-      qty_dispatched_kg: reconciled.qty_dispatched_kg,
-      qty_accepted_kg: reconciled.qty_accepted_kg,
-      qty_shrinkage_kg: reconciled.qty_shrinkage_kg,
-      supplier_actual_cost_snapshot: reconciled.supplier_actual_cost_snapshot,
-      kitchen_unit_price_snapshot: reconciled.kitchen_unit_price_snapshot,
-      line_invoice_amount: reconciled.kitchen_line_total,
-      line_supplier_payable_amount: reconciled.supplier_net_payable,
-      line_supplier_claim_amount: reconciled.supplier_shrinkage_deduction,
-      line_total_markup_amount: senToIdr(
-        idrToSen(reconciled.kitchen_line_total) - idrToSen(reconciled.supplier_net_payable)
-      ),
-      rejection_reason: sc.rejectionReason,
-      created_at: nowIso,
-      updated_at: nowIso,
-    });
-
-    invoices.push({
-      id: invoiceId,
-      invoice_number: `INV-20261016-${docSuffix}`,
-      kitchen_id: kitchen.id,
-      delivery_id: deliveryId,
-      invoice_date: SIM_DATE,
-      due_date: '2026-10-23',
-      total_invoice_amount: reconciled.kitchen_line_total,
-      amount_paid: sc.amountPaid,
-      payment_status: sc.invoiceStatus,
-      payment_proof_url:
-        sc.invoiceStatus === 'PAID'
-          ? `https://storage.mbg.local/payments/INV-20261016-DPR${num}.pdf`
-          : null,
-      paid_at: sc.invoiceStatus === 'PAID' ? '2026-10-20T10:00:00.000Z' : null,
-      verified_by: sc.invoiceStatus === 'PAID' ? 'finance-1' : null,
-      created_at: nowIso,
-      updated_at: nowIso,
-    });
-
-    const split = calculateProfitSplitEntry({
-      qty_accepted_kg: reconciled.qty_accepted_kg,
-      supplier_actual_cost_snapshot: reconciled.supplier_actual_cost_snapshot,
-      kitchen_unit_price_snapshot: reconciled.kitchen_unit_price_snapshot,
-      team_share_pct: splitConfig.team_share_pct,
-      cooperative_share_pct: splitConfig.cooperative_share_pct,
-      invoice_payment_status: sc.invoiceStatus,
-      amount_paid: sc.amountPaid,
-      total_invoice_amount: reconciled.kitchen_line_total,
-    });
-
-    ledgerEntries.push(
-      {
-        id: `ledger-${num}-team`,
-        invoice_id: invoiceId,
-        delivery_item_id: deliveryItemId,
-        split_config_id: splitConfig.id,
-        beneficiary_type: 'TEAM',
-        qty_accepted_kg: split.qty_accepted_kg,
-        unit_markup_snapshot: split.unit_markup,
-        share_pct_snapshot: split.team_share_pct,
-        profit_amount: split.team_share_amount,
-        payout_status: split.payout_status,
-        payout_batch_id: null,
-        unlocked_at: split.payout_status === 'AVAILABLE_FOR_PAYOUT' ? '2026-10-20T10:00:00.000Z' : null,
-        paid_out_at: null,
-        created_at: nowIso,
-        updated_at: nowIso,
-      },
-      {
-        id: `ledger-${num}-coop`,
-        invoice_id: invoiceId,
-        delivery_item_id: deliveryItemId,
-        split_config_id: splitConfig.id,
-        beneficiary_type: 'COOPERATIVE',
-        qty_accepted_kg: split.qty_accepted_kg,
-        unit_markup_snapshot: split.unit_markup,
-        share_pct_snapshot: split.cooperative_share_pct,
-        profit_amount: split.koperasi_share_amount,
-        payout_status: split.payout_status,
-        payout_batch_id: null,
-        unlocked_at: split.payout_status === 'AVAILABLE_FOR_PAYOUT' ? '2026-10-20T10:00:00.000Z' : null,
-        paid_out_at: null,
-        created_at: nowIso,
-        updated_at: nowIso,
-      }
-    );
-  });
-
-  const supplierSettlements = recomputeSupplierSettlements(batches, deliveryItems, []);
-
-  return {
-    activeRole: 'OWNER_ADMIN',
-    activeTab: 'batches',
+  let data: MbgData = {
     kitchens,
-    suppliers,
     items,
-    batches,
-    deliveries,
-    deliveryItems,
-    invoices,
-    supplierSettlements,
+    deliveries: [],
+    deliveryItems: [],
+    invoices: [],
     splitConfig,
-    ledgerEntries,
+    ledgerEntries: [],
     payoutBatches: [],
+  };
+
+  const line = (item_id: string, qty: number): OrderLineInput => {
+    const it = items.find((i) => i.id === item_id)!;
+    return {
+      item_id,
+      qty_ordered_kg: qty,
+      kitchen_unit_price_rp: it.default_kitchen_price_per_kg,
+      margin_per_kg_rp: it.default_margin_per_kg,
+    };
+  };
+  const order = (kitchenIdx: number, lines: OrderLineInput[]) => {
+    const res = createKitchenOrder(data, { kitchen_id: kitchens[kitchenIdx]!.id, lines }, ctx);
+    data = unwrap(res, `order ${kitchenIdx + 1}`);
+    if (!res.ok || !res.delivery_id) throw new Error('Seed gagal: order tanpa id');
+    return res.delivery_id;
+  };
+  const weigh = (deliveryId: string, weights: Array<[string, number, string | null]>) => {
+    const inputs: UpdateBastInput[] = weights.map(([itemId, kg, reason]) => {
+      const di = data.deliveryItems.find((d) => d.delivery_id === deliveryId && d.item_id === itemId)!;
+      return { delivery_item_id: di.id, qty_accepted_kg: kg, rejection_reason: reason };
+    });
+    data = unwrap(applyBastWeights(data, inputs, '2026-10-16T09:00:00.000Z'), 'timbang');
+  };
+  const pay = (deliveryId: string) => {
+    const inv = data.invoices.find((i) => i.delivery_id === deliveryId)!;
+    data = unwrap(markInvoicePaidEngine(data, inv.id, '2026-10-16T15:00:00.000Z'), 'lunas');
+  };
+
+  const o1 = order(0, [line('item-wortel', 35), line('item-kubis', 25)]);
+  weigh(o1, [
+    ['item-wortel', 35, null],
+    ['item-kubis', 25, null],
+  ]);
+  pay(o1);
+
+  const o2 = order(1, [line('item-ayam', 50), line('item-telur', 20)]);
+  weigh(o2, [
+    ['item-ayam', 49, 'Susut — susut air/perjalanan'],
+    ['item-telur', 20, null],
+  ]);
+  pay(o2);
+
+  const o3 = order(2, [line('item-wortel', 35), line('item-beras', 50)]);
+  weigh(o3, [
+    ['item-wortel', 33, 'Barang Rusak/Reject — wortel patah/busuk'],
+    ['item-beras', 50, null],
+  ]);
+
+  order(3, [line('item-wortel', 35), line('item-kubis', 50), line('item-ayam', 50)]);
+
+  const o5 = order(4, [line('item-ayam', 50), line('item-telur', 25)]);
+  weigh(o5, [['item-ayam', 50, null]]);
+
+  return { activeRole: 'OWNER_ADMIN', activeTab: 'orders', ...data };
+}
+
+// ---------- React store ----------
+
+const MbgContext = createContext<MbgContextValue | null>(null);
+
+let runtimeSeq = 0;
+function runtimeCtx(): EngineCtx {
+  return {
+    nowIso: new Date().toISOString(),
+    today: BUSINESS_DATE,
+    uid: (prefix) => `${prefix}-${Date.now().toString(36)}-${(runtimeSeq += 1)}`,
   };
 }
 
-/**
- * Mirrors `v_safe_delivery_items_bast` (migration 0002): sanitized via
- * `sanitizeDeliveryForFieldTeam`, then enriched with non-financial context only.
- * Output never contains cost/price/invoice/markup fields (Invariant 5).
- */
-export function buildSafeCourierItems(
-  state: Pick<MbgState, 'deliveryItems' | 'deliveries' | 'kitchens' | 'items' | 'batches'>
-): SafeCourierBastItem[] {
-  return state.deliveryItems.map((di) => {
-    const del = state.deliveries.find((d) => d.id === di.delivery_id);
-    const kitchen = state.kitchens.find((k) => k.id === del?.kitchen_id);
-    const item = state.items.find((i) => i.id === di.item_id);
-    const batch = state.batches.find((b) => b.id === di.supplier_batch_id);
-    const safe = sanitizeDeliveryForFieldTeam({
-      ...di,
-      delivery_item_id: di.id,
-      delivery_id: di.delivery_id,
-      delivery_number: del?.delivery_number ?? 'SJ-UNKNOWN',
-      delivery_date: del?.delivery_date ?? SIM_DATE,
-      kitchen_id: kitchen?.id ?? 'unknown',
-      kitchen_name: kitchen?.name ?? 'Dapur MBG',
-      item_id: item?.id ?? di.item_id,
-      item_name: item?.name ?? 'Bahan Baku MBG',
-    });
-    return {
-      ...safe,
-      batch_code: batch?.batch_code ?? '-',
-      kitchen_code: kitchen?.kitchen_code ?? '-',
-      kitchen_pic_name: kitchen?.pic_name ?? '-',
-      kitchen_pic_phone: kitchen?.pic_phone ?? '',
-      delivery_status: del?.status ?? 'ALLOCATED',
-    };
-  });
+function isCompatibleState(parsed: unknown): parsed is MbgState {
+  const s = parsed as Partial<MbgState> | null;
+  return (
+    !!s &&
+    Array.isArray(s.kitchens) &&
+    s.kitchens.length > 0 &&
+    Array.isArray(s.items) &&
+    Array.isArray(s.deliveryItems) &&
+    Array.isArray(s.invoices) &&
+    Array.isArray(s.ledgerEntries) &&
+    !!s.splitConfig
+  );
 }
-
-function recomputeSupplierSettlements(
-  batches: SupplierProcurementBatch[],
-  deliveryItems: KitchenDeliveryItem[],
-  existingSettlements: SupplierSettlement[]
-): SupplierSettlement[] {
-  const nowIso = new Date().toISOString();
-  const results: SupplierSettlement[] = [];
-
-  for (const batch of batches) {
-    const itemsForBatch = deliveryItems.filter((di) => di.supplier_batch_id === batch.id);
-    if (itemsForBatch.length === 0) {
-      continue;
-    }
-
-    let dispatchedGrams = 0n;
-    let acceptedGrams = 0n;
-    for (const di of itemsForBatch) {
-      dispatchedGrams += kgToGrams(di.qty_dispatched_kg);
-      acceptedGrams += kgToGrams(di.qty_accepted_kg);
-    }
-
-    const reconciled = reconcileKitchenDeliveryItem({
-      supplier_batch_id: batch.id,
-      qty_dispatched_kg: gramsToKg(dispatchedGrams),
-      qty_accepted_kg: gramsToKg(acceptedGrams),
-      supplier_actual_cost_snapshot: batch.supplier_actual_cost_per_kg,
-      kitchen_unit_price_snapshot: batch.supplier_actual_cost_per_kg,
-    });
-
-    const existing = existingSettlements.find((s) => s.supplier_batch_id === batch.id);
-    results.push({
-      id: existing?.id ?? `stl-${batch.id}`,
-      settlement_number:
-        existing?.settlement_number ??
-        `STL-${batch.batch_code.replace('BATCH-', '')}`,
-      supplier_id: batch.supplier_id,
-      supplier_batch_id: batch.id,
-      total_dispatched_kg: reconciled.qty_dispatched_kg,
-      total_accepted_by_kitchens_kg: reconciled.qty_accepted_kg,
-      total_shrinkage_claim_kg: reconciled.qty_shrinkage_kg,
-      supplier_actual_cost_per_kg: batch.supplier_actual_cost_per_kg,
-      gross_payable_amount: reconciled.supplier_gross_payable,
-      shrinkage_claim_deduction_amount: reconciled.supplier_shrinkage_deduction,
-      net_payable_amount: reconciled.supplier_net_payable,
-      status: existing?.status === 'PAID' ? 'PAID' : 'READY_TO_PAY',
-      payment_proof_url: existing?.payment_proof_url ?? null,
-      paid_at: existing?.paid_at ?? null,
-      created_at: existing?.created_at ?? nowIso,
-      updated_at: nowIso,
-    });
-  }
-
-  return results;
-}
-
-const MbgContext = createContext<MbgContextValue | null>(null);
 
 export function MbgProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<MbgState>(() => createInitialSeedState());
   const [hydrated, setHydrated] = useState(false);
+  // Latest committed state, so several actions inside one click handler
+  // (e.g. "Cairkan Semua") build on each other instead of a stale render.
+  const stateRef = useRef<MbgState>(state);
+
+  const commit = (next: MbgState) => {
+    stateRef.current = next;
+    setState(next);
+  };
+
+  const commitAndSync = (next: MbgState) => {
+    const prev = stateRef.current;
+    commit(next);
+    if (isSupabaseConfigured) {
+      const supabase = createSupabaseClient();
+      void syncMbgDataToSupabase(supabase, prev, next);
+    }
+  };
 
   useEffect(() => {
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
-        const parsed = JSON.parse(raw) as MbgState;
-        if (parsed && Array.isArray(parsed.kitchens) && parsed.kitchens.length > 0) {
-          setState(parsed);
-        }
+        const parsed: unknown = JSON.parse(raw);
+        if (isCompatibleState(parsed)) commit(parsed);
       }
     } catch {
       // Fallback to default seed data if localStorage is unavailable or corrupt
     }
     setHydrated(true);
+
+    if (!isSupabaseConfigured) return;
+
+    const supabase = createSupabaseClient();
+    let active = true;
+
+    const pullRemote = async () => {
+      const remoteData = await fetchMbgDataFromSupabase(supabase);
+      if (!active) return;
+      if (remoteData) {
+        commit({
+          ...stateRef.current,
+          ...remoteData,
+        });
+      } else {
+        // Seed remote database if tables exist and are currently empty
+        void syncMbgDataToSupabase(supabase, null, stateRef.current);
+      }
+    };
+
+    void pullRemote();
+    const unsubscribe = subscribeToMbgRealtime(supabase, () => {
+      void pullRemote();
+    });
+
+    return () => {
+      active = false;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -830,543 +437,68 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state, hydrated]);
 
+  const run = (fn: (current: MbgState) => EngineResult<MbgState>): ActionResult => {
+    const res = fn(stateRef.current);
+    if (!res.ok) return { ok: false, error: res.error };
+    commitAndSync(res.data);
+    return { ok: true, merged: res.merged, count: res.count };
+  };
+
   const setActiveRole = (role: UserRole) => {
-    setState((prev) => {
-      let nextTab = prev.activeTab;
-      if (role === 'FIELD_TEAM') {
-        // Single-courier focus mode: always land on "Kirim Dapur" (Tab3FieldBast).
-        nextTab = 'bast';
-      } else if (role === 'COOPERATIVE_VIEWER' && nextTab === 'batches') {
-        nextTab = 'ledger';
-      }
-      return { ...prev, activeRole: role, activeTab: nextTab };
-    });
+    const prev = stateRef.current;
+    let nextTab = prev.activeTab;
+    if (role === 'FIELD_TEAM') {
+      // Single-courier focus mode: always land on "Timbang".
+      nextTab = 'bast';
+    } else if (role === 'COOPERATIVE_VIEWER' && nextTab === 'orders') {
+      nextTab = 'ledger';
+    }
+    commit({ ...prev, activeRole: role, activeTab: nextTab });
   };
 
-  const setActiveTab = (tab: ActiveTab) => {
-    setState((prev) => ({ ...prev, activeTab: tab }));
-  };
+  const setActiveTab = (tab: ActiveTab) => commit({ ...stateRef.current, activeTab: tab });
 
-  const addSupplierBatch = (input: AddBatchInput) => {
-    setState((prev) => {
-      const supplier = prev.suppliers.find((s) => s.id === input.supplier_id);
-      const item = prev.items.find((i) => i.id === input.item_id);
-      if (!supplier || !item) return prev;
+  const createOrder = (input: CreateOrderInput) => run((s) => createKitchenOrder(s, input, runtimeCtx()));
 
-      const seq = String(prev.batches.length + 1).padStart(2, '0');
-      const skuPrefix = item.sku.split('-')[0] ?? 'ITM';
-      const newBatch: SupplierProcurementBatch = {
-        id: `batch-${Date.now()}`,
-        batch_code: `BATCH-20261016-${supplier.supplier_code.replace('-', '')}-${skuPrefix}${seq}`,
-        supplier_id: supplier.id,
-        item_id: item.id,
-        procurement_date: SIM_DATE,
-        qty_procured_kg: toWholeKg(input.qty_received_kg),
-        supplier_actual_cost_per_kg: senToIdr(idrToSen(input.supplier_actual_cost_per_kg)),
-        notes: input.notes?.trim() || `Batch pengadaan ${item.name} dari ${supplier.name}`,
-        created_by: 'owner-1',
-        created_at: new Date().toISOString(),
-      };
+  const removeOrderLine = (id: string) => run((s) => removeOrderLineEngine(s, id, runtimeCtx().nowIso));
 
-      return {
-        ...prev,
-        batches: [newBatch, ...prev.batches],
-      };
-    });
-  };
+  const deleteOrder = (id: string) => run((s) => deleteKitchenOrder(s, id));
 
-  const allocateBatchToKitchens = (input: BatchKitchenAllocationInput) => {
-    setState((prev) => {
-      const batch = prev.batches.find((b) => b.id === input.supplier_batch_id);
-      if (!batch) return prev;
+  const saveKitchenBast = (lines: UpdateBastInput[]) =>
+    run((s) => applyBastWeights(s, lines, runtimeCtx().nowIso));
 
-      const validAllocations = input.allocations
-        .map((a) => ({ ...a, qty_dispatched_kg: toWholeKg(a.qty_dispatched_kg) }))
-        .filter((a) => a.qty_dispatched_kg > 0);
-      if (validAllocations.length === 0) return prev;
+  const markInvoicePaid = (id: string) => run((s) => markInvoicePaidEngine(s, id, runtimeCtx().nowIso));
 
-      const nowIso = new Date().toISOString();
-      const nextDeliveries = [...prev.deliveries];
-      const nextDeliveryItems = [...prev.deliveryItems];
-      const nextInvoices = [...prev.invoices];
-      const nextLedgerEntries = [...prev.ledgerEntries];
+  const updateProfitSplitPercentage = (team: number, coop: number) =>
+    run((s) => updateProfitSplit(s, team, coop, runtimeCtx().nowIso));
 
-      for (const alloc of validAllocations) {
-        const kitchen = prev.kitchens.find((k) => k.id === alloc.kitchen_id);
-        if (!kitchen) continue;
-
-        const reconciled = reconcileKitchenDeliveryItem({
-          supplier_batch_id: batch.id,
-          qty_dispatched_kg: alloc.qty_dispatched_kg,
-          qty_accepted_kg: alloc.qty_dispatched_kg, // Default 100% until BAST modifies if shrinkage occurs
-          supplier_actual_cost_snapshot: batch.supplier_actual_cost_per_kg,
-          kitchen_unit_price_snapshot: input.kitchen_unit_price_per_kg,
-        });
-
-        const seqNum = String(nextDeliveries.length + 1).padStart(2, '0');
-        const deliveryId = `deliv-${Date.now()}-${kitchen.id}`;
-        const deliveryItemId = `ditem-${Date.now()}-${kitchen.id}`;
-        const invoiceId = `inv-${Date.now()}-${kitchen.id}`;
-
-        nextDeliveries.push({
-          id: deliveryId,
-          delivery_number: `SJ-20261016-${kitchen.kitchen_code.replace('-', '')}-${seqNum}`,
-          kitchen_id: kitchen.id,
-          delivery_date: SIM_DATE,
-          status: 'IN_TRANSIT',
-          courier_user_id: 'field-1',
-          bast_signed_by_name: kitchen.pic_name,
-          bast_photo_url: null,
-          bast_verified_at: null,
-          notes: null,
-          created_at: nowIso,
-          updated_at: nowIso,
-        });
-
-        nextDeliveryItems.push({
-          id: deliveryItemId,
-          delivery_id: deliveryId,
-          item_id: batch.item_id,
-          supplier_batch_id: batch.id,
-          qty_dispatched_kg: reconciled.qty_dispatched_kg,
-          qty_accepted_kg: reconciled.qty_accepted_kg,
-          qty_shrinkage_kg: reconciled.qty_shrinkage_kg,
-          supplier_actual_cost_snapshot: reconciled.supplier_actual_cost_snapshot,
-          kitchen_unit_price_snapshot: reconciled.kitchen_unit_price_snapshot,
-          line_invoice_amount: reconciled.kitchen_line_total,
-          line_supplier_payable_amount: reconciled.supplier_net_payable,
-          line_supplier_claim_amount: reconciled.supplier_shrinkage_deduction,
-          line_total_markup_amount: senToIdr(
-            idrToSen(reconciled.kitchen_line_total) - idrToSen(reconciled.supplier_net_payable)
-          ),
-          rejection_reason: null,
-          created_at: nowIso,
-          updated_at: nowIso,
-        });
-
-        nextInvoices.push({
-          id: invoiceId,
-          invoice_number: `INV-20261016-${kitchen.kitchen_code.replace('-', '')}-${seqNum}`,
-          kitchen_id: kitchen.id,
-          delivery_id: deliveryId,
-          invoice_date: SIM_DATE,
-          due_date: '2026-10-23',
-          total_invoice_amount: reconciled.kitchen_line_total,
-          amount_paid: 0,
-          payment_status: 'UNPAID',
-          payment_proof_url: null,
-          paid_at: null,
-          verified_by: null,
-          created_at: nowIso,
-          updated_at: nowIso,
-        });
-
-        const split = calculateProfitSplitEntry({
-          qty_accepted_kg: reconciled.qty_accepted_kg,
-          supplier_actual_cost_snapshot: reconciled.supplier_actual_cost_snapshot,
-          kitchen_unit_price_snapshot: reconciled.kitchen_unit_price_snapshot,
-          team_share_pct: prev.splitConfig.team_share_pct,
-          cooperative_share_pct: prev.splitConfig.cooperative_share_pct,
-          invoice_payment_status: 'UNPAID',
-          amount_paid: 0,
-          total_invoice_amount: reconciled.kitchen_line_total,
-        });
-
-        nextLedgerEntries.push(
-          {
-            id: `ledger-${Date.now()}-${kitchen.id}-team`,
-            invoice_id: invoiceId,
-            delivery_item_id: deliveryItemId,
-            split_config_id: prev.splitConfig.id,
-            beneficiary_type: 'TEAM',
-            qty_accepted_kg: split.qty_accepted_kg,
-            unit_markup_snapshot: split.unit_markup,
-            share_pct_snapshot: split.team_share_pct,
-            profit_amount: split.team_share_amount,
-            payout_status: 'LOCKED_UNPAID',
-            payout_batch_id: null,
-            unlocked_at: null,
-            paid_out_at: null,
-            created_at: nowIso,
-            updated_at: nowIso,
-          },
-          {
-            id: `ledger-${Date.now()}-${kitchen.id}-coop`,
-            invoice_id: invoiceId,
-            delivery_item_id: deliveryItemId,
-            split_config_id: prev.splitConfig.id,
-            beneficiary_type: 'COOPERATIVE',
-            qty_accepted_kg: split.qty_accepted_kg,
-            unit_markup_snapshot: split.unit_markup,
-            share_pct_snapshot: split.cooperative_share_pct,
-            profit_amount: split.koperasi_share_amount,
-            payout_status: 'LOCKED_UNPAID',
-            payout_batch_id: null,
-            unlocked_at: null,
-            paid_out_at: null,
-            created_at: nowIso,
-            updated_at: nowIso,
-          }
-        );
-      }
-
-      const nextSettlements = recomputeSupplierSettlements(
-        prev.batches,
-        nextDeliveryItems,
-        prev.supplierSettlements
-      );
-
-      return {
-        ...prev,
-        deliveries: nextDeliveries,
-        deliveryItems: nextDeliveryItems,
-        invoices: nextInvoices,
-        ledgerEntries: nextLedgerEntries,
-        supplierSettlements: nextSettlements,
-      };
-    });
-  };
-
-  const updateBastAcceptance = (input: UpdateBastInput) => {
-    setState((prev) => {
-      const targetItem = prev.deliveryItems.find((di) => di.id === input.delivery_item_id);
-      if (!targetItem) return prev;
-
-      const reconciled = reconcileKitchenDeliveryItem({
-        supplier_batch_id: targetItem.supplier_batch_id,
-        qty_dispatched_kg: targetItem.qty_dispatched_kg,
-        qty_accepted_kg: toWholeKg(input.qty_accepted_kg),
-        supplier_actual_cost_snapshot: targetItem.supplier_actual_cost_snapshot,
-        kitchen_unit_price_snapshot: targetItem.kitchen_unit_price_snapshot,
-      });
-
-      const nowIso = new Date().toISOString();
-      const nextDeliveryItems = prev.deliveryItems.map((di) => {
-        if (di.id !== targetItem.id) return di;
-        return {
-          ...di,
-          qty_accepted_kg: reconciled.qty_accepted_kg,
-          qty_shrinkage_kg: reconciled.qty_shrinkage_kg,
-          line_invoice_amount: reconciled.kitchen_line_total,
-          line_supplier_payable_amount: reconciled.supplier_net_payable,
-          line_supplier_claim_amount: reconciled.supplier_shrinkage_deduction,
-          line_total_markup_amount: senToIdr(
-            idrToSen(reconciled.kitchen_line_total) - idrToSen(reconciled.supplier_net_payable)
-          ),
-          rejection_reason:
-            reconciled.qty_shrinkage_kg > 0
-              ? input.rejection_reason || 'Susut/Reject saat timbang terima BAST di Dapur'
-              : null,
-          updated_at: nowIso,
-        };
-      });
-
-      const nextDeliveries = prev.deliveries.map((del) => {
-        if (del.id !== targetItem.delivery_id) return del;
-        return {
-          ...del,
-          status: del.status === 'INVOICED' ? ('INVOICED' as const) : ('BAST_VERIFIED' as const),
-          bast_signed_by_name: input.bast_signed_by_name || del.bast_signed_by_name,
-          bast_verified_at: nowIso,
-          notes:
-            reconciled.qty_shrinkage_kg > 0
-              ? input.rejection_reason || 'Susut/Reject tercatat di BAST'
-              : null,
-          updated_at: nowIso,
-        };
-      });
-
-      const linkedInvoice = prev.invoices.find((inv) => inv.delivery_id === targetItem.delivery_id);
-      const nextInvoices = prev.invoices.map((inv) => {
-        if (inv.delivery_id !== targetItem.delivery_id) return inv;
-        const nextAmountPaid =
-          inv.payment_status === 'PAID' ? reconciled.kitchen_line_total : inv.amount_paid;
-        return {
-          ...inv,
-          total_invoice_amount: reconciled.kitchen_line_total,
-          amount_paid: nextAmountPaid,
-          updated_at: nowIso,
-        };
-      });
-
-      const invoiceStatus = linkedInvoice?.payment_status ?? 'UNPAID';
-      const split = calculateProfitSplitEntry({
-        qty_accepted_kg: reconciled.qty_accepted_kg,
-        supplier_actual_cost_snapshot: reconciled.supplier_actual_cost_snapshot,
-        kitchen_unit_price_snapshot: reconciled.kitchen_unit_price_snapshot,
-        team_share_pct: prev.splitConfig.team_share_pct,
-        cooperative_share_pct: prev.splitConfig.cooperative_share_pct,
-        invoice_payment_status: invoiceStatus,
-      });
-
-      const nextLedgerEntries = prev.ledgerEntries.map((le) => {
-        if (le.delivery_item_id !== targetItem.id || le.payout_status === 'PAID_OUT') return le;
-        return {
-          ...le,
-          qty_accepted_kg: split.qty_accepted_kg,
-          unit_markup_snapshot: split.unit_markup,
-          profit_amount:
-            le.beneficiary_type === 'TEAM' ? split.team_share_amount : split.koperasi_share_amount,
-          updated_at: nowIso,
-        };
-      });
-
-      const nextSettlements = recomputeSupplierSettlements(
-        prev.batches,
-        nextDeliveryItems,
-        prev.supplierSettlements
-      );
-
-      return {
-        ...prev,
-        deliveries: nextDeliveries,
-        deliveryItems: nextDeliveryItems,
-        invoices: nextInvoices,
-        ledgerEntries: nextLedgerEntries,
-        supplierSettlements: nextSettlements,
-      };
-    });
-  };
-
-  const acceptFullBast = (delivery_item_id: string) => {
-    const item = state.deliveryItems.find((di) => di.id === delivery_item_id);
-    if (!item) return;
-    updateBastAcceptance({
-      delivery_item_id,
-      qty_accepted_kg: item.qty_dispatched_kg,
-      rejection_reason: null,
-    });
-  };
-
-  const saveKitchenBast = (lines: UpdateBastInput[]) => {
-    // Each call is a functional state update, so all lines of one kitchen stop
-    // are applied in order within the same render batch.
-    for (const line of lines) updateBastAcceptance(line);
-  };
-
-  const markInvoicePaid = (invoice_id: string) => {
-    setState((prev) => {
-      const targetInv = prev.invoices.find((i) => i.id === invoice_id);
-      if (!targetInv || targetInv.payment_status === 'PAID') return prev;
-
-      const nowIso = new Date().toISOString();
-      const nextInvoices = prev.invoices.map((inv) => {
-        if (inv.id !== invoice_id) return inv;
-        return {
-          ...inv,
-          amount_paid: inv.total_invoice_amount,
-          payment_status: 'PAID' as const,
-          payment_proof_url: `https://storage.mbg.local/payments/${inv.invoice_number}.pdf`,
-          paid_at: nowIso,
-          verified_by: 'finance-1',
-          updated_at: nowIso,
-        };
-      });
-
-      // Invariant 4 Atomic Trigger Simulation: LOCKED_UNPAID -> AVAILABLE_FOR_PAYOUT
-      const nextLedgerEntries = prev.ledgerEntries.map((le) => {
-        if (le.invoice_id !== invoice_id) return le;
-        if (le.payout_status === 'LOCKED_UNPAID') {
-          return {
-            ...le,
-            payout_status: 'AVAILABLE_FOR_PAYOUT' as const,
-            unlocked_at: nowIso,
-            updated_at: nowIso,
-          };
-        }
-        return le;
-      });
-
-      return {
-        ...prev,
-        invoices: nextInvoices,
-        ledgerEntries: nextLedgerEntries,
-      };
-    });
-  };
-
-  const markSupplierSettlementPaid = (settlement_id: string) => {
-    setState((prev) => {
-      const nowIso = new Date().toISOString();
-      return {
-        ...prev,
-        supplierSettlements: prev.supplierSettlements.map((stl) =>
-          stl.id === settlement_id
-            ? {
-                ...stl,
-                status: 'PAID' as const,
-                payment_proof_url: `https://storage.mbg.local/settlements/${stl.settlement_number}.pdf`,
-                paid_at: nowIso,
-                updated_at: nowIso,
-              }
-            : stl
-        ),
-      };
-    });
-  };
-
-  const updateProfitSplitPercentage = (team_share_pct: number, cooperative_share_pct: number) => {
-    setState((prev) => {
-      const nowIso = new Date().toISOString();
-      const nextSplitConfig: ProfitSplitConfig = {
-        ...prev.splitConfig,
-        team_share_pct,
-        cooperative_share_pct,
-      };
-
-      const nextLedgerEntries = prev.ledgerEntries.map((le) => {
-        if (le.payout_status === 'PAID_OUT') return le;
-        const ditem = prev.deliveryItems.find((d) => d.id === le.delivery_item_id);
-        const inv = prev.invoices.find((i) => i.id === le.invoice_id);
-        if (!ditem || !inv) return le;
-
-        const split = calculateProfitSplitEntry({
-          qty_accepted_kg: ditem.qty_accepted_kg,
-          supplier_actual_cost_snapshot: ditem.supplier_actual_cost_snapshot,
-          kitchen_unit_price_snapshot: ditem.kitchen_unit_price_snapshot,
-          team_share_pct,
-          cooperative_share_pct,
-          invoice_payment_status: inv.payment_status,
-        });
-
-        return {
-          ...le,
-          share_pct_snapshot:
-            le.beneficiary_type === 'TEAM' ? split.team_share_pct : split.cooperative_share_pct,
-          profit_amount:
-            le.beneficiary_type === 'TEAM' ? split.team_share_amount : split.koperasi_share_amount,
-          updated_at: nowIso,
-        };
-      });
-
-      return {
-        ...prev,
-        splitConfig: nextSplitConfig,
-        ledgerEntries: nextLedgerEntries,
-      };
-    });
-  };
-
-  const executePayout = (beneficiary_type: BeneficiaryType, notes?: string) => {
-    setState((prev) => {
-      const eligible = prev.ledgerEntries.filter(
-        (le) => le.beneficiary_type === beneficiary_type && le.payout_status === 'AVAILABLE_FOR_PAYOUT'
-      );
-      if (eligible.length === 0) return prev;
-
-      let totalSen = 0n;
-      for (const e of eligible) {
-        totalSen += idrToSen(e.profit_amount);
-      }
-
-      const nowIso = new Date().toISOString();
-      const seq = String(prev.payoutBatches.length + 1).padStart(2, '0');
-      const batchId = `payout-${Date.now()}`;
-      const newPayoutBatch: ProfitPayoutBatch = {
-        id: batchId,
-        payout_reference: `PAYOUT-20261020-${beneficiary_type}-${seq}`,
-        beneficiary_type,
-        total_payout_amount: senToIdr(totalSen),
-        transfer_proof_url: `https://storage.mbg.local/payouts/PAYOUT-20261020-${beneficiary_type}-${seq}.pdf`,
-        notes:
-          notes?.trim() ||
-          `Pencairan Bagi Hasil Cash-Basis (${beneficiary_type}) untuk ${eligible.length} invoice PAID`,
-        disbursed_by: 'owner-1',
-        disbursed_at: nowIso,
-        created_at: nowIso,
-      };
-
-      const eligibleIds = new Set(eligible.map((e) => e.id));
-      const nextLedgerEntries = prev.ledgerEntries.map((le) => {
-        if (!eligibleIds.has(le.id)) return le;
-        return {
-          ...le,
-          payout_status: 'PAID_OUT' as const,
-          payout_batch_id: batchId,
-          paid_out_at: nowIso,
-          updated_at: nowIso,
-        };
-      });
-
-      return {
-        ...prev,
-        payoutBatches: [newPayoutBatch, ...prev.payoutBatches],
-        ledgerEntries: nextLedgerEntries,
-      };
-    });
-  };
+  const executePayout = (who: BeneficiaryType, notes?: string) =>
+    run((s) => executePayoutEngine(s, who, runtimeCtx(), notes));
 
   const saveKitchen = (input: KitchenMasterInput): MasterSaveResult => {
     const error = validateKitchenInput(input);
     if (error) return { ok: false, error };
-    setState((prev) => ({
-      ...prev,
-      kitchens: upsertKitchenRecord(prev.kitchens, input, new Date().toISOString()),
-    }));
-    return { ok: true };
-  };
-
-  const saveSupplier = (input: SupplierMasterInput): MasterSaveResult => {
-    const error = validateSupplierInput(input);
-    if (error) return { ok: false, error };
-    setState((prev) => ({
-      ...prev,
-      suppliers: upsertSupplierRecord(prev.suppliers, input, new Date().toISOString()),
-    }));
+    const s = stateRef.current;
+    commitAndSync({ ...s, kitchens: upsertKitchenRecord(s.kitchens, input, new Date().toISOString()) });
     return { ok: true };
   };
 
   const saveItem = (input: ItemMasterInput): MasterSaveResult => {
     const error = validateItemInput(input);
     if (error) return { ok: false, error };
-    setState((prev) => ({
-      ...prev,
-      items: upsertItemRecord(prev.items, input, new Date().toISOString()),
-    }));
+    const s = stateRef.current;
+    commitAndSync({ ...s, items: upsertItemRecord(s.items, input, new Date().toISOString()) });
     return { ok: true };
   };
 
   const resetSimulationData = () => {
     const fresh = createInitialSeedState();
-    setState(fresh);
+    commitAndSync(fresh);
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(fresh));
     } catch {
       // Ignore storage errors
     }
-  };
-
-  const getBatchRemainingKg = (batch_id: string): number => {
-    const batch = state.batches.find((b) => b.id === batch_id);
-    if (!batch) return 0;
-    const procuredGrams = kgToGrams(batch.qty_procured_kg);
-    let allocatedGrams = 0n;
-    for (const di of state.deliveryItems) {
-      if (di.supplier_batch_id === batch_id) {
-        allocatedGrams += kgToGrams(di.qty_dispatched_kg);
-      }
-    }
-    const diff = procuredGrams - allocatedGrams;
-    return gramsToKg(diff > 0n ? diff : 0n);
-  };
-
-  const getSafeBastItemsForFieldTeam = (): SafeDeliveryItemBastView[] => {
-    return state.deliveryItems.map((di) => {
-      const del = state.deliveries.find((d) => d.id === di.delivery_id);
-      const kitchen = state.kitchens.find((k) => k.id === del?.kitchen_id);
-      const item = state.items.find((i) => i.id === di.item_id);
-      return sanitizeDeliveryForFieldTeam({
-        ...di,
-        delivery_item_id: di.id,
-        delivery_id: di.delivery_id,
-        delivery_number: del?.delivery_number ?? 'SJ-UNKNOWN',
-        delivery_date: del?.delivery_date ?? SIM_DATE,
-        kitchen_id: kitchen?.id ?? 'unknown',
-        kitchen_name: kitchen?.name ?? 'Dapur MBG',
-        item_id: item?.id ?? di.item_id,
-        item_name: item?.name ?? 'Bahan Baku MBG',
-      });
-    });
   };
 
   const getSafeCourierItems = (): SafeCourierBastItem[] => buildSafeCourierItems(state);
@@ -1375,21 +507,16 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     ...state,
     setActiveRole,
     setActiveTab,
-    addSupplierBatch,
-    allocateBatchToKitchens,
-    updateBastAcceptance,
-    acceptFullBast,
+    createOrder,
+    removeOrderLine,
+    deleteOrder,
     saveKitchenBast,
     markInvoicePaid,
-    markSupplierSettlementPaid,
     updateProfitSplitPercentage,
     executePayout,
     saveKitchen,
-    saveSupplier,
     saveItem,
     resetSimulationData,
-    getBatchRemainingKg,
-    getSafeBastItemsForFieldTeam,
     getSafeCourierItems,
   };
 

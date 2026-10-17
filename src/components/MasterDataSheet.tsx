@@ -1,16 +1,11 @@
 'use client';
 
 import React, { useState } from 'react';
-import {
-  type ItemMasterInput,
-  type KitchenMasterInput,
-  type MasterSaveResult,
-  type SupplierMasterInput,
-  useMbgStore,
-} from '../lib/mbg-store';
+import { type ItemMasterInput, type KitchenMasterInput, type MasterSaveResult, useMbgStore } from '../lib/mbg-store';
+import { formatRp, formatThousands } from '../lib/ui-format';
 import { BottomSheet, SegmentedControl, Toast, type ToastState } from './ui';
 
-type MasterTab = 'kitchens' | 'suppliers' | 'items';
+type MasterTab = 'kitchens' | 'items';
 
 type FieldDef<T> = {
   key: keyof T & string;
@@ -27,30 +22,20 @@ const KITCHEN_FIELDS: FieldDef<KitchenMasterInput>[] = [
   { key: 'address', label: 'Alamat' },
 ];
 
-const SUPPLIER_FIELDS: FieldDef<SupplierMasterInput>[] = [
-  { key: 'name', label: 'Nama Supplier', required: true },
-  { key: 'contact_person', label: 'Kontak (Nama)' },
-  { key: 'phone', label: 'No. HP / WA', inputMode: 'tel' },
-  { key: 'bank_name', label: 'Bank' },
-  { key: 'bank_account_number', label: 'No. Rekening', inputMode: 'numeric' },
-  { key: 'bank_account_holder', label: 'Atas Nama Rekening' },
-];
-
 const ITEM_FIELDS: FieldDef<ItemMasterInput>[] = [
-  { key: 'name', label: 'Nama Bahan Baku', required: true },
-  { key: 'category', label: 'Kategori', placeholder: 'mis. Protein Hewani' },
+  { key: 'name', label: 'Nama Barang', required: true },
+  { key: 'category', label: 'Kategori', placeholder: 'mis. Sayuran Segar' },
+  { key: 'default_kitchen_price_per_kg', label: 'Harga Dapur Default / kg (Rp)', placeholder: '0', inputMode: 'numeric' },
+  { key: 'default_margin_per_kg', label: 'Margin Kita Default / kg (Rp)', placeholder: '0', inputMode: 'numeric' },
 ];
 
 const EMPTY_KITCHEN: KitchenMasterInput = { name: '', address: '', pic_name: '', pic_phone: '' };
-const EMPTY_SUPPLIER: SupplierMasterInput = {
+const EMPTY_ITEM: ItemMasterInput = {
   name: '',
-  contact_person: '',
-  phone: '',
-  bank_name: '',
-  bank_account_number: '',
-  bank_account_holder: '',
+  category: '',
+  default_kitchen_price_per_kg: '',
+  default_margin_per_kg: '',
 };
-const EMPTY_ITEM: ItemMasterInput = { name: '', category: '' };
 
 function MasterForm<T extends { id?: string }>({
   idPrefix,
@@ -118,8 +103,7 @@ function MasterForm<T extends { id?: string }>({
 }
 
 export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { activeRole, kitchens, suppliers, items, saveKitchen, saveSupplier, saveItem } =
-    useMbgStore();
+  const { activeRole, kitchens, items, saveKitchen, saveItem } = useMbgStore();
   const [tab, setTab] = useState<MasterTab>('kitchens');
   // `null` = no form open, `'new'` = create form, otherwise the id being edited.
   const [editing, setEditing] = useState<string | null>(null);
@@ -143,8 +127,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
 
   const addLabel: Record<MasterTab, string> = {
     kitchens: '+ Tambah Dapur',
-    suppliers: '+ Tambah Supplier',
-    items: '+ Tambah Bahan Baku',
+    items: '+ Tambah Barang',
   };
 
   const rowBtn =
@@ -166,7 +149,6 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
           onChange={switchTab}
           options={[
             { value: 'kitchens', label: `Dapur (${kitchens.length})` },
-            { value: 'suppliers', label: `Supplier (${suppliers.length})` },
             { value: 'items', label: `Barang (${items.length})` },
           ]}
         />
@@ -182,21 +164,13 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               onCancel={() => setEditing(null)}
               onSave={(v) => done(saveKitchen(v), `Dapur "${v.name.trim()}" ditambahkan.`)}
             />
-          ) : tab === 'suppliers' ? (
-            <MasterForm<SupplierMasterInput>
-              idPrefix="md-s-new"
-              fields={SUPPLIER_FIELDS}
-              initial={EMPTY_SUPPLIER}
-              onCancel={() => setEditing(null)}
-              onSave={(v) => done(saveSupplier(v), `Supplier "${v.name.trim()}" ditambahkan.`)}
-            />
           ) : (
             <MasterForm<ItemMasterInput>
               idPrefix="md-i-new"
               fields={ITEM_FIELDS}
               initial={EMPTY_ITEM}
               onCancel={() => setEditing(null)}
-              onSave={(v) => done(saveItem(v), `Bahan baku "${v.name.trim()}" ditambahkan.`)}
+              onSave={(v) => done(saveItem(v), `Barang "${v.name.trim()}" ditambahkan.`)}
               extra={<UnitLockedField id="md-i-new-unit" />}
             />
           )
@@ -242,51 +216,6 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               )
             )}
 
-          {tab === 'suppliers' &&
-            suppliers.map((s) =>
-              editing === s.id ? (
-                <li key={s.id} className="p-2">
-                  <MasterForm<SupplierMasterInput>
-                    idPrefix={`md-s-${s.id}`}
-                    fields={SUPPLIER_FIELDS}
-                    initial={{
-                      id: s.id,
-                      name: s.name,
-                      contact_person: s.contact_person ?? '',
-                      phone: s.phone ?? '',
-                      bank_name: s.bank_name ?? '',
-                      bank_account_number: s.bank_account_number ?? '',
-                      bank_account_holder: s.bank_account_holder ?? '',
-                    }}
-                    onCancel={() => setEditing(null)}
-                    onSave={(v) => done(saveSupplier(v), `Supplier ${s.supplier_code} diperbarui.`)}
-                  />
-                </li>
-              ) : (
-                <li key={s.id} className="flex items-center justify-between gap-2 px-3 py-2">
-                  <div className="min-w-0">
-                    <div className="break-words text-sm font-semibold leading-snug text-slate-900">
-                      {s.name}
-                    </div>
-                    <div className="break-words text-xs text-slate-500">
-                      {s.supplier_code}
-                      {s.phone ? ` • ${s.phone}` : ''}
-                    </div>
-                    {(s.bank_name || s.bank_account_number) && (
-                      <div className="break-words text-xs text-slate-500">
-                        {[s.bank_name, s.bank_account_number, s.bank_account_holder]
-                          .filter(Boolean)
-                          .join(' • ')}
-                      </div>
-                    )}
-                  </div>
-                  <button type="button" onClick={() => setEditing(s.id)} className={rowBtn}>
-                    Ubah
-                  </button>
-                </li>
-              )
-            )}
-
           {tab === 'items' &&
             items.map((it) =>
               editing === it.id ? (
@@ -294,9 +223,15 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                   <MasterForm<ItemMasterInput>
                     idPrefix={`md-i-${it.id}`}
                     fields={ITEM_FIELDS}
-                    initial={{ id: it.id, name: it.name, category: it.category }}
+                    initial={{
+                      id: it.id,
+                      name: it.name,
+                      category: it.category,
+                      default_kitchen_price_per_kg: formatThousands(it.default_kitchen_price_per_kg),
+                      default_margin_per_kg: formatThousands(it.default_margin_per_kg),
+                    }}
                     onCancel={() => setEditing(null)}
-                    onSave={(v) => done(saveItem(v), `Bahan baku ${it.sku} diperbarui.`)}
+                    onSave={(v) => done(saveItem(v), `Barang ${it.name} diperbarui.`)}
                     extra={<UnitLockedField id={`md-i-${it.id}-unit`} />}
                   />
                 </li>
@@ -307,7 +242,8 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                       {it.name}
                     </div>
                     <div className="break-words text-xs text-slate-500">
-                      {it.category} • satuan {it.base_unit}
+                      {it.category} • {formatRp(it.default_kitchen_price_per_kg)}/kg • margin{' '}
+                      {formatRp(it.default_margin_per_kg)}/kg
                     </div>
                   </div>
                   <button type="button" onClick={() => setEditing(it.id)} className={rowBtn}>

@@ -3,20 +3,12 @@
 import React, { useState } from 'react';
 import { type ActiveTab, useMbgStore } from '../lib/mbg-store';
 import type { UserRole } from '../types/mbg';
-import {
-  InvoiceReceiptIcon,
-  LedgerVaultIcon,
-  MatrixGridIcon,
-  PackageBatchIcon,
-  RefreshResetIcon,
-  ScaleBastIcon,
-} from './Icons';
+import { InvoiceReceiptIcon, LedgerVaultIcon, PackageBatchIcon, RefreshResetIcon, ScaleBastIcon } from './Icons';
 import { MasterDataSheet } from './MasterDataSheet';
-import { Tab1SupplierBatches } from './Tab1SupplierBatches';
-import { Tab2KitchenMatrix } from './Tab2KitchenMatrix';
-import { Tab3FieldBast } from './Tab3FieldBast';
-import { Tab4InvoicesAndSettlements } from './Tab4InvoicesAndSettlements';
-import { Tab5ProfitLedger } from './Tab5ProfitLedger';
+import { Tab1KitchenOrders } from './Tab1KitchenOrders';
+import { Tab2CourierWeighing } from './Tab2CourierWeighing';
+import { Tab3KitchenInvoices } from './Tab3KitchenInvoices';
+import { Tab4ProfitSharing } from './Tab4ProfitSharing';
 
 const ROLE_PILLS: Array<{ role: UserRole; label: string }> = [
   { role: 'OWNER_ADMIN', label: 'Admin' },
@@ -31,16 +23,10 @@ const NAV_TABS: Array<{
   roles: UserRole[];
 }> = [
   {
-    id: 'batches',
-    label: 'Stok & HPP',
+    id: 'orders',
+    label: 'Order Dapur',
     renderIcon: (cls) => <PackageBatchIcon className={cls} />,
-    roles: ['OWNER_ADMIN', 'FINANCE'],
-  },
-  {
-    id: 'matrix',
-    label: 'Bagi ke Dapur',
-    renderIcon: (cls) => <MatrixGridIcon className={cls} />,
-    // Admin-only allocation matrix — hidden for the single courier (Stage 6).
+    // Prices & margins are entered here — Admin/Keuangan only (Invariant 5).
     roles: ['OWNER_ADMIN', 'FINANCE'],
   },
   {
@@ -51,7 +37,7 @@ const NAV_TABS: Array<{
   },
   {
     id: 'invoices',
-    label: 'Tagihan',
+    label: 'Invoice Dapur',
     renderIcon: (cls) => <InvoiceReceiptIcon className={cls} />,
     roles: ['OWNER_ADMIN', 'FINANCE', 'COOPERATIVE_VIEWER'],
   },
@@ -66,13 +52,9 @@ const NAV_TABS: Array<{
 export function AppShell() {
   const { activeRole, activeTab, setActiveRole, setActiveTab, resetSimulationData } =
     useMbgStore();
-  const [preselectBatchId, setPreselectBatchId] = useState<string | null>(null);
   const [masterOpen, setMasterOpen] = useState(false);
 
-  const isCourier = activeRole === 'FIELD_TEAM';
-  const visibleTabs = NAV_TABS.filter((t) => t.roles.includes(activeRole)).map((t) =>
-    isCourier && t.id === 'bast' ? { ...t, label: 'Kirim Dapur' } : t
-  );
+  const visibleTabs = NAV_TABS.filter((t) => t.roles.includes(activeRole));
   // Never render a tab the active role is not allowed to see (Invariant 5).
   const currentTab: ActiveTab = visibleTabs.some((t) => t.id === activeTab)
     ? activeTab
@@ -84,13 +66,7 @@ export function AppShell() {
     if (typeof window !== 'undefined' && !window.confirm('Kembalikan semua data ke awal?')) {
       return;
     }
-    setPreselectBatchId(null);
     resetSimulationData();
-  };
-
-  const openAllocation = (batchId: string) => {
-    setPreselectBatchId(batchId);
-    setActiveTab('matrix');
   };
 
   return (
@@ -144,7 +120,7 @@ export function AppShell() {
                 type="button"
                 onClick={() => setMasterOpen(true)}
                 aria-label="Data Master"
-                title="Data Master (Dapur, Supplier, Barang)"
+                title="Data Master (Dapur & Barang)"
                 className="flex h-9 w-9 items-center justify-center rounded-full text-base transition hover:bg-slate-100"
               >
                 <span aria-hidden="true">⚙️</span>
@@ -168,16 +144,10 @@ export function AppShell() {
         />
 
         <main id="main-content" className="flex-1 px-3 py-3">
-          {currentTab === 'batches' && <Tab1SupplierBatches onAllocate={openAllocation} />}
-          {currentTab === 'matrix' && (
-            <Tab2KitchenMatrix
-              key={preselectBatchId ?? 'default'}
-              initialBatchId={preselectBatchId}
-            />
-          )}
-          {currentTab === 'bast' && <Tab3FieldBast key={activeRole} />}
-          {currentTab === 'invoices' && <Tab4InvoicesAndSettlements />}
-          {currentTab === 'ledger' && <Tab5ProfitLedger />}
+          {currentTab === 'orders' && <Tab1KitchenOrders />}
+          {currentTab === 'bast' && <Tab2CourierWeighing key={activeRole} />}
+          {currentTab === 'invoices' && <Tab3KitchenInvoices />}
+          {currentTab === 'ledger' && <Tab4ProfitSharing />}
         </main>
 
         {showNav && (

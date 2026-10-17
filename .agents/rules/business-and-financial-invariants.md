@@ -2,85 +2,79 @@
 trigger: always_on
 description: >-
   Aturan bisnis, akuntansi, dan keamanan data mutlak (5 Business & Financial Invariants)
-  untuk aplikasi B2B Supply Chain, Invoicing, dan Profit-Sharing Ledger Dapur MBG.
+  untuk aplikasi B2B Kitchen Order, Invoicing, dan Profit-Sharing Ledger Dapur MBG (Stage 8 Order-Driven).
 ---
 
 # Business and Financial Invariants (Aturan Mutlak)
 
-Aturan di dalam dokumen ini bersifat **MUTLAK (NON-NEGOTIABLE)** dan **TIDAK BOLEH DILANGGAR** di bagian kode mana pun—baik pada skema database SQL, fungsi backend/RPC, model data Dart/Flutter, maupun komponen UI.
+Aturan di dalam dokumen ini bersifat **MUTLAK (NON-NEGOTIABLE)** dan **TIDAK BOLEH DILANGGAR** di bagian kode mana pun—baik pada skema database SQL, fungsi backend/RPC, model data TypeScript, maupun komponen UI.
+
+> **Stage 8 — Order-Driven Workflow (Fase 1):** Order Dapur → Timbang BAST Kurir → Invoice Dapur Gabungan → Bagi Hasil (Tim & Koperasi).
+> Stok batch supplier, HPP per batch, matriks alokasi, dan settlement/bayar supplier **tidak ada** pada fase ini. Jangan menambahkan kembali pencatatan hutang/pembayaran supplier tanpa keputusan bisnis baru.
 
 ---
 
-## Invariant 1: Presisi Angka & Satuan (`NUMERIC` & Satuan Dasar Kilogram Bulat)
+## Invariant 1: Presisi Angka & Satuan (`NUMERIC` & Kilogram Bulat)
 
 1. **Larangan Floating-Point Biner:**
-   - **DILARANG KERAS** menggunakan tipe data `FLOAT`, `FLOAT4`, `FLOAT8`, `REAL`, atau `DOUBLE PRECISION` di PostgreSQL untuk menyimpan nominal uang, harga satuan, persentase bagi hasil, maupun kuantitas berat barang.
-   - Di lapisan aplikasi (Flutter/Dart atau TypeScript), hindari aritmatika `double` langsung untuk kalkulasi buku besar/keuangan; gunakan representasi desimal presisi tetap (`Decimal` / integer sen / string `NUMERIC` dari database).
+   - **DILARANG KERAS** menggunakan tipe data `FLOAT`, `FLOAT4`, `FLOAT8`, `REAL`, atau `DOUBLE PRECISION` di PostgreSQL untuk menyimpan nominal uang, harga per kg, margin, persentase bagi hasil, maupun kuantitas berat.
+   - Di lapisan aplikasi (TypeScript), hindari aritmatika `number` langsung untuk kalkulasi buku besar/keuangan; gunakan helper fixed-point di `financial-engine.ts` (gram & sen `BigInt`) atau `sumIdr` / `sumKg`.
 2. **Standar Tipe Data Database:**
-   - **Mata Uang (IDR):** Wajib menggunakan `NUMERIC(15,2)`.
-   - **Kuantitas Berat (`kg`):** Seluruh kuantitas berat bahan baku menggunakan satuan **Kilogram bulat (`INTEGER` / bilangan bulat tanpa desimal atau koma)**, misalnya `50 kg`, `75 kg`, `-3 kg`. Kolom database tetap bertipe eksak `NUMERIC(10,3)` (bukan float) dan dijaga `CHECK (kolom = TRUNC(kolom))` sehingga hanya menerima nilai bulat.
-   - Input berat di semua layar memakai `inputMode="numeric"`, `step="1"`, dan placeholder `"0"`; nilai yang masuk ke store/RPC dibulatkan ke kilogram bulat.
+   - **Mata Uang (IDR):** `NUMERIC(15,2)` — `kitchen_unit_price_snapshot`, `margin_per_kg_snapshot`, `line_invoice_amount`, `line_margin_amount`, `total_invoice_amount`, `profit_amount`.
+   - **Kuantitas Berat (`kg`):** Kilogram **bulat** (`35 kg`, `25 kg`, `-2 kg`). Kolom tetap `NUMERIC(10,3)` dengan `CHECK (kolom = TRUNC(kolom))`.
+   - Input berat di semua layar memakai `inputMode="numeric"`, `step="1"`, dan placeholder `"0"`; nilai yang masuk ke store/RPC dibulatkan ke kilogram bulat. Input rupiah memakai `inputMode="numeric"` dengan pemisah ribuan (`14.000`).
 3. **Larangan Tampilan Desimal Kilogram:**
-   - Di Indonesia, penulisan `50.000 kg` akan terbaca sebagai "lima puluh ribu kg". Oleh karena itu **DILARANG** menampilkan `.000` atau desimal pada angka kilogram di bagian mana pun di aplikasi (UI, Input, dokumen Print PDF, maupun pesan WhatsApp).
-   - Format yang benar: `50 kg`, `20 kg`, `70 / 70 kg`, `-3 kg`. Format yang DILARANG: `50.000 kg`, `50,000 kg`, `48.750 kg`.
-4. **Pembulatan Terstandar:**
-   - Seluruh kalkulasi total harga (`qty_kg × unit_price`) dibulatkan ke `NUMERIC(15,2)` menggunakan `ROUND(val, 2)` (half-up) di level database agar tidak pernah terjadi selisih Rp 0,01 antara invoice, tagihan supplier, dan ledger bagi hasil.
+   - **DILARANG** menampilkan `.000` atau desimal pada angka kilogram di UI, input, PDF, maupun pesan WhatsApp.
+   - Benar: `35 kg`, `33 / 35 kg`, `-2 kg`. Salah: `35.000 kg`, `35,000 kg`, `33.500 kg`.
+4. **Pembulatan Terstandar:** Seluruh `qty_kg × harga` dibulatkan `ROUND(val, 2)` (half-up) agar tidak pernah ada selisih Rp 0,01 antara invoice dan ledger bagi hasil.
 
 ---
 
-## Invariant 2: Zero-Shrinkage Risk (Beban Susut 100% di Supplier)
+## Invariant 2: Invoice Dapur Berbasis Bobot Terima (`qty_accepted_kg`)
 
-Segala bentuk penyusutan bobot (*shrinkage*) di perjalanan atau barang rusak/reject saat ditimbang terima oleh Dapur MBG adalah **100% tanggung jawab Supplier**, **BUKAN** tanggung jawab Tim maupun Koperasi.
-
-1. **Rumus Kuantitas Susut / Klaim Supplier:**
-   $$\text{qty\_supplier\_claim\_or\_return\_kg} = \text{qty\_dispatched\_kg} - \text{qty\_accepted\_by\_kitchen\_kg}$$
-   - Nilai `qty_accepted_by_kitchen_kg` adalah satu-satunya kuantitas sah yang menjadi dasar tagihan ke dapur, dasar pembayaran ke supplier, dan dasar perhitungan bagi hasil.
-2. **Rumus Tagihan ke Dapur (`Kitchen Invoice`):**
-   $$\text{Kitchen Invoice Line Total} = \text{qty\_accepted\_by\_kitchen\_kg} \times \text{kitchen\_unit\_price\_snapshot}$$
-3. **Rumus Kewajiban Bayar ke Supplier (`Supplier Payable`):**
-   $$\text{Supplier Payable Line Total} = \text{qty\_accepted\_by\_kitchen\_kg} \times \text{supplier\_actual\_cost\_snapshot}$$
-   - **DILARANG** menghitung hutang ke supplier berdasarkan `qty_dispatched_kg` (bobot kirim awal).
-   - Selisih bobot (`qty_supplier_claim_or_return_kg`) wajib tercatat otomatis sebagai **Potongan Tagihan / Nota Retur Supplier** (`supplier_claim_amount = qty_supplier_claim_or_return_kg × supplier_actual_cost_snapshot`).
+1. **Satu Order = Satu Invoice Gabungan:** Setiap Order Dapur (multi-barang) menghasilkan tepat 1 kartu pengiriman kurir dan 1 Invoice Tagihan Dapur Gabungan (`kitchen_invoices.delivery_id` UNIQUE).
+2. **Rumus Tagihan per Baris:**
+   $$\text{line\_invoice\_amount} = \text{ROUND}(\text{qty\_accepted\_kg} \times \text{kitchen\_unit\_price\_snapshot}, 2)$$
+   $$\text{total\_invoice\_amount} = \sum \text{line\_invoice\_amount}$$
+3. **Selisih/Reject Tidak Ditagih:**
+   $$\text{qty\_shrinkage\_kg} = \text{qty\_dispatched\_kg} - \text{qty\_accepted\_kg}$$
+   - Contoh: order/kirim Wortel `35 kg`, diterima dapur `33 kg` → invoice menagih `33 kg` saja; UI menampilkan `Selisih/Reject -2 kg (Hanya ditagih 33 kg ke Dapur)`.
+   - `qty_accepted_kg` tidak boleh negatif dan tidak boleh melebihi `qty_dispatched_kg`.
+4. **Tagihan Final:** Sebelum semua barang ditimbang, invoice berupa estimasi (bobot order). Invoice **hanya boleh** ditandai `PAID` setelah seluruh baris order memiliki `weighed_at`.
 
 ---
 
-## Invariant 3: Actual Supplier Batch Costing & Price Immutability
+## Invariant 3: Snapshot Harga Dapur & Margin (Immutable)
 
-1. **Larangan Harga Rata-Rata (*Average Costing*):**
-   - Metode Harga Pokok Penjualan (HPP) / harga beli **WAJIB** menggunakan **harga beli aktual dari supplier per batch (`Actual Cost per Batch`)**, bukan rata-rata tertimbang (*moving/weighted average*) maupun estimasi standar.
-2. **Keterlacakan Batch (`supplier_batch_id`):**
-   - Setiap baris pengiriman dan item pada Invoice Dapur (`kitchen_delivery_items`) **WAJIB** memiliki foreign key `NOT NULL` ke `supplier_procurement_batches(id)` (`supplier_batch_id`).
-3. **Immutability Snapshot Harga:**
-   - Saat alokasi/pengiriman ke dapur dibuat, sistem **WAJIB** menyalin dan mengunci nilai:
-     - `supplier_actual_cost_snapshot` (`NUMERIC(15,2)`) dari batch supplier terkait.
-     - `kitchen_unit_price_snapshot` (`NUMERIC(15,2)`) yang berlaku untuk dapur tersebut.
-   - Perubahan harga di tabel master item atau perubahan harga pada batch pengadaan baru di masa depan **TIDAK BOLEH** mengubah histori invoice dapur, tagihan supplier, maupun nominal bagi hasil yang sudah tercatat.
+1. Saat baris order dibuat, sistem **WAJIB** menyalin dan mengunci:
+   - `kitchen_unit_price_snapshot` — Harga Dapur / kg (harga jual ke dapur, sudah termasuk markup), `> 0`.
+   - `margin_per_kg_snapshot` — Margin / Bagian Kita per kg, `0 ≤ margin ≤ harga dapur`.
+2. Harga default di master barang hanya untuk auto-isi form; perubahan master **TIDAK BOLEH** mengubah histori order, invoice, maupun bagi hasil.
+3. Order yang invoicenya sudah `PAID` terkunci: baris tidak boleh ditambah/dihapus/ditimbang ulang dan order tidak boleh dihapus.
 
 ---
 
-## Invariant 4: Cash-Basis Profit Sharing (`LOCKED_UNPAID` -> `AVAILABLE_FOR_PAYOUT`)
+## Invariant 4: Cash-Basis Profit Sharing (`LOCKED_UNPAID` → `AVAILABLE_FOR_PAYOUT`)
 
-1. **Rumus Total Markup (Gross Profit per Pengiriman Dapur):**
-   $$\text{Total Markup} = \text{qty\_accepted\_by\_kitchen\_kg} \times (\text{kitchen\_unit\_price\_snapshot} - \text{supplier\_actual\_cost\_snapshot})$$
-   - `Total Markup` dibagi antara **Tim** (`TEAM`) dan **Koperasi** (`COOPERATIVE`) sesuai konfigurasi porsi bagi hasil yang berlaku pada transaksi tersebut.
+1. **Rumus Bagi Hasil per Baris:**
+   $$\text{Total Bagi Hasil} = \text{ROUND}(\text{qty\_accepted\_kg} \times \text{margin\_per\_kg\_snapshot}, 2)$$
+   $$\text{Hak Koperasi} = \text{ROUND}(\text{Total} \times \text{share\_coop\_pct} / 100, 2), \quad \text{Hak Tim} = \text{Total} - \text{Hak Koperasi}$$
 2. **Prinsip Kas Masuk (*Strict Cash Basis*):**
-   - Saat BAST diselesaikan dan Invoice Dapur diterbitkan (`ISSUED`, `UNPAID`, atau `PARTIALLY_PAID`), baris buku besar bagi hasil (`profit_ledger_entries`) untuk Tim dan Koperasi dibuat dengan status **`LOCKED_UNPAID`**.
-   - Selama berstatus `LOCKED_UNPAID`, dana bagi hasil **DILARANG KERAS** dimasukkan ke dalam batch pencairan (`profit_payout_batches`) atau dicairkan sebagian maupun seluruhnya.
-   - Saldo bagi hasil otomatis berubah status menjadi **`AVAILABLE_FOR_PAYOUT`** (siap dicairkan) **HANYA SETELAH** Invoice Dapur terkait diverifikasi lunas dan berstatus **`PAID`** (melalui Database Trigger yang atomik).
-   - Apabila status invoice yang semula `PAID` dibatalkan/dikoreksi (selama bagi hasil belum berstatus `PAID_OUT`), trigger wajib mengembalikan status ledger menjadi `LOCKED_UNPAID`.
+   - Selama Invoice Dapur `ISSUED` / `UNPAID` / `PARTIALLY_PAID`, ledger berstatus **`LOCKED_UNPAID`** (label UI: **Menunggu Dapur Bayar**) dan **DILARANG** dicairkan.
+   - Ledger berubah menjadi **`AVAILABLE_FOR_PAYOUT`** (label UI: **Siap Dicairkan**) **HANYA SETELAH** Invoice Dapur terkait berstatus **`PAID`** (Lunas), secara atomik.
+   - Apabila status `PAID` dikoreksi (selama belum `PAID_OUT`), ledger wajib kembali `LOCKED_UNPAID`.
+   - Baris `PAID_OUT` tidak pernah dihitung ulang; bila salah satu porsi (Tim/Koperasi) sebuah baris sudah `PAID_OUT`, kedua porsi baris tersebut dibekukan sehingga Tim + Koperasi selalu = total margin baris.
 
 ---
 
-## Invariant 5: Strict Role-Based Access Control (Proteksi Harga Modal)
+## Invariant 5: Strict Role-Based Access Control (Proteksi Harga)
 
-Akses terhadap harga modal (`supplier_actual_cost`), nominal markup, dan buku besar bagi hasil harus ditegakkan di **level Database (PostgreSQL RLS & View/Column Security)** serta di **level UI Mobile**:
-
-1. **Role `FIELD_TEAM` (Tim Lapangan / Kurir / Gudang):**
-   - **Diizinkan:** Melihat daftar dapur, item barang, kuantitas alokasi/kirim (`qty_dispatched_kg`), surat jalan, serta menginput bobot terima dapur (`qty_accepted_kg`), bobot susut/reject, dan foto bukti BAST.
-   - **DILARANG KERAS:** Melihat atau melakukan query terhadap `supplier_actual_cost`, `supplier_actual_cost_snapshot`, `kitchen_unit_price_snapshot`, nominal `markup`, total tagihan supplier, maupun laporan bagi hasil.
-   - Query API untuk `FIELD_TEAM` wajib melalui *Security-Barrier View* atau RPC yang tidak menyertakan kolom harga/biaya.
+1. **Role `FIELD_TEAM` (Lapangan / Kurir):**
+   - **Diizinkan:** Melihat daftar dapur, nama PIC, daftar barang & kilogram bulat (`Wortel 35 kg`), total muatan per jenis barang, mencetak/WA Surat Jalan/BAST (tanpa harga), dan menginput bobot diterima + alasan selisih.
+   - **DILARANG KERAS:** Melihat atau meng-query `kitchen_unit_price_snapshot`, `margin_per_kg_snapshot`, nominal invoice, maupun laporan bagi hasil. Query wajib melalui *Security-Barrier View* `v_safe_delivery_items_bast` / proyeksi `buildSafeCourierItems` yang tidak menyertakan kolom harga.
+   - Saat role ini aktif, aplikasi langsung membuka tab **Timbang** dan menyembunyikan navigasi bawah.
 2. **Role `COOPERATIVE_VIEWER` (Pihak Koperasi):**
-   - **Diizinkan:** Melihat rekap kuantitas diterima oleh masing-masing dapur (`qty_accepted_kg`), status pembayaran invoice dapur (`UNPAID`, `PARTIALLY_PAID`, `PAID`), serta rincian perhitungan dan status pencairan hak bagi hasil Koperasi (`LOCKED_UNPAID`, `AVAILABLE_FOR_PAYOUT`, `PAID_OUT`).
-   - **Tidak Diizinkan:** Mengubah data operasional, mengubah harga/markup, atau mengeksekusi pencairan dana.
+   - **Diizinkan:** Melihat rekap timbang (read-only), status pembayaran Invoice Dapur (`Belum Bayar` / `Lunas`), serta rincian hak bagi hasil.
+   - **Tidak Diizinkan:** Membuat/mengubah order, harga/margin, menandai lunas, atau mencairkan dana.
 3. **Role `OWNER_ADMIN` / `FINANCE`:**
-   - **Diizinkan:** Akses penuh (`SELECT`, `INSERT`, `UPDATE`) ke seluruh batch pengadaan supplier, `supplier_actual_cost`, pengaturan markup per dapur/item, penerbitan & verifikasi pelunasan invoice dapur (`PAID`), penyelesaian pembayaran ke supplier (`supplier_settlements`), serta eksekusi pencairan bagi hasil (`profit_payout_batches`).
+   - **Diizinkan:** Akses penuh — tab Order Dapur (harga & margin), master data dapur & barang, penerbitan & verifikasi pelunasan Invoice Dapur, serta eksekusi pencairan bagi hasil (`profit_payout_batches`).

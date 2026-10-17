@@ -1,5 +1,12 @@
 # 03 — Spesifikasi Layar Mobile & UX Operasi Batch (20–30 Dapur MBG)
 
+> [!IMPORTANT]
+> **Stage 8 — Order-Driven Flow (Fase 1).** Layar matriks alokasi batch, setup batch supplier, dan settlement supplier di dokumen ini **sudah tidak berlaku**. Aplikasi kini memiliki 4 tab:
+> 1. **Order Dapur** (Admin/Keuangan) — form multi-barang per dapur (berat kg bulat, Harga Dapur/kg, Margin Kita/kg) + daftar order hari ini (`Menunggu Kurir` / `Sebagian Tertimbang` / `Selesai BAST`).
+> 2. **Timbang** (Kurir & Admin; Koperasi read-only) — total barang yang dibawa kurir, 1 kartu per dapur, `✓ Terima Sesuai Order (Semua Barang)`, `💾 Simpan Timbangan Dapur`, Surat Jalan/BAST & WA BAST tanpa harga. Role Lapangan langsung masuk layar ini tanpa navigasi bawah.
+> 3. **Invoice Dapur** — rekap `Belum Dibayar Dapur` / `Sudah Lunas`, kartu invoice gabungan multi-barang, `✓ Tandai Lunas`, PDF, WA tagihan, Surat Jalan.
+> 4. **Bagi Hasil** — `Siap Dicairkan` vs `Menunggu Dapur Bayar`, pencairan Hak Tim / Hak Koperasi, rincian per invoice.
+
 Dokumen ini mendefinisikan rancangan antarmuka pengguna (*Mobile & Tablet UX Specifications*) berbasis **Next.js (App Router) + TypeScript (`strict: true`) + Tailwind CSS (Mobile-First PWA) + Supabase (PostgreSQL)** yang dioptimalkan untuk kecepatan operasional tinggi: mengelola **20–30 Dapur MBG** setiap hari tanpa perlu membuka-tutup ratusan form satu per satu.
 
 ---

@@ -81,94 +81,83 @@ export function multiplyWeightGramsByPriceSen(grams: bigint, unitPriceSen: bigin
   return divideHalfUp(grams * unitPriceSen, 1000n);
 }
 
-export interface ReconcileDeliveryItemInput {
-  supplier_batch_id: string;
-  qty_dispatched_kg: number;
-  qty_accepted_kg: number;
-  supplier_actual_cost_snapshot: number;
-  kitchen_unit_price_snapshot: number;
+function assertWholeKgGrams(grams: bigint, field: string): void {
+  if (grams % 1000n !== 0n) {
+    throw new Error(`Invariant 1 Violation: ${field} wajib kilogram bulat (tanpa desimal)`);
+  }
 }
 
-export interface ReconcileDeliveryItemResult {
-  supplier_batch_id: string;
-  qty_dispatched_kg: number;
+export interface ReconcileOrderLineInput {
+  /** Berat Order = Berat Kirim (whole kg). */
+  qty_ordered_kg: number;
+  /** Berat diterima dapur saat BAST (whole kg). */
+  qty_accepted_kg: number;
+  /** Harga Dapur / kg (sudah termasuk markup). */
+  kitchen_unit_price_rp: number;
+  /** Margin / Bagian Kita per kg (dasar bagi hasil Tim & Koperasi). */
+  margin_per_kg_rp: number;
+}
+
+export interface ReconcileOrderLineResult {
+  qty_ordered_kg: number;
   qty_accepted_kg: number;
   qty_shrinkage_kg: number;
-  supplier_actual_cost_snapshot: number;
-  kitchen_unit_price_snapshot: number;
-  kitchen_line_total: number;
-  supplier_gross_payable: number;
-  supplier_shrinkage_deduction: number;
-  supplier_net_payable: number;
+  kitchen_unit_price_rp: number;
+  margin_per_kg_rp: number;
+  line_invoice_amount: number;
+  line_margin_amount: number;
 }
 
 /**
- * a) reconcileKitchenDeliveryItem
- * Enforces Invariant 1 (Precision kg & IDR), Invariant 2 (Zero-Shrinkage Risk / Supplier bears 100% shrinkage),
- * and Invariant 3 (Actual Batch Costing & Immutable Snapshot).
+ * a) reconcileKitchenOrderLine
+ * Stage 8 Order-Driven Flow. Enforces:
+ * - Invariant 1: whole-kg weights, exact sen arithmetic.
+ * - Invariant 2: the kitchen is billed ONLY for `qty_accepted_kg`; the
+ *   difference (selisih/reject) is never invoiced.
+ * - Invariant 3: price & margin snapshots are validated (0 ≤ margin ≤ price).
  */
-export function reconcileKitchenDeliveryItem(
-  input: ReconcileDeliveryItemInput
-): ReconcileDeliveryItemResult {
-  if (!input.supplier_batch_id || input.supplier_batch_id.trim() === '') {
-    throw new Error('Invariant 3 Violation: supplier_batch_id is required');
-  }
-
-  const dispatchedGrams = kgToGrams(input.qty_dispatched_kg);
+export function reconcileKitchenOrderLine(input: ReconcileOrderLineInput): ReconcileOrderLineResult {
+  const orderedGrams = kgToGrams(input.qty_ordered_kg);
   const acceptedGrams = kgToGrams(input.qty_accepted_kg);
+  assertWholeKgGrams(orderedGrams, 'qty_ordered_kg');
+  assertWholeKgGrams(acceptedGrams, 'qty_accepted_kg');
 
-  if (dispatchedGrams <= 0n) {
-    throw new Error('Invariant 1/2 Violation: qty_dispatched_kg must be greater than 0');
+  if (orderedGrams <= 0n) {
+    throw new Error('Invariant 1 Violation: qty_ordered_kg must be greater than 0');
   }
   if (acceptedGrams < 0n) {
     throw new Error('Invariant 2 Violation: qty_accepted_kg cannot be negative');
   }
-  if (acceptedGrams > dispatchedGrams) {
-    throw new Error(
-      'Invariant 2 Violation: qty_shrinkage_kg cannot be negative (qty_accepted_kg exceeds qty_dispatched_kg)'
-    );
+  if (acceptedGrams > orderedGrams) {
+    throw new Error('Invariant 2 Violation: qty_accepted_kg cannot exceed qty_ordered_kg');
   }
 
-  const supplierCostSen = idrToSen(input.supplier_actual_cost_snapshot);
-  const kitchenPriceSen = idrToSen(input.kitchen_unit_price_snapshot);
-
-  if (supplierCostSen <= 0n) {
-    throw new Error('Invariant 3 Violation: supplier_actual_cost_snapshot must be greater than 0');
+  const priceSen = idrToSen(input.kitchen_unit_price_rp);
+  const marginSen = idrToSen(input.margin_per_kg_rp);
+  if (priceSen <= 0n) {
+    throw new Error('Invariant 3 Violation: kitchen_unit_price_rp must be greater than 0');
   }
-  if (kitchenPriceSen < supplierCostSen) {
-    throw new Error(
-      'Invariant 3 Violation: kitchen_unit_price_snapshot cannot be lower than supplier_actual_cost_snapshot'
-    );
+  if (marginSen < 0n) {
+    throw new Error('Invariant 3 Violation: margin_per_kg_rp cannot be negative');
   }
-
-  const shrinkageGrams = dispatchedGrams - acceptedGrams;
-
-  const kitchenLineTotalSen = multiplyWeightGramsByPriceSen(acceptedGrams, kitchenPriceSen);
-  const supplierGrossPayableSen = multiplyWeightGramsByPriceSen(dispatchedGrams, supplierCostSen);
-  const supplierShrinkageDeductionSen = multiplyWeightGramsByPriceSen(
-    shrinkageGrams,
-    supplierCostSen
-  );
-  const supplierNetPayableSen = multiplyWeightGramsByPriceSen(acceptedGrams, supplierCostSen);
+  if (marginSen > priceSen) {
+    throw new Error('Invariant 3 Violation: margin_per_kg_rp cannot exceed kitchen_unit_price_rp');
+  }
 
   return {
-    supplier_batch_id: input.supplier_batch_id,
-    qty_dispatched_kg: gramsToKg(dispatchedGrams),
+    qty_ordered_kg: gramsToKg(orderedGrams),
     qty_accepted_kg: gramsToKg(acceptedGrams),
-    qty_shrinkage_kg: gramsToKg(shrinkageGrams),
-    supplier_actual_cost_snapshot: senToIdr(supplierCostSen),
-    kitchen_unit_price_snapshot: senToIdr(kitchenPriceSen),
-    kitchen_line_total: senToIdr(kitchenLineTotalSen),
-    supplier_gross_payable: senToIdr(supplierGrossPayableSen),
-    supplier_shrinkage_deduction: senToIdr(supplierShrinkageDeductionSen),
-    supplier_net_payable: senToIdr(supplierNetPayableSen),
+    qty_shrinkage_kg: gramsToKg(orderedGrams - acceptedGrams),
+    kitchen_unit_price_rp: senToIdr(priceSen),
+    margin_per_kg_rp: senToIdr(marginSen),
+    line_invoice_amount: senToIdr(multiplyWeightGramsByPriceSen(acceptedGrams, priceSen)),
+    line_margin_amount: senToIdr(multiplyWeightGramsByPriceSen(acceptedGrams, marginSen)),
   };
 }
 
 export interface CalculateProfitSplitInput {
   qty_accepted_kg: number;
-  supplier_actual_cost_snapshot: number;
-  kitchen_unit_price_snapshot: number;
+  margin_per_kg_rp: number;
   team_share_pct: number;
   cooperative_share_pct: number;
   invoice_payment_status: InvoicePaymentStatus;
@@ -178,8 +167,8 @@ export interface CalculateProfitSplitInput {
 
 export interface CalculateProfitSplitResult {
   qty_accepted_kg: number;
-  unit_markup: number;
-  total_markup: number;
+  margin_per_kg: number;
+  total_margin: number;
   team_share_pct: number;
   cooperative_share_pct: number;
   team_share_amount: number;
@@ -189,8 +178,9 @@ export interface CalculateProfitSplitResult {
 
 /**
  * b) calculateProfitSplitEntry
- * Enforces Invariant 1 (Exact sen arithmetic without Rp 0.01 rounding gap)
- * and Invariant 4 (Strict Cash-Basis Profit Sharing: LOCKED_UNPAID until invoice is PAID).
+ * Total bagi hasil per item = qty_accepted_kg × margin_per_kg, split Tim vs Koperasi.
+ * Enforces Invariant 1 (exact sen arithmetic without Rp 0,01 rounding gap)
+ * and Invariant 4 (Strict Cash-Basis: LOCKED_UNPAID until the invoice is PAID).
  */
 export function calculateProfitSplitEntry(
   input: CalculateProfitSplitInput
@@ -200,13 +190,9 @@ export function calculateProfitSplitEntry(
     throw new Error('Invariant 1 Violation: qty_accepted_kg cannot be negative');
   }
 
-  const supplierCostSen = idrToSen(input.supplier_actual_cost_snapshot);
-  const kitchenPriceSen = idrToSen(input.kitchen_unit_price_snapshot);
-
-  if (kitchenPriceSen < supplierCostSen) {
-    throw new Error(
-      'Invariant 3 Violation: kitchen_unit_price_snapshot cannot be lower than supplier_actual_cost_snapshot'
-    );
+  const marginSen = idrToSen(input.margin_per_kg_rp);
+  if (marginSen < 0n) {
+    throw new Error('Invariant 3 Violation: margin_per_kg_rp cannot be negative');
   }
 
   const teamBp = pctToBasisPoints(input.team_share_pct);
@@ -230,22 +216,20 @@ export function calculateProfitSplitEntry(
     }
   }
 
-  const unitMarkupSen = kitchenPriceSen - supplierCostSen;
-  const totalMarkupSen = multiplyWeightGramsByPriceSen(acceptedGrams, unitMarkupSen);
+  const totalMarginSen = multiplyWeightGramsByPriceSen(acceptedGrams, marginSen);
 
-  // Follow docs/01-domain-workflows-and-formulas.md Step 5:
-  // cooperative_profit_amount = ROUND(total_markup_amount * (share_coop_pct / 100), 2)
-  // team_profit_amount = total_markup_amount - cooperative_profit_amount
-  const koperasiShareSen = divideHalfUp(totalMarkupSen * coopBp, 10000n);
-  const teamShareSen = totalMarkupSen - koperasiShareSen;
+  // cooperative_profit_amount = ROUND(total_margin * (share_coop_pct / 100), 2)
+  // team_profit_amount = total_margin - cooperative_profit_amount (no Rp 0,01 gap)
+  const koperasiShareSen = divideHalfUp(totalMarginSen * coopBp, 10000n);
+  const teamShareSen = totalMarginSen - koperasiShareSen;
 
   const payoutStatus: LedgerPayoutStatus =
     input.invoice_payment_status === 'PAID' ? 'AVAILABLE_FOR_PAYOUT' : 'LOCKED_UNPAID';
 
   return {
     qty_accepted_kg: gramsToKg(acceptedGrams),
-    unit_markup: senToIdr(unitMarkupSen),
-    total_markup: senToIdr(totalMarkupSen),
+    margin_per_kg: senToIdr(marginSen),
+    total_margin: senToIdr(totalMarginSen),
     team_share_pct: Number(teamBp) / 100,
     cooperative_share_pct: Number(coopBp) / 100,
     team_share_amount: senToIdr(teamShareSen),

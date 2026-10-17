@@ -5,12 +5,7 @@
  * invoice, payable, or profit-share amounts — they only sum/format values
  * the store already produced (Invariant 1: no raw float accumulation).
  */
-import type {
-  InvoicePaymentStatus,
-  LedgerPayoutStatus,
-  SettlementStatus,
-  UserRole,
-} from '../types/mbg';
+import type { InvoicePaymentStatus, LedgerPayoutStatus, OrderProgress, UserRole } from '../types/mbg';
 import { gramsToKg, idrToSen, kgToGrams, senToIdr, toWholeKg } from './financial-engine';
 import { formatIdr } from './mbg-store';
 
@@ -41,6 +36,25 @@ export function parseKgInput(raw: string | undefined): number {
   const n = Number(raw);
   if (!raw || !Number.isFinite(n) || n <= 0) return 0;
   return toWholeKg(n);
+}
+
+/** Whole-kg text input only (Invariant 1): "35" ok, "35.5" / "-1" / "" → null. */
+export function parseWholeKgInput(raw: string): number | null {
+  const t = raw.trim();
+  if (!/^\d+$/.test(t)) return null;
+  return Number(t);
+}
+
+/** Typed rupiah text → whole rupiah: "14.000" / "Rp 14.000" → 14000, "" → 0. */
+export function parseRpInput(raw: string | null | undefined): number {
+  const digits = (raw ?? '').replace(/\D/g, '');
+  return digits ? Number(digits) : 0;
+}
+
+/** 14000 → "14.000" (thousand dots, no "Rp", for editable rupiah inputs). */
+export function formatThousands(n: number): string {
+  if (!Number.isFinite(n)) return '';
+  return new Intl.NumberFormat('id-ID', { maximumFractionDigits: 0 }).format(Math.round(n));
 }
 
 // ---------- Display formatting ----------
@@ -87,7 +101,7 @@ export const ROLE_LABEL: Record<UserRole, string> = {
 
 export const PAYOUT_LABEL: Record<LedgerPayoutStatus, string> = {
   LOCKED_UNPAID: 'Menunggu Dapur Bayar',
-  AVAILABLE_FOR_PAYOUT: 'Siap Cair',
+  AVAILABLE_FOR_PAYOUT: 'Siap Dicairkan',
   PAID_OUT: 'Sudah Cair',
 };
 
@@ -101,16 +115,22 @@ export const INVOICE_LABEL: Record<InvoicePaymentStatus, string> = {
   PAID: 'Lunas',
 };
 
-export const SETTLEMENT_LABEL: Record<SettlementStatus, string> = {
-  PENDING_BAST: 'Menunggu Timbang',
-  READY_TO_PAY: 'Belum Dibayar',
-  PAID: 'Sudah Dibayar',
+export const ORDER_PROGRESS_LABEL: Record<OrderProgress, string> = {
+  WAITING_COURIER: 'Menunggu Kurir',
+  PARTIALLY_WEIGHED: 'Sebagian Tertimbang',
+  BAST_DONE: 'Selesai BAST',
 };
 
 export type Tone = 'green' | 'amber' | 'red' | 'slate';
 
 export function invoiceTone(status: InvoicePaymentStatus): Tone {
   return status === 'PAID' ? 'green' : 'red';
+}
+
+export function orderProgressTone(p: OrderProgress): Tone {
+  if (p === 'BAST_DONE') return 'green';
+  if (p === 'PARTIALLY_WEIGHED') return 'amber';
+  return 'slate';
 }
 
 export function payoutTone(status: LedgerPayoutStatus): Tone {

@@ -1,5 +1,14 @@
 # 02 — Skema Database PostgreSQL/Supabase, Trigger Ledger, & Kebijakan RLS
 
+> [!IMPORTANT]
+> **Stage 8 — Order-Driven Flow (Fase 1).** Skema di bawah adalah baseline awal. Migration `supabase/migrations/0004_order_driven_flow.sql` menggantikan bagian supplier:
+> - `supplier_procurement_batches` & `supplier_settlements` **dihapus**; `kitchen_delivery_items` tidak lagi memiliki `supplier_batch_id` / `supplier_actual_cost_snapshot`.
+> - `kitchen_delivery_items` menyimpan `kitchen_unit_price_snapshot` + `margin_per_kg_snapshot` (0 ≤ margin ≤ harga), kolom generated `line_invoice_amount = ROUND(qty_accepted_kg × harga, 2)` & `line_margin_amount = ROUND(qty_accepted_kg × margin, 2)`, serta `weighed_at`.
+> - `items` memiliki `default_kitchen_price_per_kg` & `default_margin_per_kg`.
+> - Trigger: total invoice = Σ `line_invoice_amount`; invoice tidak bisa `PAID` sebelum semua baris ditimbang; snapshot harga/margin immutable; baris order terkunci setelah invoice `PAID`.
+> - `v_safe_delivery_items_bast` dibangun ulang tanpa `batch_code`, dengan `is_weighed` & `is_locked` (tetap tanpa kolom harga — Invariant 5).
+> - Trigger ledger cash-basis (`LOCKED_UNPAID → AVAILABLE_FOR_PAYOUT` saat `PAID`) tetap berlaku; `unit_markup_snapshot` kini berisi margin per kg.
+
 Dokumen ini mendefinisikan skema database relasional (`PostgreSQL 15+ / Supabase`) yang menegakkan **5 Invariant Bisnis Utama** di level *database engine* melalui tipe data `NUMERIC`, *check constraints*, *stored triggers*, dan *Row-Level Security (RLS)*.
 
 ## 1. Entity-Relationship Diagram (Mermaid ERD)
