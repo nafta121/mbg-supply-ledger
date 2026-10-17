@@ -1,10 +1,15 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'MBG B2B Supply Chain, Invoicing & Profit-Sharing Ledger',
-  description:
-    'Sistem Pengadaan Batch Supplier, Matriks Alokasi 25 Dapur MBG/SPPG, BAST Susut Supplier, Invoice Dapur, dan Ledger Bagi Hasil Cash-Basis Tim vs Koperasi',
+  title: 'MBG Ledger',
+  description: 'Stok supplier, pembagian ke dapur MBG, timbang terima, tagihan, dan bagi hasil.',
+};
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: '#ffffff',
 };
 
 export default function RootLayout({
@@ -13,7 +18,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="id" className="dark">
+    <html lang="id">
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link
@@ -26,16 +31,7 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-[100dvh] bg-[#070A10] text-slate-100 font-sans antialiased">
-        {/* Fixed subtle tactile grain overlay (pointer-events-none, zero scroll repaint) */}
-        <div
-          aria-hidden="true"
-          className="no-print pointer-events-none fixed inset-0 z-40 opacity-[0.022]"
-          style={{
-            backgroundImage: `radial-gradient(rgba(255,255,255,0.7) 1px, transparent 0)`,
-            backgroundSize: '20px 20px',
-          }}
-        />
+      <body className="min-h-[100dvh] bg-slate-50 text-slate-900 font-sans antialiased">
         {children}
       </body>
     </html>

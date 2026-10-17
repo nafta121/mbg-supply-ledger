@@ -1,315 +1,227 @@
 'use client';
 
-import React, { useState } from 'react';
-import { formatKg, useMbgStore } from '../lib/mbg-store';
-import { CheckBadgeIcon, ScaleBastIcon } from './Icons';
+import React, { useMemo, useState } from 'react';
+import { gramsToKg, kgToGrams } from '../lib/financial-engine';
+import { useMbgStore } from '../lib/mbg-store';
+import { formatKgNum, shortKitchenName } from '../lib/ui-format';
+import { Badge, Card, SegmentedControl, Toast, type ToastState } from './ui';
+
+type Filter = 'pending' | 'done';
 
 export function Tab3FieldBast() {
   const {
     activeRole,
+    deliveries,
     getSafeBastItemsForFieldTeam,
     updateBastAcceptance,
     acceptFullBast,
   } = useMbgStore();
 
-  const safeBastItems = getSafeBastItemsForFieldTeam();
-  const isReadOnly = activeRole === 'COOPERATIVE_VIEWER';
+  // Field team only ever reads the price-free security-barrier projection (Invariant 5).
+  const safeItems = getSafeBastItemsForFieldTeam();
+  const canEdit = activeRole !== 'COOPERATIVE_VIEWER';
 
+  const [filter, setFilter] = useState<Filter>('pending');
+  const [query, setQuery] = useState('');
   const [draftWeights, setDraftWeights] = useState<Record<string, string>>({});
-  const [draftReasons, setDraftReasons] = useState<Record<string, string>>({});
-  const [statusMsg, setStatusMsg] = useState<string | null>(null);
+  const [draftNotes, setDraftNotes] = useState<Record<string, string>>({});
+  const [toast, setToast] = useState<ToastState>(null);
 
-  const totalDispatchedKg = safeBastItems.reduce((acc, i) => acc + i.qty_dispatched_kg, 0);
-  const totalAcceptedKg = safeBastItems.reduce((acc, i) => acc + i.qty_accepted_kg, 0);
-  const totalShrinkageKg = safeBastItems.reduce((acc, i) => acc + i.qty_shrinkage_kg, 0);
+  const statusByDelivery = useMemo(
+    () => new Map(deliveries.map((d) => [d.id, d.status])),
+    [deliveries]
+  );
+  const isDone = (deliveryId: string) => {
+    const s = statusByDelivery.get(deliveryId);
+    return s === 'BAST_VERIFIED' || s === 'INVOICED';
+  };
 
-  const handleSaveBastItem = (
-    deliveryItemId: string,
-    dispatchedKg: number,
-    currentAcceptedKg: number
-  ) => {
-    if (isReadOnly) return;
-    const rawStr = draftWeights[deliveryItemId] ?? currentAcceptedKg.toFixed(3);
-    const val = Number(rawStr);
-    if (!Number.isFinite(val) || val < 0) {
-      setStatusMsg('Error: Bobot diterima dapur tidak boleh negatif.');
+  const pendingCount = safeItems.filter((i) => !isDone(i.delivery_id)).length;
+  const doneCount = safeItems.length - pendingCount;
+
+  const q = query.trim().toLowerCase();
+  const visible = safeItems.filter((i) => {
+    if ((filter === 'done') !== isDone(i.delivery_id)) return false;
+    if (!q) return true;
+    return i.kitchen_name.toLowerCase().includes(q) || i.item_name.toLowerCase().includes(q);
+  });
+
+  const handleSave = (id: string, dispatchedKg: number, currentAcceptedKg: number, name: string) => {
+    if (!canEdit) return;
+    const raw = draftWeights[id] ?? formatKgNum(currentAcceptedKg);
+    const val = Number(raw);
+    if (raw.trim() === '' || !Number.isFinite(val) || val < 0) {
+      setToast({ kind: 'error', text: 'Isi berat diterima dengan benar.' });
       return;
     }
-    if (val > dispatchedKg + 0.0001) {
-      setStatusMsg(
-        `Error Invariant 2: Bobot diterima (${formatKg(val)}) tidak boleh melebihi bobot kirim Surat Jalan (${formatKg(dispatchedKg)}).`
-      );
+    const acceptedGrams = kgToGrams(val);
+    const dispatchedGrams = kgToGrams(dispatchedKg);
+    if (acceptedGrams > dispatchedGrams) {
+      setToast({ kind: 'error', text: 'Berat diterima tidak boleh melebihi berat kirim.' });
       return;
     }
-
-    const shrinkage = Math.max(0, Math.round((dispatchedKg - val) * 1000) / 1000);
-    const reason =
-      shrinkage > 0
-        ? draftReasons[deliveryItemId] || 'Susut Air/Perjalanan saat timbang BAST di Dapur'
-        : null;
-
+    const shrinkGrams = dispatchedGrams - acceptedGrams;
     updateBastAcceptance({
-      delivery_item_id: deliveryItemId,
-      qty_accepted_kg: val,
-      rejection_reason: reason,
+      delivery_item_id: id,
+      qty_accepted_kg: gramsToKg(acceptedGrams),
+      rejection_reason: shrinkGrams > 0n ? draftNotes[id]?.trim() || null : null,
     });
-
-    setStatusMsg(
-      shrinkage > 0
-        ? `BAST disimpan: Diterima ${formatKg(val)}. Selisih susut ${formatKg(shrinkage)} otomatis memotong tagihan Supplier 100%.`
-        : `BAST disimpan: Diterima utuh 100% (${formatKg(val)}) tanpa susut.`
-    );
+    setToast({
+      kind: 'ok',
+      text:
+        shrinkGrams > 0n
+          ? `${name}: diterima ${formatKgNum(gramsToKg(acceptedGrams))} kg, susut ${formatKgNum(gramsToKg(shrinkGrams))} kg.`
+          : `${name}: diterima utuh ${formatKgNum(gramsToKg(acceptedGrams))} kg.`,
+    });
   };
 
   return (
-    <section aria-label="Timbang Terima BAST Lapangan" className="space-y-5">
-      {/* Banner Invariant 2 & 5 (Double-Bezel Amber) */}
-      <div className="bezel-shell-amber">
-        <div className="bezel-core-amber space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <span className="font-mono text-[10px] font-bold uppercase tracking-[0.14em] text-amber-300">
-              Invariant 2 & 5 • BAST Timbang Terima Dapur
-            </span>
-            <span className="rounded-full bg-amber-500/20 px-2.5 py-0.5 font-mono text-[10px] font-semibold text-amber-300 ring-1 ring-amber-400/30">
-              Zero-Shrinkage Risk
-            </span>
-          </div>
-          <p className="text-xs leading-relaxed text-amber-100/85">
-            Seluruh informasi harga disembunyikan bagi Kurir/Tim Lapangan (
-            <code>v_safe_delivery_items_bast</code>). Setiap gram penyusutan/reject di dapur{' '}
-            <strong>100% memotong kewajiban bayar ke Supplier</strong>.
-          </p>
-        </div>
+    <section aria-label="Timbang BAST" className="space-y-3">
+      <SegmentedControl<Filter>
+        label="Filter timbang"
+        value={filter}
+        onChange={setFilter}
+        options={[
+          { value: 'pending', label: `Belum Timbang (${pendingCount})` },
+          { value: 'done', label: `Selesai (${doneCount})` },
+        ]}
+      />
+
+      <div>
+        <label htmlFor="bast-search" className="sr-only">
+          Cari dapur
+        </label>
+        <input
+          id="bast-search"
+          type="search"
+          placeholder="Cari nama dapur…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          className="field-input"
+        />
       </div>
 
-      {/* Ringkasan Kuantitas Lapangan */}
-      <div className="bezel-shell">
-        <div className="bezel-core grid grid-cols-3 gap-2.5 p-3 text-center">
-          <div className="rounded-xl border border-white/[0.05] bg-[#070A10] p-2.5">
-            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
-              Total Kirim
-            </div>
-            <div className="mt-1 font-mono text-xs font-bold text-white">
-              {formatKg(totalDispatchedKg)}
-            </div>
-          </div>
-          <div className="rounded-xl border border-white/[0.05] bg-[#070A10] p-2.5">
-            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
-              Total Diterima
-            </div>
-            <div className="mt-1 font-mono text-xs font-bold text-emerald-400">
-              {formatKg(totalAcceptedKg)}
-            </div>
-          </div>
-          <div className="rounded-xl border border-white/[0.05] bg-[#070A10] p-2.5">
-            <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
-              Susut / Klaim
-            </div>
-            <div className="mt-1 font-mono text-xs font-bold text-amber-400">
-              {formatKg(totalShrinkageKg)}
-            </div>
-          </div>
-        </div>
-      </div>
+      <Toast toast={toast} onClose={() => setToast(null)} />
 
-      {statusMsg && (
-        <div
-          role={statusMsg.startsWith('Error') ? 'alert' : 'status'}
-          className={`rounded-xl border px-3.5 py-2.5 text-xs ${
-            statusMsg.startsWith('Error')
-              ? 'border-rose-500/40 bg-rose-950/60 text-rose-200'
-              : 'border-emerald-500/40 bg-emerald-950/60 text-emerald-200'
-          }`}
-        >
-          {statusMsg}
-        </div>
+      {visible.length === 0 && (
+        <Card className="p-6 text-center text-sm font-medium text-slate-600">
+          {filter === 'pending' ? 'Semua pengiriman sudah ditimbang.' : 'Belum ada yang selesai.'}
+        </Card>
       )}
 
-      {/* Kartu BAST per Pengiriman Dapur */}
-      <div className="space-y-4">
-        {safeBastItems.map((bast) => {
-          const inputStr =
-            draftWeights[bast.delivery_item_id] ?? bast.qty_accepted_kg.toFixed(3);
-          const parsedAccepted = Number(inputStr);
-          const liveAcceptedKg = Number.isFinite(parsedAccepted)
-            ? parsedAccepted
-            : bast.qty_accepted_kg;
-          const liveShrinkageKg = Math.max(
-            0,
-            Math.round((bast.qty_dispatched_kg - liveAcceptedKg) * 1000) / 1000
-          );
-
-          const weightInputId = `bast-weight-${bast.delivery_item_id}`;
-          const reasonInputId = `bast-reason-${bast.delivery_item_id}`;
+      <div className="space-y-2">
+        {visible.map((it) => {
+          const id = it.delivery_item_id;
+          const name = shortKitchenName(it.kitchen_name);
+          const done = isDone(it.delivery_id);
+          const inputStr = draftWeights[id] ?? formatKgNum(it.qty_accepted_kg);
+          const parsed = Number(inputStr);
+          const liveAcceptedGrams =
+            inputStr.trim() !== '' && Number.isFinite(parsed) && parsed >= 0
+              ? kgToGrams(parsed)
+              : kgToGrams(it.qty_accepted_kg);
+          const dispatchedGrams = kgToGrams(it.qty_dispatched_kg);
+          const shrinkGrams = dispatchedGrams - liveAcceptedGrams;
+          const overGrams = shrinkGrams < 0n;
+          const weightId = `bast-w-${id}`;
+          const noteId = `bast-n-${id}`;
 
           return (
-            <article key={bast.delivery_item_id} className="bezel-shell">
-              <div className="bezel-core space-y-3.5">
-                <div className="flex items-start justify-between gap-2 border-b border-white/[0.07] pb-3">
-                  <div className="flex items-start gap-2.5">
-                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-white/[0.05] text-emerald-400 ring-1 ring-white/10">
-                      <ScaleBastIcon className="h-4 w-4" />
-                    </div>
-                    <div>
-                      <span className="inline-block rounded bg-white/[0.06] px-2 py-0.5 font-mono text-[10px] font-bold text-slate-200">
-                        {bast.delivery_number}
-                      </span>
-                      <h3 className="mt-1 text-sm font-bold text-white">{bast.kitchen_name}</h3>
-                      <p className="text-xs text-slate-400">
-                        Komoditas: <strong className="text-slate-200">{bast.item_name}</strong> (
-                        {bast.base_unit})
-                      </p>
-                    </div>
-                  </div>
-
-                  <span
-                    className={`shrink-0 rounded-full px-2.5 py-1 font-mono text-[10px] font-bold ${
-                      liveShrinkageKg > 0
-                        ? 'bg-amber-500/20 text-amber-300 ring-1 ring-amber-500/35'
-                        : 'bg-emerald-500/20 text-emerald-300 ring-1 ring-emerald-500/35'
-                    }`}
-                  >
-                    {liveShrinkageKg > 0
-                      ? `Susut -${formatKg(liveShrinkageKg)}`
-                      : 'Utuh 100%'}
-                  </span>
+            <Card as="article" key={id} className="space-y-2.5 p-3">
+              {/* Row 1: kitchen + item + status */}
+              <div className="flex items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-bold text-slate-900">{name}</h3>
+                  <p className="truncate text-xs text-slate-600">{it.item_name}</p>
                 </div>
-
-                {/* Perbandingan Bobot Kirim vs Bobot Terima */}
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="rounded-xl border border-white/[0.06] bg-[#070A10] p-3">
-                    <div className="font-mono text-[10px] uppercase tracking-wider text-slate-400">
-                      Bobot Kirim (SJ)
-                    </div>
-                    <div className="mt-1.5 font-mono text-sm font-bold text-white">
-                      {formatKg(bast.qty_dispatched_kg)}
-                    </div>
-                  </div>
-
-                  <div className="rounded-xl border border-emerald-500/25 bg-[#070A10] p-3">
-                    <label
-                      htmlFor={weightInputId}
-                      className="block font-mono text-[10px] uppercase tracking-wider font-semibold text-emerald-300"
-                    >
-                      Bobot Terima (kg)
-                    </label>
-                    <input
-                      id={weightInputId}
-                      type="number"
-                      step="0.001"
-                      min="0"
-                      max={bast.qty_dispatched_kg}
-                      disabled={isReadOnly}
-                      value={inputStr}
-                      onChange={(e) =>
-                        setDraftWeights((prev) => ({
-                          ...prev,
-                          [bast.delivery_item_id]: e.target.value,
-                        }))
-                      }
-                      className="mt-1 min-h-[38px] w-full rounded-lg border border-slate-700 bg-[#0D131F] px-2.5 py-1 font-mono text-sm font-bold text-emerald-300 focus:border-emerald-500 disabled:opacity-60"
-                    />
-                  </div>
-                </div>
-
-                {/* Warning Badge if Shrinkage > 0 (Invariant 2) */}
-                {liveShrinkageKg > 0 && (
-                  <div className="rounded-xl border border-amber-500/40 bg-amber-950/35 p-3 space-y-2">
-                    <div className="flex items-center justify-between text-xs font-bold text-amber-300">
-                      <span>Susut / Reject Dapur Terdeteksi</span>
-                      <span className="font-mono">-{formatKg(liveShrinkageKg)}</span>
-                    </div>
-                    <p className="text-xs leading-relaxed text-amber-100/90">
-                      <strong>Zero-Shrinkage Risk (Invariant 2):</strong> Selisih{' '}
-                      <span className="font-mono font-semibold">{formatKg(liveShrinkageKg)}</span>{' '}
-                      ini <strong>100% memotong tagihan Supplier asal Batch</strong> dan tidak
-                      mengurangi margin per kg Tim maupun Koperasi.
-                    </p>
-                    {!isReadOnly && (
-                      <div>
-                        <label htmlFor={reasonInputId} className="sr-only">
-                          Alasan susut atau reject untuk {bast.kitchen_name}
-                        </label>
-                        <input
-                          id={reasonInputId}
-                          type="text"
-                          placeholder="Alasan susut/reject (mis: Susut air perjalanan / Kemasan rusak)"
-                          value={
-                            draftReasons[bast.delivery_item_id] ??
-                            bast.rejection_reason ??
-                            ''
-                          }
-                          onChange={(e) =>
-                            setDraftReasons((prev) => ({
-                              ...prev,
-                              [bast.delivery_item_id]: e.target.value,
-                            }))
-                          }
-                          className="min-h-[40px] w-full rounded-lg border border-amber-500/40 bg-[#070A10] px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:border-amber-400"
-                        />
-                      </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Tombol Pintas Lapangan */}
-                {!isReadOnly && (
-                  <div className="space-y-2.5 pt-1">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDraftWeights((prev) => ({
-                            ...prev,
-                            [bast.delivery_item_id]: bast.qty_dispatched_kg.toFixed(3),
-                          }));
-                          acceptFullBast(bast.delivery_item_id);
-                          setStatusMsg(
-                            `${bast.kitchen_name}: Diterima 100% sesuai Surat Jalan (${formatKg(bast.qty_dispatched_kg)}).`
-                          );
-                        }}
-                        className="min-h-[42px] flex-1 inline-flex items-center justify-center gap-1.5 rounded-xl border border-emerald-500/40 bg-emerald-500/15 px-3 py-2 text-xs font-bold text-emerald-300 transition hover:bg-emerald-500/25 active:scale-[0.98]"
-                      >
-                        <CheckBadgeIcon className="h-4 w-4 shrink-0" />
-                        <span>Terima 100% Sesuai Kirim ({formatKg(bast.qty_dispatched_kg)})</span>
-                      </button>
-
-                      <button
-                        type="button"
-                        aria-label={`Kurangi 0.500 kg untuk ${bast.kitchen_name}`}
-                        onClick={() => {
-                          const nextVal = Math.max(
-                            0,
-                            Math.round((liveAcceptedKg - 0.5) * 1000) / 1000
-                          );
-                          setDraftWeights((prev) => ({
-                            ...prev,
-                            [bast.delivery_item_id]: nextVal.toFixed(3),
-                          }));
-                        }}
-                        className="min-h-[42px] rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 font-mono text-xs font-semibold text-amber-300 transition hover:bg-white/[0.08] active:scale-[0.98]"
-                      >
-                        -0.500 kg
-                      </button>
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() =>
-                        handleSaveBastItem(
-                          bast.delivery_item_id,
-                          bast.qty_dispatched_kg,
-                          bast.qty_accepted_kg
-                        )
-                      }
-                      className="min-h-[44px] w-full rounded-full bg-white/[0.08] px-4 py-2 text-xs font-bold text-white ring-1 ring-white/15 transition-all duration-300 ease-spring hover:bg-emerald-500 hover:text-slate-950 hover:ring-emerald-400 active:scale-[0.98]"
-                    >
-                      Simpan Timbangan BAST Dapur Ini
-                    </button>
-                  </div>
-                )}
+                <Badge tone={done ? 'green' : 'amber'}>{done ? 'Selesai' : 'Belum Timbang'}</Badge>
               </div>
-            </article>
+
+              {/* Row 2: dispatched vs accepted */}
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-lg bg-slate-100 px-3 py-2">
+                  <div className="text-xs font-medium text-slate-600">Kirim</div>
+                  <div className="text-lg font-bold tabular-nums text-slate-900">
+                    {formatKgNum(it.qty_dispatched_kg)} <span className="text-sm font-semibold">kg</span>
+                  </div>
+                </div>
+                <div>
+                  <label htmlFor={weightId} className="block text-xs font-medium text-slate-600">
+                    Diterima (kg)
+                  </label>
+                  <input
+                    id={weightId}
+                    type="number"
+                    inputMode="decimal"
+                    step="0.001"
+                    min="0"
+                    max={it.qty_dispatched_kg}
+                    disabled={!canEdit}
+                    value={inputStr}
+                    onChange={(e) => setDraftWeights((p) => ({ ...p, [id]: e.target.value }))}
+                    className={`mt-0.5 h-11 w-full rounded-lg border-2 px-3 text-right text-lg font-bold tabular-nums text-slate-900 focus:border-emerald-600 disabled:bg-slate-100 ${
+                      overGrams ? 'border-rose-500' : 'border-slate-300'
+                    }`}
+                  />
+                </div>
+              </div>
+
+              {/* Shrinkage line */}
+              {shrinkGrams > 0n && (
+                <div className="space-y-1.5">
+                  <div className="rounded-md bg-rose-50 px-2.5 py-1.5 text-xs font-bold text-rose-700 ring-1 ring-inset ring-rose-200 tabular-nums">
+                    Susut -{formatKgNum(gramsToKg(shrinkGrams))} kg (Potong Tagihan Supplier)
+                  </div>
+                  {canEdit && (
+                    <>
+                      <label htmlFor={noteId} className="sr-only">
+                        Catatan susut {name}
+                      </label>
+                      <input
+                        id={noteId}
+                        type="text"
+                        placeholder="Catatan singkat (mis. memar, susut air)"
+                        value={draftNotes[id] ?? it.rejection_reason ?? ''}
+                        onChange={(e) => setDraftNotes((p) => ({ ...p, [id]: e.target.value }))}
+                        className="field-input min-h-[40px]"
+                      />
+                    </>
+                  )}
+                </div>
+              )}
+              {overGrams && (
+                <p role="alert" className="text-xs font-semibold text-rose-700">
+                  Melebihi berat kirim.
+                </p>
+              )}
+
+              {/* Row 3: 1-tap actions */}
+              {canEdit && (
+                <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraftWeights((p) => ({ ...p, [id]: formatKgNum(it.qty_dispatched_kg) }));
+                      acceptFullBast(id);
+                      setToast({
+                        kind: 'ok',
+                        text: `${name}: diterima utuh ${formatKgNum(it.qty_dispatched_kg)} kg.`,
+                      });
+                    }}
+                    className="btn-primary min-h-[48px] w-full"
+                  >
+                    ✓ Sesuai Kirim (100%)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleSave(id, it.qty_dispatched_kg, it.qty_accepted_kg, name)}
+                    className="btn-secondary min-h-[48px] w-full"
+                  >
+                    Simpan
+                  </button>
+                </div>
+              )}
+            </Card>
           );
         })}
       </div>
