@@ -166,244 +166,274 @@ export function Tab1KitchenOrders() {
   };
 
   return (
-    <section aria-label="Order Dapur" className="space-y-3">
-      <div className="flex items-baseline justify-between gap-2">
+    <section aria-label="Order Dapur" className="space-y-3.5">
+      <div className="flex items-start justify-between gap-2">
         <div>
           <h1 className="text-[20px] font-bold tracking-tight text-[#0a0a0a]">Order Dapur</h1>
           <p className="text-[12px] text-[#6b6b6b]">Input pesanan bahan baku dapur dan estimasi bagi hasil</p>
         </div>
-        <span className="shrink-0 font-mono text-[12px] text-[#6b6b6b] tabular-nums">{todayYmd}</span>
+        <span className="inline-flex h-6 shrink-0 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2.5 font-mono text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+          {todayYmd}
+        </span>
       </div>
 
       <Toast toast={toast} onClose={() => setToast(null)} />
 
       <div ref={formRef} className="scroll-mt-16">
-        <Card as="section" className="space-y-3.5 p-3.5">
-          <div className="flex items-center justify-between border-b border-[#f0f0f0] pb-2.5">
+        <Card as="section" className="overflow-hidden">
+          <div className="hs-card-header bg-[#f8f9fa]">
             <h2 className="text-[15px] font-medium text-[#0a0a0a]">Buat Order Dapur Baru</h2>
-            <span className="text-[12px] text-[#6b6b6b] tabular-nums">{summary.item_count} jenis</span>
+            <span className="inline-flex h-6 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2 text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+              {summary.item_count} jenis
+            </span>
           </div>
 
-          {/* 1. Dapur tujuan */}
-          <div className="space-y-1.5">
-            <span className="field-label">Dapur Tujuan</span>
-            {kitchen ? (
-              <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] px-3 py-2">
-                <div className="min-w-0">
-                  <div className="truncate text-[14px] font-medium text-[#0a0a0a]">
-                    <span className="font-mono text-[12px] text-[#6b6b6b]">{kitchen.kitchen_code}</span> ·{' '}
-                    {shortKitchenName(kitchen.name)}
-                  </div>
-                  <div className="truncate text-[12px] text-[#6b6b6b]">PIC: {kitchen.pic_name}</div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setKitchenId(null)}
-                  className="min-h-[32px] shrink-0 rounded-[6px] border border-[#d4d4d4] bg-white px-2.5 text-[12px] font-medium text-[#0a0a0a] hover:bg-[#f8f8f8]"
-                >
-                  Ganti
-                </button>
-              </div>
-            ) : (
-              <>
-                <label htmlFor="order-kitchen-search" className="sr-only">
-                  Cari dapur
-                </label>
-                <input
-                  id="order-kitchen-search"
-                  type="search"
-                  placeholder="Cari dapur (nama, kode, atau PIC)…"
-                  value={kitchenQuery}
-                  onChange={(e) => setKitchenQuery(e.target.value)}
-                  className="field-input"
-                />
-                <ul
-                  aria-label="Daftar dapur"
-                  className="max-h-48 divide-y divide-[#f0f0f0] overflow-y-auto rounded-[6px] border border-[#e6e6e6] bg-white"
-                >
-                  {kitchenMatches.length === 0 && (
-                    <li className="px-3 py-2.5 text-[12px] text-[#6b6b6b]">Dapur tidak ditemukan.</li>
-                  )}
-                  {kitchenMatches.map((k) => {
-                    const hasOpen = !!findOpenOrder(data, k.id, todayYmd);
-                    return (
-                      <li key={k.id}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setKitchenId(k.id);
-                            setFormError(null);
-                          }}
-                          className="flex min-h-[42px] w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-[#f8f9fa]"
-                        >
-                          <span className="min-w-0 truncate text-[14px] text-[#0a0a0a]">
-                            <span className="font-mono text-[12px] text-[#6b6b6b]">{k.kitchen_code}</span> ·{' '}
-                            {shortKitchenName(k.name)}
-                          </span>
-                          {hasOpen && <Badge tone="amber">Order aktif</Badge>}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </>
-            )}
-            {openOrder && (
-              <p className="rounded-[6px] border border-[#fde68a] bg-[#fffbeb] px-2.5 py-1.5 text-[12px] text-[#92400e]">
-                Dapur ini sudah memiliki order hari ini ({openOrder.delivery_number}). Barang baru akan digabung ke
-                invoice yang sama.
-              </p>
-            )}
-          </div>
-
-          {/* 2. Daftar barang pesanan */}
-          <div className="space-y-2">
-            <span className="field-label">Daftar Barang Pesanan</span>
-            {lines.map((l, idx) => {
-              const chosenElsewhere = new Set(lines.filter((o) => o.key !== l.key).map((o) => o.item_id));
-              const kg = parseKgInput(l.kgStr);
-              const price = parseRpInput(l.priceStr);
-              const lineTotal = kg > 0 && price > 0 ? summarizeOrderDraft([previewLines[idx]!]).estimated_invoice : 0;
-              const idp = `ol-${l.key}`;
-              return (
-                <div key={l.key} className="space-y-2.5 rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] p-2.5">
-                  <div className="flex items-end gap-2">
-                    <div className="min-w-0 flex-1">
-                      <label htmlFor={`${idp}-item`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                        Barang {idx + 1}
-                      </label>
-                      <select
-                        id={`${idp}-item`}
-                        value={l.item_id}
-                        onChange={(e) => pickItem(l.key, e.target.value)}
-                        className="field-input"
-                      >
-                        <option value="">Pilih barang…</option>
-                        {items.map((it) => {
-                          const taken = openItemIds.has(it.id) || chosenElsewhere.has(it.id);
-                          return (
-                            <option key={it.id} value={it.id} disabled={taken}>
-                              {it.name}
-                              {openItemIds.has(it.id) ? ' (sudah di order)' : ''}
-                            </option>
-                          );
-                        })}
-                      </select>
+          <div className="space-y-4 p-4">
+            {/* 1. Dapur tujuan (Preline Searchbox + List Group) */}
+            <div className="space-y-1.5">
+              <span className="field-label">Dapur Tujuan</span>
+              {kitchen ? (
+                <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] px-3 py-2.5">
+                  <div className="min-w-0 space-y-0.5">
+                    <div className="flex items-center gap-1.5 truncate text-[14px] font-medium text-[#0a0a0a]">
+                      <span className="rounded-[4px] border border-[#e6e6e6] bg-white px-1.5 py-0.5 font-mono text-[11px] text-[#3d3d3d]">
+                        {kitchen.kitchen_code}
+                      </span>
+                      <span className="truncate">{shortKitchenName(kitchen.name)}</span>
                     </div>
-                    {lines.length > 1 && (
+                    <div className="truncate text-[12px] text-[#6b6b6b]">PIC: {kitchen.pic_name}</div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setKitchenId(null)}
+                    className="min-h-[32px] shrink-0 rounded-[6px] border border-[#d4d4d4] bg-white px-2.5 text-[12px] font-medium text-[#0a0a0a] hover:bg-[#f2f4f7]"
+                  >
+                    Ganti
+                  </button>
+                </div>
+              ) : (
+                <>
+                  <label htmlFor="order-kitchen-search" className="sr-only">
+                    Cari dapur
+                  </label>
+                  <div className="relative">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#6b6b6b]">
+                      <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
+                        <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.75" />
+                        <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+                      </svg>
+                    </div>
+                    <input
+                      id="order-kitchen-search"
+                      type="search"
+                      placeholder="Cari dapur (nama, kode, atau PIC)…"
+                      value={kitchenQuery}
+                      onChange={(e) => setKitchenQuery(e.target.value)}
+                      className="field-input pl-9 pr-8"
+                    />
+                    {kitchenQuery && (
                       <button
                         type="button"
-                        onClick={() => setLines((prev) => prev.filter((o) => o.key !== l.key))}
-                        aria-label={`Hapus baris barang ${idx + 1}`}
-                        className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white text-base text-[#6b6b6b] hover:bg-[#ffedea] hover:text-[#831c1e]"
+                        aria-label="Bersihkan pencarian dapur"
+                        onClick={() => setKitchenQuery('')}
+                        className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-base text-[#6b6b6b] hover:text-[#0a0a0a]"
                       >
                         ×
                       </button>
                     )}
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    <div>
-                      <label htmlFor={`${idp}-kg`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                        Berat (kg)
-                      </label>
-                      <input
-                        id={`${idp}-kg`}
-                        type="text"
-                        inputMode="decimal"
-                        step="any"
-                        placeholder="0"
-                        value={l.kgStr}
-                        onChange={(e) => patchLine(l.key, { kgStr: e.target.value })}
-                        className="field-input text-right font-medium tabular-nums"
-                      />
+                  <ul
+                    aria-label="Daftar dapur"
+                    className="max-h-48 divide-y divide-[#f0f0f0] overflow-y-auto rounded-[6px] border border-[#e6e6e6] bg-white"
+                  >
+                    {kitchenMatches.length === 0 && (
+                      <li className="px-3 py-2.5 text-[12px] text-[#6b6b6b]">Dapur tidak ditemukan.</li>
+                    )}
+                    {kitchenMatches.map((k) => {
+                      const hasOpen = !!findOpenOrder(data, k.id, todayYmd);
+                      return (
+                        <li key={k.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setKitchenId(k.id);
+                              setFormError(null);
+                            }}
+                            className="flex min-h-[42px] w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-[#f8f9fa]"
+                          >
+                            <span className="flex min-w-0 items-center gap-2 truncate text-[14px] text-[#0a0a0a]">
+                              <span className="shrink-0 rounded-[4px] border border-[#e6e6e6] bg-[#f8f9fa] px-1.5 py-0.5 font-mono text-[11px] text-[#6b6b6b]">
+                                {k.kitchen_code}
+                              </span>
+                              <span className="truncate">{shortKitchenName(k.name)}</span>
+                            </span>
+                            {hasOpen && <Badge tone="amber">Order aktif</Badge>}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </>
+              )}
+              {openOrder && (
+                <p className="rounded-[6px] border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[12px] text-[#92400e]">
+                  Dapur ini sudah memiliki order hari ini ({openOrder.delivery_number}). Barang baru akan digabung ke
+                  invoice yang sama.
+                </p>
+              )}
+            </div>
+
+            {/* 2. Daftar barang pesanan (Preline Repeater Cards) */}
+            <div className="space-y-2.5">
+              <span className="field-label">Daftar Barang Pesanan</span>
+              {lines.map((l, idx) => {
+                const chosenElsewhere = new Set(lines.filter((o) => o.key !== l.key).map((o) => o.item_id));
+                const kg = parseKgInput(l.kgStr);
+                const price = parseRpInput(l.priceStr);
+                const lineTotal = kg > 0 && price > 0 ? summarizeOrderDraft([previewLines[idx]!]).estimated_invoice : 0;
+                const idp = `ol-${l.key}`;
+                return (
+                  <div key={l.key} className="space-y-2.5 rounded-[8px] border border-[#e6e6e6] bg-[#f8f9fa] p-3">
+                    <div className="flex items-end gap-2">
+                      <div className="min-w-0 flex-1">
+                        <label htmlFor={`${idp}-item`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                          Barang {idx + 1}
+                        </label>
+                        <select
+                          id={`${idp}-item`}
+                          value={l.item_id}
+                          onChange={(e) => pickItem(l.key, e.target.value)}
+                          className="field-input"
+                        >
+                          <option value="">Pilih barang…</option>
+                          {items.map((it) => {
+                            const taken = openItemIds.has(it.id) || chosenElsewhere.has(it.id);
+                            return (
+                              <option key={it.id} value={it.id} disabled={taken}>
+                                {it.name}
+                                {openItemIds.has(it.id) ? ' (sudah di order)' : ''}
+                              </option>
+                            );
+                          })}
+                        </select>
+                      </div>
+                      {lines.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setLines((prev) => prev.filter((o) => o.key !== l.key))}
+                          aria-label={`Hapus baris barang ${idx + 1}`}
+                          className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white text-base text-[#6b6b6b] hover:border-[#f5c2c0] hover:bg-[#ffedea] hover:text-[#831c1e]"
+                        >
+                          ×
+                        </button>
+                      )}
                     </div>
-                    <div>
-                      <label htmlFor={`${idp}-price`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                        Harga / kg (Rp)
-                      </label>
-                      <input
-                        id={`${idp}-price`}
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="0"
-                        value={l.priceStr}
-                        onChange={(e) => patchLine(l.key, { priceStr: rpText(e.target.value) })}
-                        className="field-input text-right tabular-nums"
-                      />
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label htmlFor={`${idp}-kg`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                          Berat (kg)
+                        </label>
+                        <input
+                          id={`${idp}-kg`}
+                          type="text"
+                          inputMode="decimal"
+                          step="any"
+                          placeholder="0"
+                          value={l.kgStr}
+                          onChange={(e) => patchLine(l.key, { kgStr: e.target.value })}
+                          className="field-input text-right font-medium tabular-nums"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor={`${idp}-price`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                          Harga / kg (Rp)
+                        </label>
+                        <input
+                          id={`${idp}-price`}
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="0"
+                          value={l.priceStr}
+                          onChange={(e) => patchLine(l.key, { priceStr: rpText(e.target.value) })}
+                          className="field-input text-right tabular-nums"
+                        />
+                      </div>
+                      <div>
+                        <label htmlFor={`${idp}-margin`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                          Margin / kg
+                        </label>
+                        <input
+                          id={`${idp}-margin`}
+                          type="text"
+                          inputMode="numeric"
+                          placeholder="0"
+                          value={l.marginStr}
+                          onChange={(e) => patchLine(l.key, { marginStr: rpText(e.target.value) })}
+                          className="field-input text-right tabular-nums"
+                        />
+                      </div>
                     </div>
-                    <div>
-                      <label htmlFor={`${idp}-margin`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                        Margin / kg
-                      </label>
-                      <input
-                        id={`${idp}-margin`}
-                        type="text"
-                        inputMode="numeric"
-                        placeholder="0"
-                        value={l.marginStr}
-                        onChange={(e) => patchLine(l.key, { marginStr: rpText(e.target.value) })}
-                        className="field-input text-right tabular-nums"
-                      />
-                    </div>
+                    {lineTotal > 0 && (
+                      <div className="flex items-baseline justify-between border-t border-[#e6e6e6] pt-2 text-[12px] tabular-nums">
+                        <span className="text-[#6b6b6b]">
+                          {formatKg(kg)} × {formatRp(price)}
+                        </span>
+                        <span className="font-bold text-[#0a0a0a]">{formatRp(lineTotal)}</span>
+                      </div>
+                    )}
                   </div>
-                  {lineTotal > 0 && (
-                    <div className="flex items-baseline justify-between border-t border-[#e6e6e6] pt-1.5 text-[12px] tabular-nums">
-                      <span className="text-[#6b6b6b]">
-                        {formatKg(kg)} × {formatRp(price)}
-                      </span>
-                      <span className="font-bold text-[#0a0a0a]">{formatRp(lineTotal)}</span>
-                    </div>
-                  )}
+                );
+              })}
+              <button
+                type="button"
+                onClick={() => setLines((prev) => [...prev, emptyLine()])}
+                className="btn-secondary min-h-[38px] w-full text-[13px]"
+              >
+                + Tambah Barang Lain
+              </button>
+            </div>
+
+            {/* 3. Preline Divided Ledger Summary Strip */}
+            <div className="grid grid-cols-3 divide-x divide-[#e6e6e6] rounded-[8px] border border-[#e6e6e6] bg-[#f8f9fa]">
+              <div className="px-3 py-2.5">
+                <div className="text-[11px] text-[#6b6b6b]">Total Berat</div>
+                <div className="mt-0.5 truncate text-[14px] font-medium tabular-nums text-[#0a0a0a]">
+                  {formatKgNum(summary.total_kg)} <span className="text-[12px] text-[#6b6b6b]">kg</span>
                 </div>
-              );
-            })}
-            <button
-              type="button"
-              onClick={() => setLines((prev) => [...prev, emptyLine()])}
-              className="btn-secondary min-h-[38px] w-full text-[13px]"
-            >
-              + Tambah Barang Lain
+              </div>
+              <div className="px-3 py-2.5">
+                <div className="text-[11px] text-[#6b6b6b]">Tagihan Dapur</div>
+                <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#0a0a0a]">
+                  {formatRp(summary.estimated_invoice)}
+                </div>
+              </div>
+              <div className="px-3 py-2.5">
+                <div className="text-[11px] text-[#6b6b6b]">Bagi Hasil</div>
+                <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#1d5fbf]">
+                  {formatRp(summary.estimated_margin)}
+                </div>
+              </div>
+            </div>
+
+            {formError && (
+              <p role="alert" className="rounded-[6px] border border-[#f5c2c0] bg-[#ffedea] px-3 py-2 text-[13px] font-medium text-[#831c1e]">
+                {formError}
+              </p>
+            )}
+
+            <button type="button" onClick={submit} className="btn-primary min-h-[44px] w-full">
+              Simpan Order Dapur
             </button>
           </div>
-
-          {/* 3. Divided Ledger Summary Strip */}
-          <div className="grid grid-cols-3 divide-x divide-[#e6e6e6] rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa]">
-            <div className="px-2.5 py-2">
-              <div className="text-[11px] text-[#6b6b6b]">Total Berat</div>
-              <div className="mt-0.5 truncate text-[14px] font-medium tabular-nums text-[#0a0a0a]">
-                {formatKgNum(summary.total_kg)} <span className="text-[12px] text-[#6b6b6b]">kg</span>
-              </div>
-            </div>
-            <div className="px-2.5 py-2">
-              <div className="text-[11px] text-[#6b6b6b]">Tagihan Dapur</div>
-              <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#0a0a0a]">
-                {formatRp(summary.estimated_invoice)}
-              </div>
-            </div>
-            <div className="px-2.5 py-2">
-              <div className="text-[11px] text-[#6b6b6b]">Bagi Hasil</div>
-              <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#1d5fbf]">
-                {formatRp(summary.estimated_margin)}
-              </div>
-            </div>
-          </div>
-
-          {formError && (
-            <p role="alert" className="rounded-[6px] bg-[#ffedea] px-3 py-2 text-[13px] font-medium text-[#831c1e]">
-              {formError}
-            </p>
-          )}
-
-          <button type="button" onClick={submit} className="btn-primary min-h-[44px] w-full">
-            Simpan Order Dapur
-          </button>
         </Card>
       </div>
 
       {/* Daftar Order Dapur */}
       <div className="flex items-center justify-between gap-2 pt-2">
         <h2 className="text-[16px] font-medium text-[#0a0a0a]">Daftar Order Dapur</h2>
-        <span className="text-[12px] text-[#6b6b6b] tabular-nums">{todayOrders.length} order</span>
+        <span className="inline-flex h-6 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2 text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+          {todayOrders.length} order
+        </span>
       </div>
       <SegmentedControl<ListFilter>
         label="Filter order"
@@ -421,14 +451,14 @@ export function Tab1KitchenOrders() {
         </Card>
       )}
 
-      <div className="space-y-2.5">
+      <div className="space-y-3">
         {shownOrders.map(({ delivery, kitchen: k, invoice, lines: ol }) => {
           const locked = invoice?.payment_status === 'PAID';
           const title = k ? `${k.kitchen_code} · ${shortKitchenName(k.name)}` : '-';
           const marginTotal = sumIdr(ol.map((l) => l.line_margin_amount));
           return (
             <Card as="article" key={delivery.id} className="overflow-hidden">
-              <header className="flex items-start justify-between gap-2 border-b border-[#f0f0f0] px-3.5 py-2.5">
+              <header className="hs-card-header">
                 <div className="min-w-0">
                   <h3 className="truncate text-[14px] font-medium text-[#0a0a0a]">{title}</h3>
                   <p className="truncate font-mono text-[11px] text-[#6b6b6b]">{delivery.delivery_number}</p>
@@ -437,7 +467,7 @@ export function Tab1KitchenOrders() {
                   {locked ? 'Lunas' : 'Belum Bayar'}
                 </Badge>
               </header>
-              <ul className="divide-y divide-[#f0f0f0] px-3.5">
+              <ul className="divide-y divide-[#f0f0f0] px-4">
                 {ol.map((l) => {
                   const name = items.find((i) => i.id === l.item_id)?.name ?? 'Barang';
                   return (
@@ -462,7 +492,7 @@ export function Tab1KitchenOrders() {
                             type="button"
                             onClick={() => handleRemoveLine(l.id, name)}
                             aria-label={`Hapus ${name} dari order ${title}`}
-                            className="flex h-7 w-7 items-center justify-center rounded-[4px] text-base text-[#6b6b6b] hover:bg-[#ffedea] hover:text-[#831c1e]"
+                            className="flex h-7 w-7 items-center justify-center rounded-[4px] border border-transparent text-base text-[#6b6b6b] hover:border-[#f5c2c0] hover:bg-[#ffedea] hover:text-[#831c1e]"
                           >
                             ×
                           </button>
@@ -472,7 +502,7 @@ export function Tab1KitchenOrders() {
                   );
                 })}
               </ul>
-              <footer className="space-y-2 border-t border-[#f0f0f0] bg-[#f8f9fa] px-3.5 py-2.5">
+              <footer className="hs-card-footer space-y-2">
                 <div className="flex items-baseline justify-between gap-2 text-[13px]">
                   <span className="text-[#6b6b6b]">Tagihan Dapur</span>
                   <span className="text-[15px] font-bold tabular-nums text-[#0a0a0a]">
@@ -495,7 +525,7 @@ export function Tab1KitchenOrders() {
                     <button
                       type="button"
                       onClick={() => handleDeleteOrder(delivery.id, title)}
-                      className="btn-secondary min-h-[36px] text-[12px] !text-[#c4242a] hover:!bg-[#ffedea]"
+                      className="btn-secondary min-h-[36px] border-[#f5c2c0] text-[12px] !text-[#c4242a] hover:!bg-[#ffedea]"
                     >
                       Hapus Order
                     </button>

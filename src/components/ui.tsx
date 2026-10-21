@@ -4,17 +4,25 @@ import React, { useEffect, useRef } from 'react';
 import type { Tone } from '../lib/ui-format';
 
 const TONE_BADGE: Record<Tone, string> = {
-  green: 'bg-[#dcfae5] text-[#04250e]',
-  amber: 'bg-[#fffbeb] text-[#92400e] ring-1 ring-inset ring-[#fde68a]',
-  red: 'bg-[#ffedea] text-[#831c1e]',
-  slate: 'bg-[#eeeeee] text-[#3d3d3d]',
+  green: 'border border-[#b7ebd0] bg-[#dcfae5] text-[#04250e]',
+  amber: 'border border-[#fde68a] bg-[#fffbeb] text-[#92400e]',
+  red: 'border border-[#f5c2c0] bg-[#ffedea] text-[#831c1e]',
+  slate: 'border border-[#e6e6e6] bg-[#eeeeee] text-[#3d3d3d]',
+};
+
+const TONE_DOT: Record<Tone, string> = {
+  green: 'bg-[#2e7d32]',
+  amber: 'bg-[#92400e]',
+  red: 'bg-[#c4242a]',
+  slate: 'bg-[#6b6b6b]',
 };
 
 export function Badge({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return (
     <span
-      className={`inline-flex h-5 shrink-0 items-center whitespace-nowrap rounded-[4px] px-2 text-[11px] font-medium ${TONE_BADGE[tone]}`}
+      className={`inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[6px] px-2 text-[11px] font-medium ${TONE_BADGE[tone]}`}
     >
+      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${TONE_DOT[tone]}`} />
       {children}
     </span>
   );
@@ -58,8 +66,10 @@ export function SegmentedControl<T extends string>({
             type="button"
             aria-pressed={active}
             onClick={() => onChange(opt.value)}
-            className={`min-h-[34px] truncate rounded-[6px] px-2 text-[13px] font-medium transition-colors ${
-              active ? 'bg-white text-[#0a0a0a]' : 'text-[#6b6b6b] hover:text-[#0a0a0a]'
+            className={`min-h-[34px] truncate rounded-[6px] border px-2 text-[13px] font-medium transition-colors ${
+              active
+                ? 'border-[#e6e6e6] bg-white text-[#0a0a0a]'
+                : 'border-transparent text-[#6b6b6b] hover:text-[#0a0a0a]'
             }`}
           >
             {opt.label}
@@ -87,18 +97,24 @@ export function Toast({ toast, onClose }: { toast: ToastState; onClose: () => vo
   return (
     <div
       role={isError ? 'alert' : 'status'}
-      className={`flex items-center justify-between gap-3 rounded-[6px] border px-3 py-2 text-[13px] font-medium ${
+      className={`flex items-center justify-between gap-2.5 rounded-[8px] border px-3.5 py-2.5 text-[13px] font-medium ${
         isError
           ? 'border-[#f5c2c0] bg-[#ffedea] text-[#831c1e]'
           : 'border-[#b7ebd0] bg-[#dcfae5] text-[#04250e]'
       }`}
     >
-      <span className="min-w-0">{toast.text}</span>
+      <div className="flex min-w-0 items-center gap-2">
+        <span
+          aria-hidden="true"
+          className={`h-2 w-2 shrink-0 rounded-full ${isError ? 'bg-[#c4242a]' : 'bg-[#2e7d32]'}`}
+        />
+        <span className="min-w-0">{toast.text}</span>
+      </div>
       <button
         type="button"
         aria-label="Tutup"
         onClick={onClose}
-        className="shrink-0 rounded px-1.5 text-base leading-none opacity-70 hover:opacity-100"
+        className="shrink-0 rounded-[4px] px-1.5 text-base leading-none opacity-70 hover:opacity-100"
       >
         ×
       </button>
@@ -136,7 +152,7 @@ export function BottomSheet({
 
   if (!open) return null;
   return (
-    <div className="no-print fixed inset-0 z-50 flex items-end justify-center">
+    <div className="no-print fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
       <button
         type="button"
         aria-label="Tutup"
@@ -147,21 +163,21 @@ export function BottomSheet({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative max-h-[90dvh] w-full max-w-md overflow-y-auto rounded-t-[12px] border-t border-[#e6e6e6] bg-white p-4 pb-6"
+        className="relative max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[12px] border border-[#e6e6e6] bg-white sm:rounded-[10px]"
       >
-        <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-[#d4d4d4]" />
-        <div className="mb-3 flex items-center justify-between border-b border-[#f0f0f0] pb-2.5">
-          <h2 className="text-[16px] font-medium text-[#0a0a0a]">{title}</h2>
+        <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-[#d4d4d4] sm:hidden" />
+        <div className="flex items-center justify-between border-b border-[#e6e6e6] bg-[#f8f9fa] px-4 py-3">
+          <h2 className="text-[15px] font-medium text-[#0a0a0a]">{title}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Tutup"
-            className="flex h-8 w-8 items-center justify-center rounded-[6px] text-lg text-[#6b6b6b] hover:bg-[#f2f4f7]"
+            className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white text-base text-[#6b6b6b] hover:bg-[#f2f4f7] hover:text-[#0a0a0a]"
           >
             ×
           </button>
         </div>
-        {children}
+        <div className="p-4 pb-6">{children}</div>
       </div>
     </div>
   );

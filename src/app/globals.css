@@ -2,7 +2,8 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
+:root,
+[data-theme='theme-mbg-ledger'] {
   --ground: #f2f4f7;
   --surface: #ffffff;
   --raised: #eeeeee;
@@ -28,6 +29,22 @@
   --pill-neutral-ink: #3d3d3d;
   --radius-card: 8px;
   --radius-control: 6px;
+
+  /* Preline semantic surface & layer tokens */
+  --background: #ffffff;
+  --background-1: #f2f4f7;
+  --background-2: #f8f9fa;
+  --layer: #ffffff;
+  --layer-line: #e6e6e6;
+  --layer-hover: #f8f9fa;
+  --primary: #141414;
+  --primary-hover: #262626;
+  --primary-foreground: #ffffff;
+  --card-line: #e6e6e6;
+  --card-divider: #f0f0f0;
+  --card-header: #f8f9fa;
+  --navbar: #ffffff;
+  --navbar-line: #e6e6e6;
 }
 
 @layer base {
@@ -76,6 +93,14 @@
     @apply rounded-[8px] border border-[#e6e6e6] bg-white;
   }
 
+  .hs-card-header {
+    @apply flex items-center justify-between gap-2 border-b border-[#e6e6e6] px-4 py-3;
+  }
+
+  .hs-card-footer {
+    @apply border-t border-[#e6e6e6] bg-[#f8f9fa] px-4 py-3;
+  }
+
   .field-label {
     @apply mb-1.5 block text-[13px] font-medium text-[#0a0a0a];
   }
@@ -89,11 +114,11 @@
   }
 
   .btn-secondary {
-    @apply inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-[6px] border border-[#d4d4d4] bg-white px-3 text-[14px] font-medium text-[#0a0a0a] transition-colors hover:bg-[#f8f8f8] disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-[6px] border border-[#d4d4d4] bg-white px-3 text-[14px] font-medium text-[#0a0a0a] transition-colors hover:bg-[#f8f9fa] disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-chip {
-    @apply inline-flex min-h-[34px] items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white px-2.5 text-[12px] font-medium text-[#3d3d3d] transition-colors hover:bg-[#f8f8f8];
+    @apply inline-flex min-h-[34px] items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white px-2.5 text-[12px] font-medium text-[#3d3d3d] transition-colors hover:bg-[#f8f9fa];
   }
 }
 

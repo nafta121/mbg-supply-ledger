@@ -80,36 +80,36 @@ export function Tab4ProfitSharing() {
   };
 
   return (
-    <section aria-label="Bagi Hasil" className="space-y-3">
-      <div className="flex items-baseline justify-between gap-2">
+    <section aria-label="Bagi Hasil" className="space-y-3.5">
+      <div className="flex items-start justify-between gap-2">
         <div>
           <h1 className="text-[20px] font-bold tracking-tight text-[#0a0a0a]">Bagi Hasil</h1>
           <p className="text-[12px] text-[#6b6b6b]">Pembagian margin Tim ({teamPct}%) dan Koperasi ({coopPct}%)</p>
         </div>
-        <span className="shrink-0 font-mono text-[12px] text-[#6b6b6b] tabular-nums">
+        <span className="inline-flex h-6 shrink-0 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2.5 font-mono text-[11px] font-medium text-[#3d3d3d] tabular-nums">
           {teamPct}:{coopPct}
         </span>
       </div>
 
       <Toast toast={toast} onClose={() => setToast(null)} />
 
-      {/* Main Ledger Card: Siap Dicairkan + Proportional Split Track (Signature Element) */}
+      {/* Main Preline Ledger Card: Siap Dicairkan + Proportional Split Track */}
       <Card className="overflow-hidden">
-        <div className="space-y-3 p-3.5">
-          <div className="flex items-baseline justify-between gap-2">
-            <span className="text-[13px] font-medium text-[#0a0a0a]">Siap Dicairkan</span>
-            <span className="text-[11px] text-[#6b6b6b]">Dari invoice dapur yang sudah lunas</span>
-          </div>
+        <div className="hs-card-header bg-[#f8f9fa]">
+          <span className="text-[14px] font-medium text-[#0a0a0a]">Siap Dicairkan</span>
+          <span className="text-[11px] text-[#6b6b6b]">Dari invoice dapur yang sudah lunas</span>
+        </div>
 
+        <div className="space-y-3.5 p-4">
           <div className="text-[28px] font-bold leading-none tracking-tight tabular-nums text-[#0a0a0a]">
             {formatRp(availTotal)}
           </div>
 
-          {/* Signature 100% stacked split bar: chart-3 (#1d5fbf) for Koperasi, ink (#141414) for Tim */}
+          {/* Preline Multi-Segment Progress Bar + Legend Indicators */}
           <div className="space-y-1.5">
             <div
               aria-hidden="true"
-              className="flex h-2 w-full overflow-hidden rounded-[2px] bg-[#eeeeee]"
+              className="flex h-2.5 w-full overflow-hidden rounded-[4px] bg-[#eeeeee]"
             >
               <div
                 style={{ width: `${coopPct}%` }}
@@ -169,9 +169,9 @@ export function Tab4ProfitSharing() {
           )}
         </div>
 
-        {/* Divided secondary strip: Menunggu Dapur Bayar & Total Sudah Dicairkan */}
+        {/* Preline Divided Secondary Strip: Menunggu Dapur Bayar & Total Sudah Dicairkan */}
         <div className="grid grid-cols-2 divide-x divide-[#e6e6e6] border-t border-[#e6e6e6] bg-[#f8f9fa]">
-          <div className="p-3">
+          <div className="p-3.5">
             <div className="text-[11px] text-[#6b6b6b]">Menunggu Dapur Bayar</div>
             <div className="mt-0.5 truncate text-[16px] font-bold tabular-nums text-[#0a0a0a]">
               {formatRp(lockedTotal)}
@@ -180,7 +180,7 @@ export function Tab4ProfitSharing() {
               Koperasi {formatRp(lockedCoop)} · Tim {formatRp(lockedTeam)}
             </div>
           </div>
-          <div className="p-3">
+          <div className="p-3.5">
             <div className="text-[11px] text-[#6b6b6b]">Sudah Dicairkan</div>
             <div className="mt-0.5 truncate text-[16px] font-bold tabular-nums text-[#0a0a0a]">
               {formatRp(paidOutTotal)}
@@ -192,18 +192,23 @@ export function Tab4ProfitSharing() {
         </div>
       </Card>
 
-      {/* Split settings (collapsed) */}
-      <details className="card group">
-        <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between px-3.5 text-[14px] font-medium text-[#0a0a0a]">
+      {/* Preline Accordion: Atur Porsi Bagi Hasil */}
+      <details className="card group overflow-hidden">
+        <summary className="flex min-h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[14px] font-medium text-[#0a0a0a] transition-colors hover:bg-[#f8f9fa]">
           <span>Atur Porsi Bagi Hasil</span>
           <span className="flex items-center gap-2 text-[13px] tabular-nums text-[#6b6b6b]">
             Tim {teamPct}% : Koperasi {coopPct}%
-            <span className="text-xs transition-transform group-open:rotate-180" aria-hidden="true">
-              ▾
-            </span>
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              className="h-4 w-4 text-[#6b6b6b] transition-transform group-open:rotate-180"
+              aria-hidden="true"
+            >
+              <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </span>
         </summary>
-        <div className="space-y-2.5 border-t border-[#f0f0f0] p-3.5">
+        <div className="space-y-3 border-t border-[#e6e6e6] bg-[#f8f9fa] p-4">
           {isAdmin ? (
             <>
               <div className="grid grid-cols-3 gap-2">
@@ -240,7 +245,7 @@ export function Tab4ProfitSharing() {
                 </div>
                 <div className="flex-1">
                   <span className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">Koperasi (%)</span>
-                  <div className="field-input flex items-center justify-end bg-[#f8f9fa] tabular-nums text-[#6b6b6b]">
+                  <div className="field-input flex items-center justify-end bg-[#eeeeee] tabular-nums text-[#6b6b6b]">
                     {Math.max(0, 100 - (Number(teamPctInput) || 0)).toFixed(2)}
                   </div>
                 </div>
@@ -262,19 +267,24 @@ export function Tab4ProfitSharing() {
       </details>
 
       {payoutBatches.length > 0 && (
-        <details className="card group">
-          <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between px-3.5 text-[14px] font-medium text-[#0a0a0a]">
+        <details className="card group overflow-hidden">
+          <summary className="flex min-h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[14px] font-medium text-[#0a0a0a] transition-colors hover:bg-[#f8f9fa]">
             <span>Riwayat Pencairan ({payoutBatches.length})</span>
             <span className="flex items-center gap-2 text-[13px] tabular-nums text-[#6b6b6b]">
               {formatRp(paidOutTotal)}
-              <span className="text-xs transition-transform group-open:rotate-180" aria-hidden="true">
-                ▾
-              </span>
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                className="h-4 w-4 text-[#6b6b6b] transition-transform group-open:rotate-180"
+                aria-hidden="true"
+              >
+                <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
             </span>
           </summary>
-          <ul className="divide-y divide-[#f0f0f0] border-t border-[#f0f0f0]">
+          <ul className="divide-y divide-[#f0f0f0] border-t border-[#e6e6e6]">
             {payoutBatches.map((pb) => (
-              <li key={pb.id} className="flex items-center justify-between gap-2 px-3.5 py-2.5 text-[13px]">
+              <li key={pb.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-[13px]">
                 <span className="min-w-0 truncate text-[#6b6b6b]">
                   <span className="font-medium text-[#0a0a0a]">
                     {pb.beneficiary_type === 'TEAM' ? 'Tim' : 'Koperasi'}
@@ -292,9 +302,11 @@ export function Tab4ProfitSharing() {
 
       {/* Per-kitchen breakdown */}
       <Card as="section" className="overflow-hidden">
-        <div className="flex items-center justify-between border-b border-[#f0f0f0] px-3.5 py-2.5">
+        <div className="hs-card-header bg-[#f8f9fa]">
           <h2 className="text-[14px] font-medium text-[#0a0a0a]">Rincian per Invoice Dapur</h2>
-          <span className="text-[12px] text-[#6b6b6b] tabular-nums">{invoices.length} invoice</span>
+          <span className="inline-flex h-6 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2 text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+            {invoices.length} invoice
+          </span>
         </div>
         {invoices.length === 0 ? (
           <div className="p-6 text-center text-[13px] text-[#6b6b6b]">Belum ada rincian bagi hasil.</div>
@@ -308,7 +320,7 @@ export function Tab4ProfitSharing() {
               const split = teamStatus !== coopStatus;
 
               return (
-                <li key={inv.id} className="space-y-2 px-3.5 py-3">
+                <li key={inv.id} className="space-y-2.5 px-4 py-3.5">
                   <div className="flex items-center justify-between gap-2">
                     <div className="min-w-0">
                       <div className="truncate text-[14px] font-medium text-[#0a0a0a]">
@@ -320,16 +332,16 @@ export function Tab4ProfitSharing() {
                     </div>
                     {!split && <Badge tone={payoutTone(coopStatus)}>{PAYOUT_LABEL[coopStatus]}</Badge>}
                   </div>
-                  <div className="grid grid-cols-3 gap-2 rounded-[6px] bg-[#f8f9fa] px-2.5 py-2 text-[12px]">
-                    <div className="min-w-0">
+                  <div className="grid grid-cols-3 divide-x divide-[#e6e6e6] rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] py-2 text-[12px]">
+                    <div className="min-w-0 px-2.5">
                       <div className="truncate text-[#6b6b6b]">Total Margin</div>
-                      <div className="truncate font-bold tabular-nums text-[#0a0a0a]">
+                      <div className="mt-0.5 truncate font-bold tabular-nums text-[#0a0a0a]">
                         {formatRp(profit.total_margin)}
                       </div>
                     </div>
-                    <div className="min-w-0">
+                    <div className="min-w-0 px-2.5">
                       <div className="truncate text-[#6b6b6b]">Hak Tim</div>
-                      <div className="truncate font-bold tabular-nums text-[#0a0a0a]">
+                      <div className="mt-0.5 truncate font-bold tabular-nums text-[#0a0a0a]">
                         {formatRp(profit.team_amount)}
                       </div>
                       {split && (
@@ -338,9 +350,9 @@ export function Tab4ProfitSharing() {
                         </div>
                       )}
                     </div>
-                    <div className="min-w-0 text-right">
+                    <div className="min-w-0 px-2.5 text-right">
                       <div className="truncate text-[#6b6b6b]">Hak Koperasi</div>
-                      <div className="truncate font-bold tabular-nums text-[#1d5fbf]">
+                      <div className="mt-0.5 truncate font-bold tabular-nums text-[#1d5fbf]">
                         {formatRp(profit.coop_amount)}
                       </div>
                       {split && (

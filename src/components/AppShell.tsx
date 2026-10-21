@@ -107,12 +107,12 @@ export function AppShell() {
       </a>
 
       <div
-        className={`mx-auto flex min-h-[100dvh] max-w-md flex-col border-x border-[#e6e6e6] bg-[#f2f4f7] ${
+        className={`mx-auto flex min-h-[100dvh] max-w-lg flex-col border-x border-[#e6e6e6] bg-[#f2f4f7] ${
           showNav ? 'pb-20' : 'pb-6'
         }`}
       >
-        {/* Top bar (52px, flat 1px border) */}
-        <header className="no-print sticky top-0 z-30 flex h-[52px] items-center justify-between gap-2 border-b border-[#e6e6e6] bg-white px-3.5">
+        {/* Preline Application Navbar (56px, flat 1px border, structured left/right groups with divider) */}
+        <header className="no-print sticky top-0 z-30 flex h-[56px] items-center justify-between gap-2 border-b border-[#e6e6e6] bg-white px-4">
           <div className="flex min-w-0 items-center gap-2.5">
             <svg
               viewBox="0 0 24 24"
@@ -141,7 +141,7 @@ export function AppShell() {
             </div>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-2">
             <div
               role="group"
               aria-label="Pilih peran"
@@ -155,10 +155,10 @@ export function AppShell() {
                     type="button"
                     aria-pressed={active}
                     onClick={() => handleRolePillClick(opt.role)}
-                    className={`min-h-[30px] rounded-[4px] px-2.5 text-[12px] font-medium transition-colors ${
+                    className={`min-h-[30px] rounded-[4px] border px-2.5 text-[12px] font-medium transition-colors ${
                       active
-                        ? 'bg-white text-[#0a0a0a]'
-                        : 'text-[#6b6b6b] hover:text-[#0a0a0a]'
+                        ? 'border-[#e6e6e6] bg-white text-[#0a0a0a]'
+                        : 'border-transparent text-[#6b6b6b] hover:text-[#0a0a0a]'
                     }`}
                   >
                     {opt.label}
@@ -168,15 +168,18 @@ export function AppShell() {
             </div>
 
             {activeRole === 'OWNER_ADMIN' && (
-              <button
-                type="button"
-                onClick={() => setMasterOpen(true)}
-                aria-label="Pengaturan & Data Master"
-                title="Pengaturan & Data Master"
-                className="flex h-[34px] w-[34px] items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white text-[#3d3d3d] transition-colors hover:bg-[#f8f8f8] hover:text-[#0a0a0a]"
-              >
-                <SettingsGearIcon className="h-4 w-4" />
-              </button>
+              <>
+                <span aria-hidden="true" className="h-5 w-px bg-[#e6e6e6]" />
+                <button
+                  type="button"
+                  onClick={() => setMasterOpen(true)}
+                  aria-label="Pengaturan & Data Master"
+                  title="Pengaturan & Data Master"
+                  className="flex h-[34px] w-[34px] items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white text-[#3d3d3d] transition-colors hover:bg-[#f8f9fa] hover:text-[#0a0a0a]"
+                >
+                  <SettingsGearIcon className="h-4 w-4" />
+                </button>
+              </>
             )}
           </div>
         </header>
@@ -247,11 +250,11 @@ export function AppShell() {
           </form>
         </BottomSheet>
 
-        <main id="main-content" className="flex-1 space-y-3 px-3.5 py-3.5">
+        <main id="main-content" className="flex-1 space-y-3.5 px-4 py-4">
           {syncError && (
             <div
               role="alert"
-              className="no-print flex items-start justify-between gap-2 rounded-[8px] border border-[#f5c2c0] bg-[#ffedea] px-3 py-2.5 text-[13px] font-medium text-[#831c1e]"
+              className="no-print flex items-start justify-between gap-2 rounded-[8px] border border-[#f5c2c0] bg-[#ffedea] px-3.5 py-2.5 text-[13px] font-medium text-[#831c1e]"
             >
               <span>{syncError}</span>
               <button
@@ -287,7 +290,7 @@ export function AppShell() {
 
         {showNav && (
           <nav aria-label="Navigasi utama" className="no-print fixed bottom-0 left-0 right-0 z-30">
-            <div className="mx-auto max-w-md border-t border-[#e6e6e6] bg-white px-2 pb-[env(safe-area-inset-bottom)]">
+            <div className="mx-auto max-w-lg border-t border-[#e6e6e6] bg-white px-2 pb-[env(safe-area-inset-bottom)]">
               <div
                 className="grid"
                 style={{ gridTemplateColumns: `repeat(${visibleTabs.length}, minmax(0, 1fr))` }}
@@ -301,13 +304,13 @@ export function AppShell() {
                       aria-current={isActive ? 'page' : undefined}
                       onClick={() => setActiveTab(tab.id)}
                       className={`relative flex min-h-[54px] flex-col items-center justify-center gap-1 px-1 transition-colors ${
-                        isActive ? 'text-[#0a0a0a]' : 'text-[#6b6b6b] hover:text-[#0a0a0a]'
+                        isActive ? 'text-[#0a0a0a]' : 'text-[#6b6b6b] hover:bg-[#f8f9fa] hover:text-[#0a0a0a]'
                       }`}
                     >
                       {isActive && (
-                        <span className="absolute inset-x-5 top-0 h-[2px] bg-[#0a0a0a]" />
+                        <span className="absolute inset-x-6 top-0 h-[2px] bg-[#1d5fbf]" />
                       )}
-                      {tab.renderIcon('h-4 w-4')}
+                      {tab.renderIcon(isActive ? 'h-4 w-4 text-[#1d5fbf]' : 'h-4 w-4')}
                       <span className={`max-w-full truncate text-[12px] ${isActive ? 'font-medium' : 'font-normal'}`}>
                         {tab.label}
                       </span>
