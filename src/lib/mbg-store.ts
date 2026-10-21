@@ -262,8 +262,8 @@ export function createEmptyCloudState(): MbgState {
     created_at: nowIso,
   };
   return {
-    activeRole: 'FIELD_TEAM',
-    activeTab: 'bast',
+    activeRole: 'OWNER_ADMIN',
+    activeTab: 'orders',
     kitchens: [],
     items: [],
     deliveries: [],
@@ -724,7 +724,18 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    */
   const markInvoicePaid = async (id: string): Promise<ActionResult> => {
     const nowIso = runtimeCtx().nowIso;
-    const precheck = markInvoicePaidEngine(stateRef.current, id, nowIso);
+    let baseState = stateRef.current;
+    const inv = baseState.invoices.find((i) => i.id === id);
+    if (inv) {
+      const unweighed = baseState.deliveryItems
+        .filter((di) => di.delivery_id === inv.delivery_id && di.weighed_at === null)
+        .map((di) => ({ delivery_item_id: di.id, qty_accepted_kg: di.qty_dispatched_kg }));
+      if (unweighed.length > 0) {
+        const autoWeighed = applyBastWeights(baseState, unweighed, nowIso);
+        if (autoWeighed.ok) baseState = autoWeighed.data;
+      }
+    }
+    const precheck = markInvoicePaidEngine(baseState, id, nowIso);
     if (!precheck.ok) return { ok: false, error: precheck.error };
 
     if (!isSupabaseConfigured) {

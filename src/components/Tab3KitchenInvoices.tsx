@@ -101,7 +101,6 @@ export function Tab3KitchenInvoices() {
                   </div>
                   <div className="flex shrink-0 flex-col items-end gap-1">
                     <Badge tone={invoiceTone(inv.payment_status)}>{INVOICE_LABEL[inv.payment_status]}</Badge>
-                    {!summary.fully_weighed && <Badge tone="amber">Menunggu Timbang</Badge>}
                   </div>
                 </div>
 
@@ -114,7 +113,6 @@ export function Tab3KitchenInvoices() {
                       </div>
                       <div className="tabular-nums text-slate-600">
                         {formatKgNum(l.qty_accepted_kg)} kg × {formatRp(l.unit_price)} = {formatRp(l.line_total)}
-                        {!l.weighed && <span className="text-amber-700"> • estimasi, belum ditimbang</span>}
                       </div>
                       {l.weighed && l.qty_shrinkage_kg > 0 && (
                         <div className="text-rose-700">
@@ -143,7 +141,6 @@ export function Tab3KitchenInvoices() {
                     {!isPaid && (
                       <button
                         type="button"
-                        disabled={!summary.fully_weighed}
                         onClick={async () => {
                           const res = await markInvoicePaid(inv.id);
                           setToast(
@@ -154,10 +151,10 @@ export function Tab3KitchenInvoices() {
                         }}
                         className="btn-primary w-full"
                       >
-                        {summary.fully_weighed ? '✓ Tandai Lunas' : 'Menunggu Timbang Kurir'}
+                        ✓ Tandai Lunas
                       </button>
                     )}
-                    <div className="grid grid-cols-3 gap-2">
+                    <div className="grid grid-cols-2 gap-2">
                       <button
                         type="button"
                         onClick={() => openPrint({ type: 'INVOICE', invoiceId: inv.id })}
@@ -179,13 +176,6 @@ export function Tab3KitchenInvoices() {
                         className="btn-secondary min-h-[40px] px-1 text-xs leading-tight"
                       >
                         💬 Salin &amp; WA Tagihan
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => openPrint({ type: 'BAST', deliveryId: inv.delivery_id })}
-                        className="btn-secondary min-h-[40px] px-1 text-xs leading-tight"
-                      >
-                        📄 Surat Jalan BAST
                       </button>
                     </div>
                   </>

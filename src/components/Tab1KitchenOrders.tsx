@@ -2,15 +2,13 @@
 
 import React, { useRef, useState } from 'react';
 import { type OrderLineInput, useMbgStore } from '../lib/mbg-store';
-import { findOpenOrder, linesForDelivery, orderProgress, summarizeOrderDraft } from '../lib/order-engine';
+import { findOpenOrder, linesForDelivery, summarizeOrderDraft } from '../lib/order-engine';
 import {
   formatKg,
   formatKgNum,
   formatRp,
   formatThousands,
   getJakartaTodayYmd,
-  ORDER_PROGRESS_LABEL,
-  orderProgressTone,
   parseKgInput,
   parseRpInput,
   shortKitchenName,
@@ -142,8 +140,8 @@ export function Tab1KitchenOrders() {
     setToast({
       kind: 'ok',
       text: res.merged
-        ? `${title}: ${res.count ?? filled.length} barang ditambahkan ke order hari ini & daftar kurir.`
-        : `${title}: order tersimpan (${res.count ?? filled.length} barang) & masuk daftar kurir.`,
+        ? `${title}: ${res.count ?? filled.length} barang ditambahkan ke order hari ini.`
+        : `${title}: order tersimpan (${res.count ?? filled.length} barang).`,
     });
     resetForm();
   };
@@ -381,7 +379,7 @@ export function Tab1KitchenOrders() {
           )}
 
           <button type="button" onClick={submit} className="btn-primary min-h-[48px] w-full">
-            Simpan Order &amp; Kirim ke Daftar Kurir
+            Simpan Order Dapur
           </button>
         </Card>
       </div>
@@ -409,7 +407,6 @@ export function Tab1KitchenOrders() {
 
       <div className="space-y-2">
         {shownOrders.map(({ delivery, kitchen: k, invoice, lines: ol }) => {
-          const progress = orderProgress(ol);
           const locked = invoice?.payment_status === 'PAID';
           const title = k ? `${k.kitchen_code} • ${shortKitchenName(k.name)}` : '-';
           const marginTotal = sumIdr(ol.map((l) => l.line_margin_amount));
@@ -420,14 +417,13 @@ export function Tab1KitchenOrders() {
                   <h3 className="truncate text-sm font-extrabold text-slate-900">{title}</h3>
                   <p className="truncate font-mono text-[11px] text-slate-500">{delivery.delivery_number}</p>
                 </div>
-                <Badge tone={locked ? 'green' : orderProgressTone(progress)}>
-                  {locked ? 'Lunas' : ORDER_PROGRESS_LABEL[progress]}
+                <Badge tone={locked ? 'green' : 'amber'}>
+                  {locked ? 'Lunas' : 'Belum Bayar'}
                 </Badge>
               </header>
               <ul className="divide-y divide-slate-100 px-3">
                 {ol.map((l) => {
                   const name = items.find((i) => i.id === l.item_id)?.name ?? 'Barang';
-                  const weighed = l.weighed_at !== null;
                   return (
                     <li key={l.id} className="flex items-center justify-between gap-2 py-2">
                       <div className="min-w-0">
@@ -439,13 +435,6 @@ export function Tab1KitchenOrders() {
                         </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1.5">
-                        {weighed ? (
-                          <Badge tone={l.qty_shrinkage_kg > 0 ? 'red' : 'green'}>
-                            ✓ {formatKgNum(l.qty_accepted_kg)}/{formatKgNum(l.qty_dispatched_kg)} kg
-                          </Badge>
-                        ) : (
-                          <Badge tone="slate">Belum ditimbang</Badge>
-                        )}
                         {!locked && (
                           <button
                             type="button"
@@ -463,9 +452,7 @@ export function Tab1KitchenOrders() {
               </ul>
               <footer className="space-y-2 border-t border-slate-200 px-3 py-2.5">
                 <div className="flex items-baseline justify-between gap-2 text-xs">
-                  <span className="text-slate-600">
-                    {progress === 'BAST_DONE' ? 'Tagihan Dapur' : 'Estimasi Tagihan Dapur'}
-                  </span>
+                  <span className="text-slate-600">Tagihan Dapur</span>
                   <span className="text-base font-extrabold tabular-nums text-slate-900">
                     {formatRp(invoice?.total_invoice_amount ?? 0)}
                   </span>

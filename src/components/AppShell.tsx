@@ -3,17 +3,15 @@
 import React, { useState } from 'react';
 import { type ActiveTab, useMbgStore } from '../lib/mbg-store';
 import type { UserRole } from '../types/mbg';
-import { InvoiceReceiptIcon, LedgerVaultIcon, PackageBatchIcon, ScaleBastIcon } from './Icons';
+import { InvoiceReceiptIcon, LedgerVaultIcon, PackageBatchIcon } from './Icons';
 import { MasterDataSheet } from './MasterDataSheet';
 import { Tab1KitchenOrders } from './Tab1KitchenOrders';
-import { Tab2CourierWeighing } from './Tab2CourierWeighing';
 import { Tab3KitchenInvoices } from './Tab3KitchenInvoices';
 import { Tab4ProfitSharing } from './Tab4ProfitSharing';
 import { BottomSheet } from './ui';
 
 const ROLE_PILLS: Array<{ role: UserRole; label: string }> = [
   { role: 'OWNER_ADMIN', label: 'Admin' },
-  { role: 'FIELD_TEAM', label: 'Lapangan' },
   { role: 'COOPERATIVE_VIEWER', label: 'Koperasi' },
 ];
 
@@ -29,12 +27,6 @@ const NAV_TABS: Array<{
     renderIcon: (cls) => <PackageBatchIcon className={cls} />,
     // Prices & margins are entered here — Admin/Keuangan only (Invariant 5).
     roles: ['OWNER_ADMIN', 'FINANCE'],
-  },
-  {
-    id: 'bast',
-    label: 'Timbang',
-    renderIcon: (cls) => <ScaleBastIcon className={cls} />,
-    roles: ['OWNER_ADMIN', 'FINANCE', 'FIELD_TEAM', 'COOPERATIVE_VIEWER'],
   },
   {
     id: 'invoices',
@@ -72,11 +64,6 @@ export function AppShell() {
 
   const handleRolePillClick = (targetRole: UserRole) => {
     if (targetRole === activeRole) return;
-    // Role Lapangan (FIELD_TEAM) is always accessible without a PIN.
-    if (targetRole === 'FIELD_TEAM') {
-      setActiveRole('FIELD_TEAM');
-      return;
-    }
     const storageKey = `mbg_pin_verified_${targetRole}`;
     if (typeof window !== 'undefined' && window.sessionStorage.getItem(storageKey) === '1') {
       setActiveRole(targetRole);
@@ -110,8 +97,7 @@ export function AppShell() {
   // Never render a tab the active role is not allowed to see (Invariant 5).
   const currentTab: ActiveTab = visibleTabs.some((t) => t.id === activeTab)
     ? activeTab
-    : visibleTabs[0]?.id ?? 'bast';
-  // Single-courier focus mode: no bottom nav when there is only one screen.
+    : visibleTabs[0]?.id ?? 'orders';
   const showNav = visibleTabs.length > 1;
 
   return (
@@ -208,7 +194,7 @@ export function AppShell() {
               <span className="font-bold text-slate-900">
                 {pinTargetRole === 'OWNER_ADMIN' ? 'Admin' : 'Koperasi'}
               </span>
-              . (Mode <span className="font-semibold">Lapangan</span> tetap dapat diakses tanpa PIN).
+              .
             </p>
             <div>
               <label htmlFor="role-pin-input" className="field-label">
@@ -279,7 +265,6 @@ export function AppShell() {
           ) : (
             <>
               {currentTab === 'orders' && <Tab1KitchenOrders />}
-              {currentTab === 'bast' && <Tab2CourierWeighing key={activeRole} />}
               {currentTab === 'invoices' && <Tab3KitchenInvoices />}
               {currentTab === 'ledger' && <Tab4ProfitSharing />}
             </>
