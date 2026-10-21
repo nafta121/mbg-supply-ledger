@@ -29,7 +29,6 @@ import {
 } from './order-engine';
 import { getSupabaseClient, isSupabaseConfigured } from './supabase';
 import {
-  adminResetDataRpc,
   deleteKitchenFromSupabase,
   deleteKitchenOrderFromSupabase,
   deleteOrderItemFromSupabase,
@@ -113,10 +112,6 @@ export interface MbgContextValue extends MbgState {
   savePaymentAccount: (input: PaymentAccountInfo) => Promise<MasterSaveResult>;
   deleteKitchen: (kitchen_id: string) => Promise<MasterSaveResult>;
   deleteItem: (item_id: string) => Promise<MasterSaveResult>;
-  /** Restores simulation seed data in Supabase via `rpc_admin_reset_data('RESET_SEED', p_admin_pin)`. */
-  resetSimulationData: (adminPin?: string) => Promise<ActionResult>;
-  /** Truncates/clears transactions in Supabase via `rpc_admin_reset_data('CLEAR_TRANSACTIONS', p_admin_pin)`. */
-  clearAllTransactions: (adminPin?: string) => Promise<ActionResult>;
   /** Price-free courier projection (Invariant 5) used by the Timbang screen. */
   getSafeCourierItems: () => SafeCourierBastItem[];
 }
@@ -267,8 +262,8 @@ export function createEmptyCloudState(): MbgState {
     created_at: nowIso,
   };
   return {
-    activeRole: 'OWNER_ADMIN',
-    activeTab: 'orders',
+    activeRole: 'FIELD_TEAM',
+    activeTab: 'bast',
     kitchens: [],
     items: [],
     deliveries: [],
@@ -581,7 +576,11 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
-      const delRes = await deleteOrderItemFromSupabase(supabase, id, targetItem.delivery_id);
+      const isLastItem =
+        stateRef.current.deliveryItems.filter((d) => d.delivery_id === targetItem.delivery_id).length <= 1;
+      const delRes = isLastItem
+        ? await deleteKitchenOrderFromSupabase(supabase, targetItem.delivery_id)
+        : await deleteOrderItemFromSupabase(supabase, id);
       if (!delRes.ok) {
         handleCloudError(`Gagal menghapus barang order: ${delRes.error}`);
         return { ok: false, error: delRes.error };
@@ -1002,78 +1001,6 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  /**
-   * RPC #6: Resets simulation seed data via `rpc_admin_reset_data('RESET_SEED', p_admin_pin)`.
-   */
-  const resetSimulationData = async (adminPin?: string): Promise<ActionResult> => {
-    const pin = adminPin ?? stateRef.current.splitConfig.admin_pin ?? '1122';
-    if (!isSupabaseConfigured) {
-      const fresh = createInitialSeedState();
-      commit({ ...fresh, activeRole: stateRef.current.activeRole, activeTab: stateRef.current.activeTab });
-      commitCourier(buildSafeCourierItems(fresh));
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const res = await adminResetDataRpc(supabase, 'RESET_SEED', pin);
-      if (!res.ok) {
-        handleCloudError(`Gagal mereset data simulasi: ${res.error}`);
-        return { ok: false, error: res.error };
-      }
-      await pullFromSupabase();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal mereset data simulasi di Supabase.';
-      handleCloudError(`Gagal mereset data simulasi: ${msg}`);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
-  };
-
-  /**
-   * RPC #6: Clears all transactions via `rpc_admin_reset_data('CLEAR_TRANSACTIONS', p_admin_pin)`.
-   */
-  const clearAllTransactions = async (adminPin?: string): Promise<ActionResult> => {
-    const pin = adminPin ?? stateRef.current.splitConfig.admin_pin ?? '1122';
-    if (!isSupabaseConfigured) {
-      const s = stateRef.current;
-      const cleared: MbgState = {
-        ...s,
-        deliveries: [],
-        deliveryItems: [],
-        invoices: [],
-        ledgerEntries: [],
-        payoutBatches: [],
-      };
-      commit(cleared);
-      commitCourier([]);
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const res = await adminResetDataRpc(supabase, 'CLEAR_TRANSACTIONS', pin);
-      if (!res.ok) {
-        handleCloudError(`Gagal mengosongkan transaksi: ${res.error}`);
-        return { ok: false, error: res.error };
-      }
-      await pullFromSupabase();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal mengosongkan transaksi di Supabase.';
-      handleCloudError(`Gagal mengosongkan transaksi: ${msg}`);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
-  };
-
   const getSafeCourierItems = (): SafeCourierBastItem[] => {
     if (state.activeRole === 'FIELD_TEAM') {
       return courierItems;
@@ -1102,8 +1029,6 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     savePaymentAccount,
     deleteKitchen,
     deleteItem,
-    resetSimulationData,
-    clearAllTransactions,
     getSafeCourierItems,
   };
 

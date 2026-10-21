@@ -64,7 +64,7 @@ export function Tab1KitchenOrders() {
   const todayYmd = getJakartaTodayYmd();
   const data = { deliveries, deliveryItems, invoices };
   const kitchen = kitchens.find((k) => k.id === kitchenId) ?? null;
-  const openOrder = kitchen ? (findOpenOrder(data, kitchen.id, todayYmd) ?? findOpenOrder(data, kitchen.id)) : undefined;
+  const openOrder = kitchen ? findOpenOrder(data, kitchen.id, todayYmd) : undefined;
   const openItemIds = new Set(openOrder ? linesForDelivery(data, openOrder.id).map((l) => l.item_id) : []);
 
   const q = kitchenQuery.trim().toLowerCase();
@@ -226,7 +226,7 @@ export function Tab1KitchenOrders() {
                     <li className="px-3 py-2 text-xs text-slate-500">Dapur tidak ditemukan.</li>
                   )}
                   {kitchenMatches.map((k) => {
-                    const hasOpen = !!(findOpenOrder(data, k.id, todayYmd) ?? findOpenOrder(data, k.id));
+                    const hasOpen = !!findOpenOrder(data, k.id, todayYmd);
                     return (
                       <li key={k.id}>
                         <button

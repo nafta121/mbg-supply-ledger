@@ -3,7 +3,7 @@
 import React, { useState } from 'react';
 import { type ActiveTab, useMbgStore } from '../lib/mbg-store';
 import type { UserRole } from '../types/mbg';
-import { InvoiceReceiptIcon, LedgerVaultIcon, PackageBatchIcon, RefreshResetIcon, ScaleBastIcon } from './Icons';
+import { InvoiceReceiptIcon, LedgerVaultIcon, PackageBatchIcon, ScaleBastIcon } from './Icons';
 import { MasterDataSheet } from './MasterDataSheet';
 import { Tab1KitchenOrders } from './Tab1KitchenOrders';
 import { Tab2CourierWeighing } from './Tab2CourierWeighing';
@@ -62,13 +62,8 @@ export function AppShell() {
     clearSyncError,
     setActiveRole,
     setActiveTab,
-    resetSimulationData,
-    clearAllTransactions,
   } = useMbgStore();
   const [masterOpen, setMasterOpen] = useState(false);
-  const [resetSheetOpen, setResetSheetOpen] = useState(false);
-  const [resetPin, setResetPin] = useState('');
-  const [resetPinError, setResetPinError] = useState<string | null>(null);
 
   // PIN Role Lock state for switching into Admin / Koperasi
   const [pinTargetRole, setPinTargetRole] = useState<UserRole | null>(null);
@@ -189,21 +184,6 @@ export function AppShell() {
                 <span aria-hidden="true">⚙️</span>
               </button>
             )}
-            {activeRole === 'OWNER_ADMIN' && (
-              <button
-                type="button"
-                onClick={() => {
-                  setResetPin('');
-                  setResetPinError(null);
-                  setResetSheetOpen(true);
-                }}
-                aria-label="Reset data"
-                title="Reset / Kosongkan Transaksi Supabase"
-                className="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-rose-50 hover:text-rose-600"
-              >
-                <RefreshResetIcon className="h-4 w-4" />
-              </button>
-            )}
           </div>
         </header>
 
@@ -248,9 +228,6 @@ export function AppShell() {
                 }}
                 className="field-input text-center font-mono text-lg tracking-widest"
               />
-              <p className="mt-1 text-[11px] text-slate-500">
-                Default {pinTargetRole === 'OWNER_ADMIN' ? 'Admin: 1122' : 'Koperasi: 3344'}
-              </p>
             </div>
             {pinError && (
               <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
@@ -274,92 +251,6 @@ export function AppShell() {
               </button>
             </div>
           </form>
-        </BottomSheet>
-
-        <BottomSheet
-          open={resetSheetOpen && activeRole === 'OWNER_ADMIN'}
-          title="🔄 Kelola Data Database Supabase"
-          onClose={() => setResetSheetOpen(false)}
-        >
-          <div className="space-y-3 text-sm text-slate-700">
-            <p className="text-xs text-slate-600">
-              Tindakan destruktif pada database cloud Supabase (<span className="font-mono">nrdepkayabbbshnmyrvc</span>)
-              wajib diverifikasi dengan PIN Admin:
-            </p>
-            <div>
-              <label htmlFor="reset-admin-pin" className="field-label">
-                PIN Admin Konfirmasi
-              </label>
-              <input
-                id="reset-admin-pin"
-                type="password"
-                inputMode="numeric"
-                maxLength={6}
-                placeholder="Masukkan PIN Admin (default 1122)"
-                value={resetPin}
-                onChange={(e) => {
-                  setResetPin(e.target.value.replace(/\D/g, ''));
-                  if (resetPinError) setResetPinError(null);
-                }}
-                className="field-input font-mono tracking-widest"
-              />
-            </div>
-            {resetPinError && (
-              <p role="alert" className="rounded-lg bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-700">
-                {resetPinError}
-              </p>
-            )}
-            <button
-              type="button"
-              onClick={async () => {
-                const expected = splitConfig.admin_pin || '1122';
-                if (resetPin.trim() !== expected) {
-                  setResetPinError('Masukkan PIN Admin yang benar sebelum mereset database.');
-                  return;
-                }
-                if (
-                  typeof window === 'undefined' ||
-                  window.confirm('Kembalikan database Supabase ke 5 Order Dapur simulasi awal (16 Oktober 2026)?')
-                ) {
-                  const res = await resetSimulationData(resetPin.trim());
-                  if (!res.ok) {
-                    setResetPinError(res.error);
-                    return;
-                  }
-                  setResetSheetOpen(false);
-                }
-              }}
-              className="btn-primary w-full"
-            >
-              🔄 Reset ke Seed Simulasi Awal (5 Order)
-            </button>
-            <button
-              type="button"
-              onClick={async () => {
-                const expected = splitConfig.admin_pin || '1122';
-                if (resetPin.trim() !== expected) {
-                  setResetPinError('Masukkan PIN Admin yang benar sebelum mengosongkan transaksi.');
-                  return;
-                }
-                if (
-                  typeof window === 'undefined' ||
-                  window.confirm(
-                    'Kosongkan seluruh transaksi (Order, Invoice, Bagi Hasil) di Supabase? Master Dapur & Master Barang tetap disimpan.'
-                  )
-                ) {
-                  const res = await clearAllTransactions(resetPin.trim());
-                  if (!res.ok) {
-                    setResetPinError(res.error);
-                    return;
-                  }
-                  setResetSheetOpen(false);
-                }
-              }}
-              className="btn-secondary w-full border-rose-300 text-rose-700 hover:bg-rose-50"
-            >
-              🧹 Kosongkan Transaksi (Mulai Operasional Bersih)
-            </button>
-          </div>
         </BottomSheet>
 
         <main id="main-content" className="flex-1 space-y-3 px-3 py-3">

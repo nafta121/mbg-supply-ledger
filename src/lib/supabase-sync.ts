@@ -674,7 +674,8 @@ export async function fetchCourierOrdersFromSupabase(
       .from('v_courier_kitchen_orders')
       .select(
         'order_id,order_code,order_date,order_status,kitchen_id,kitchen_code,kitchen_name,pic_name,pic_phone,item_id,order_item_id,product_id,product_name_snapshot,qty_ordered_kg,qty_accepted_kg,qty_shrinkage_kg,is_weighed,shrinkage_reason,shrinkage_note,is_locked'
-      );
+      )
+      .order('order_date', { ascending: false });
     if (error || !data) return null;
     return fromCourierViewRows(data as CourierKitchenOrderViewRow[]);
   } catch {
@@ -837,48 +838,16 @@ export async function updateAppSettingsRpc(
 }
 
 /**
- * RPC #6: Invokes `rpc_admin_reset_data(p_mode, p_admin_pin)` in PostgreSQL.
- * Verifies `p_admin_pin` against `app_settings.admin_pin` before running `CLEAR_TRANSACTIONS` or `RESET_SEED`.
- */
-export async function adminResetDataRpc(
-  supabase: SupabaseClient,
-  mode: 'CLEAR_TRANSACTIONS' | 'RESET_SEED',
-  adminPin: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  try {
-    const { error } = await supabase.rpc('rpc_admin_reset_data', {
-      p_mode: mode,
-      p_admin_pin: adminPin,
-    });
-    if (error) {
-      return { ok: false, error: error.message };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal mengeksekusi reset data di Supabase.' };
-  }
-}
-
-/**
- * Targeted deletion of a single order item; if the order has 0 remaining items, removes the empty order.
+ * Targeted deletion of a single order item.
  * Database trigger `trg_kitchen_order_items_recalc` automatically runs `fn_recalculate_order_financials`.
  */
 export async function deleteOrderItemFromSupabase(
   supabase: SupabaseClient,
-  itemId: string,
-  orderId: string
+  itemId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
     const { error } = await supabase.from('kitchen_order_items').delete().eq('id', itemId);
     if (error) return { ok: false, error: error.message };
-
-    const { count } = await supabase
-      .from('kitchen_order_items')
-      .select('id', { count: 'exact', head: true })
-      .eq('order_id', orderId);
-    if (count === 0) {
-      await supabase.from('kitchen_orders').delete().eq('id', orderId);
-    }
     return { ok: true };
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : 'Gagal menghapus baris order di Supabase.' };
@@ -963,10 +932,10 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
     ] = await Promise.all([
       supabase.from('kitchens').select('*').order('code', { ascending: true }),
       supabase.from('products').select('*').order('code', { ascending: true }),
-      supabase.from('kitchen_orders').select('*').order('created_at', { ascending: true }),
-      supabase.from('kitchen_order_items').select('*').order('created_at', { ascending: true }),
-      supabase.from('kitchen_invoices').select('*').order('created_at', { ascending: true }),
-      supabase.from('profit_ledger_entries').select('*').order('created_at', { ascending: true }),
+      supabase.from('kitchen_orders').select('*').order('created_at', { ascending: false }),
+      supabase.from('kitchen_order_items').select('*').order('created_at', { ascending: false }),
+      supabase.from('kitchen_invoices').select('*').order('created_at', { ascending: false }),
+      supabase.from('profit_ledger_entries').select('*').order('created_at', { ascending: false }),
       supabase.from('profit_split_configs').select('*').order('created_at', { ascending: false }),
       supabase.from('app_settings').select('*').eq('id', 'default'),
       supabase.from('profit_payout_batches').select('*').order('disbursed_at', { ascending: false }),

@@ -42,10 +42,6 @@ export function subtractKg(a: number, b: number): number {
   return gramsToKg(kgToGrams(a) - kgToGrams(b));
 }
 
-export function addIdr(a: number, b: number): number {
-  return senToIdr(idrToSen(a) + idrToSen(b));
-}
-
 /**
  * Parse a user-typed kg string or number (where BOTH `,` and `.` are decimal separators,
  * e.g. `"13.5"` -> `13.5`, `"13,5"` -> `13.5`, `"0.2"` -> `0.2`, `"0,2"` -> `0.2`, `"35"` -> `35`)

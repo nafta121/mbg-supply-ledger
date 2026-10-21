@@ -82,6 +82,12 @@ describe('Stage 8 — Order Dapur (multi-item)', () => {
     expect(s.deliveries).toHaveLength(1);
     expect(s.invoices).toHaveLength(1);
     expect(s.invoices[0]!.total_invoice_amount).toBe(740000);
+
+    // An unpaid order from yesterday does not block ordering the same item on a new day
+    const nextDay = { ...c, today: '2026-10-17' };
+    const nextDayRes = createKitchenOrder(s, { kitchen_id: 'kitchen-01', lines: [wortel] }, nextDay);
+    expect(nextDayRes.ok && !nextDayRes.merged).toBe(true);
+    expect(ok(nextDayRes).deliveries).toHaveLength(2);
   });
 
   it('validates the order form and supports decimal kg orders (e.g. 12,5 kg and 0,2 kg)', () => {

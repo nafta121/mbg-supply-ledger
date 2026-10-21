@@ -367,7 +367,7 @@ export function createKitchenOrder<T extends MbgData>(
     margin_per_kg_rp: senToIdr(idrToSen(Number.isFinite(l.margin_per_kg_rp) ? l.margin_per_kg_rp : 0)),
   }));
 
-  const open = findOpenOrder(data, kitchen.id, ctx.today) ?? findOpenOrder(data, kitchen.id);
+  const open = findOpenOrder(data, kitchen.id, ctx.today);
   const existingItemIds = open ? linesForDelivery(data, open.id).map((l) => l.item_id) : [];
   const error = validateOrderLines(data, lines, existingItemIds);
   if (error) return { ok: false, error };

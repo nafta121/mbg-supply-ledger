@@ -23,19 +23,7 @@ export type LedgerPayoutStatus = 'LOCKED_UNPAID' | 'AVAILABLE_FOR_PAYOUT' | 'PAI
 
 export type BaseUnitKg = 'kg';
 
-// 1. public.users
-export interface User {
-  id: string;
-  full_name: string;
-  email: string;
-  phone: string | null;
-  role: UserRole;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-// 2. public.kitchens
+// 1. public.kitchens
 export interface Kitchen {
   id: string;
   kitchen_code: string;
