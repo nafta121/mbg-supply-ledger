@@ -1003,44 +1003,6 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
   }
 }
 
-export async function markInvoicePaidInSupabase(
-  supabase: SupabaseClient,
-  invoiceId: string,
-  _paidAtIso?: string
-): Promise<boolean> {
-  const res = await markInvoicePaidRpc(supabase, invoiceId);
-  return res.ok;
-}
-
-export async function updateAppSettingsSplitInSupabase(
-  supabase: SupabaseClient,
-  teamSharePct: number,
-  coopSharePct: number
-): Promise<boolean> {
-  const res = await updateAppSettingsRpc(supabase, { teamSharePct, coopSharePct });
-  return res.ok;
-}
-
-export async function updatePaymentAccountInSupabase(
-  supabase: SupabaseClient,
-  account: {
-    payment_bank_name: string;
-    payment_account_number: string;
-    payment_account_holder: string;
-  },
-  teamSharePct = 60,
-  coopSharePct = 40
-): Promise<boolean> {
-  const res = await updateAppSettingsRpc(supabase, {
-    teamSharePct,
-    coopSharePct,
-    bankName: account.payment_bank_name,
-    accountNumber: account.payment_account_number,
-    accountHolder: account.payment_account_holder,
-  });
-  return res.ok;
-}
-
 export async function deleteKitchenFromSupabase(
   supabase: SupabaseClient,
   kitchenId: string
@@ -1057,20 +1019,6 @@ export async function deleteProductFromSupabase(
   const { error } = await supabase.from('products').delete().eq('id', productId);
   if (error) return { ok: false, error: 'Barang tidak dapat dihapus karena masih digunakan di order dapur.' };
   return { ok: true };
-}
-
-export async function resetToSimulationSeedRpc(
-  supabase: SupabaseClient,
-  adminPin: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  return adminResetDataRpc(supabase, 'RESET_SEED', adminPin);
-}
-
-export async function clearAllTransactionsRpc(
-  supabase: SupabaseClient,
-  adminPin: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
-  return adminResetDataRpc(supabase, 'CLEAR_TRANSACTIONS', adminPin);
 }
 
 export function subscribeToMbgRealtime(

@@ -583,10 +583,20 @@ export function updateProfitSplit<T extends MbgData>(
 /** Pencairan bagi hasil: only AVAILABLE_FOR_PAYOUT rows (from Lunas invoices) can be paid out. */
 export function executePayout<T extends MbgData>(
   data: T,
-  who: BeneficiaryType,
+  who: BeneficiaryType | 'BOTH',
   ctx: Pick<EngineCtx, 'nowIso' | 'today' | 'uid'>,
   notes?: string
 ): EngineResult<T> {
+  if (who === 'BOTH') {
+    const teamRes = executePayout(data, 'TEAM', ctx, notes);
+    const coopRes = executePayout(teamRes.ok ? teamRes.data : data, 'COOPERATIVE', ctx, notes);
+    if (!teamRes.ok && !coopRes.ok) return teamRes;
+    return {
+      ok: true,
+      data: coopRes.ok ? coopRes.data : (teamRes as { ok: true; data: T }).data,
+      count: (teamRes.ok ? (teamRes.count ?? 0) : 0) + (coopRes.ok ? (coopRes.count ?? 0) : 0),
+    };
+  }
   const eligible = data.ledgerEntries.filter(
     (le) => le.beneficiary_type === who && le.payout_status === 'AVAILABLE_FOR_PAYOUT'
   );

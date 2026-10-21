@@ -60,19 +60,14 @@ export function Tab4ProfitSharing() {
   // Tim & Koperasi are disbursed independently — field transfers often happen on different days.
   const handlePayout = async (who: BeneficiaryType | 'ALL') => {
     if (!isAdmin) return;
-    const targets: BeneficiaryType[] = who === 'ALL' ? ['TEAM', 'COOPERATIVE'] : [who];
-    const amounts = { TEAM: availTeam, COOPERATIVE: availCoop };
-    const paid = targets.filter((t) => amounts[t] > 0);
-    if (paid.length === 0) return;
-    for (const t of paid) {
-      const res = await executePayout(t);
-      if (!res.ok) {
-        setToast({ kind: 'error', text: res.error });
-        return;
-      }
+    const total = who === 'ALL' ? availTotal : who === 'TEAM' ? availTeam : availCoop;
+    if (total <= 0) return;
+    const res = await executePayout(who === 'ALL' ? 'BOTH' : who);
+    if (!res.ok) {
+      setToast({ kind: 'error', text: res.error });
+      return;
     }
-    const total = sumIdr(paid.map((t) => amounts[t]));
-    const label = paid.map((t) => `Hak ${BENEFICIARY_LABEL[t]}`).join(' & ');
+    const label = who === 'ALL' ? 'Hak Tim & Hak Koperasi' : `Hak ${BENEFICIARY_LABEL[who]}`;
     setToast({ kind: 'ok', text: `${label} ${formatRp(total)} berhasil dicairkan.` });
   };
 

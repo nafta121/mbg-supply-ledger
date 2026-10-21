@@ -221,6 +221,8 @@ describe('Stage 8 — Bagi hasil cash-basis (Menunggu Dapur Bayar → Siap Dicai
     const coop = s.ledgerEntries.filter((le) => le.beneficiary_type === 'COOPERATIVE');
     expect(team.every((le) => le.payout_status === 'PAID_OUT')).toBe(true);
     expect(coop.every((le) => le.payout_status === 'AVAILABLE_FOR_PAYOUT')).toBe(true);
+    const bothPaid = ok(executePayout(s, 'BOTH', c));
+    expect(bothPaid.ledgerEntries.every((le) => le.payout_status === 'PAID_OUT')).toBe(true);
 
     // Changing the split never rewrites lines that were (partly) paid out:
     // Tim + Koperasi stays exactly the line margin (no over-distribution).

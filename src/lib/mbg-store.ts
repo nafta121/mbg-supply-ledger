@@ -107,7 +107,7 @@ export interface MbgContextValue extends MbgState {
   /** Updates profit split & recalculates unpaid-out orders via `rpc_update_app_settings`. */
   updateProfitSplitPercentage: (team_share_pct: number, cooperative_share_pct: number) => Promise<ActionResult>;
   /** Executes profit payout via `rpc_execute_profit_payout`. */
-  executePayout: (beneficiary_type: BeneficiaryType, notes?: string) => Promise<ActionResult>;
+  executePayout: (beneficiary_type: BeneficiaryType | 'BOTH', notes?: string) => Promise<ActionResult>;
   saveKitchen: (input: KitchenMasterInput) => Promise<MasterSaveResult>;
   saveItem: (input: ItemMasterInput) => Promise<MasterSaveResult>;
   savePaymentAccount: (input: PaymentAccountInfo) => Promise<MasterSaveResult>;
@@ -419,6 +419,13 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
   const stateRef = useRef<MbgState>(state);
   const courierItemsRef = useRef<SafeCourierBastItem[]>(courierItems);
+  const isSyncingRef = useRef<boolean>(false);
+  const lastPullAtRef = useRef<number>(0);
+
+  const setSyncing = useCallback((v: boolean) => {
+    isSyncingRef.current = v;
+    setIsSyncing(v);
+  }, []);
 
   const clearSyncError = useCallback(() => {
     setSyncError(null);
@@ -445,6 +452,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         setIsLoading(false);
         return;
       }
+      lastPullAtRef.current = Date.now();
       const supabase = getSupabaseClient();
       const role = roleOverride ?? stateRef.current.activeRole;
 
@@ -454,6 +462,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
           commitCourier(safeRows);
           setIsSupabaseLive(true);
         }
+        lastPullAtRef.current = Date.now();
         setIsLoading(false);
         return;
       }
@@ -469,6 +478,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         commitCourier(buildSafeCourierItems(next));
         setIsSupabaseLive(true);
       }
+      lastPullAtRef.current = Date.now();
       setIsLoading(false);
     },
     [commit, commitCourier]
@@ -493,6 +503,8 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     const unsubscribe = subscribeToMbgRealtime(
       supabase,
       () => {
+        // Skip echo events triggered by our own in-flight or just-completed mutations.
+        if (isSyncingRef.current || Date.now() - lastPullAtRef.current < 500) return;
         void pullFromSupabase();
       },
       (connected) => {
@@ -534,7 +546,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, merged: precheck.merged, count: precheck.count };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -550,7 +562,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal menyimpan order: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -565,7 +577,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -581,7 +593,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal menghapus barang order: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -595,7 +607,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -611,7 +623,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal menghapus order: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -659,7 +671,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         return { ok: true, count: lines.length };
       }
 
-      setIsSyncing(true);
+      setSyncing(true);
       setSyncError(null);
       try {
         const supabase = getSupabaseClient();
@@ -675,7 +687,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         handleCloudError(`Gagal menyimpan timbangan: ${msg}`, 'FIELD_TEAM');
         return { ok: false, error: msg };
       } finally {
-        setIsSyncing(false);
+        setSyncing(false);
       }
     }
 
@@ -688,7 +700,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, count: precheck.count };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -704,7 +716,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal menyimpan timbangan: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -722,7 +734,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -738,7 +750,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal menandai invoice lunas: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -755,7 +767,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -774,14 +786,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal memperbarui persentase bagi hasil: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
   /**
    * RPC #4: Executes profit payout via `rpc_execute_profit_payout`.
    */
-  const executePayout = async (who: BeneficiaryType, notes?: string): Promise<ActionResult> => {
+  const executePayout = async (who: BeneficiaryType | 'BOTH', notes?: string): Promise<ActionResult> => {
     const precheck = executePayoutEngine(stateRef.current, who, runtimeCtx(), notes);
     if (!precheck.ok) return { ok: false, error: precheck.error };
 
@@ -790,7 +802,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true, count: precheck.count };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -806,7 +818,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal mencairkan bagi hasil: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -822,7 +834,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -838,7 +850,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(msg);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -854,7 +866,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -870,7 +882,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(msg);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -904,7 +916,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -926,7 +938,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal menyimpan rekening pembayaran: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -940,7 +952,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -956,7 +968,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(msg);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -970,7 +982,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -986,7 +998,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(msg);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -1002,7 +1014,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -1018,7 +1030,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal mereset data simulasi: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -1042,7 +1054,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       return { ok: true };
     }
 
-    setIsSyncing(true);
+    setSyncing(true);
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
@@ -1058,7 +1070,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       handleCloudError(`Gagal mengosongkan transaksi: ${msg}`);
       return { ok: false, error: msg };
     } finally {
-      setIsSyncing(false);
+      setSyncing(false);
     }
   };
 
