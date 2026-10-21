@@ -62,15 +62,15 @@ function MasterForm<T extends { id?: string }>({
   };
 
   return (
-    <form onSubmit={submit} className="space-y-2.5 rounded-lg bg-slate-50 p-3 ring-1 ring-inset ring-slate-200">
+    <form onSubmit={submit} className="space-y-2.5 rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] p-3">
       {fields.map((f) => {
         const id = `${idPrefix}-${f.key}`;
         const raw = value[f.key];
         return (
           <div key={f.key}>
-            <label htmlFor={id} className="mb-1 block text-xs font-semibold text-slate-700">
+            <label htmlFor={id} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
               {f.label}
-              {f.required && <span className="text-rose-600"> *</span>}
+              {f.required && <span className="text-[#c4242a]"> *</span>}
             </label>
             <input
               id={id}
@@ -86,15 +86,15 @@ function MasterForm<T extends { id?: string }>({
       })}
       {extra}
       {error && (
-        <p role="alert" className="text-sm font-medium text-rose-700">
+        <p role="alert" className="text-[13px] font-medium text-[#c4242a]">
           {error}
         </p>
       )}
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={onCancel} className="btn-secondary min-h-[44px]">
+        <button type="button" onClick={onCancel} className="btn-secondary min-h-[40px]">
           Batal
         </button>
-        <button type="submit" className="btn-primary min-h-[44px]">
+        <button type="submit" className="btn-primary min-h-[40px]">
           Simpan
         </button>
       </div>
@@ -106,7 +106,6 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   const { activeRole, kitchens, items, splitConfig, saveKitchen, saveItem, savePaymentAccount, deleteKitchen, deleteItem } =
     useMbgStore();
   const [tab, setTab] = useState<MasterTab>('kitchens');
-  // `null` = no form open, `'new'` = create form, otherwise the id being edited.
   const [editing, setEditing] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
 
@@ -125,7 +124,6 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
     setAccountHolder(splitConfig.payment_account_holder ?? 'Bendahara Supplier MBG');
   }, [splitConfig.payment_bank_name, splitConfig.payment_account_number, splitConfig.payment_account_holder]);
 
-  // Master data is Admin-only (Invariant 5).
   if (activeRole !== 'OWNER_ADMIN') return null;
 
   const switchTab = (t: MasterTab) => {
@@ -163,14 +161,14 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   };
 
   const rowBtn =
-    'min-h-[36px] shrink-0 rounded-md border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-100';
+    'min-h-[34px] shrink-0 rounded-[6px] border border-[#d4d4d4] bg-white px-2.5 text-[12px] font-medium text-[#3d3d3d] hover:bg-[#f8f8f8]';
   const delBtn =
-    'min-h-[36px] shrink-0 rounded-md border border-rose-200 bg-white px-2.5 text-xs font-semibold text-rose-700 hover:bg-rose-50';
+    'min-h-[34px] shrink-0 rounded-[6px] border border-[#f5c2c0] bg-white px-2.5 text-[12px] font-medium text-[#c4242a] hover:bg-[#ffedea]';
 
   return (
     <BottomSheet
       open={open}
-      title="⚙️ Pengaturan / Data Master"
+      title="Pengaturan & Data Master"
       onClose={() => {
         setEditing(null);
         onClose();
@@ -179,18 +177,18 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
       <div className="space-y-3">
         <Toast toast={toast} onClose={() => setToast(null)} />
 
-        {/* Rekening Pembayaran Invoice Dapur (Tersimpan di Supabase) */}
+        {/* Rekening Pembayaran Invoice Dapur */}
         <form
           onSubmit={submitBankAccount}
-          className="space-y-2.5 rounded-lg bg-slate-50 p-3 ring-1 ring-inset ring-slate-200"
+          className="space-y-2.5 rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] p-3"
         >
-          <div className="text-xs font-extrabold uppercase tracking-wide text-slate-800">
+          <div className="text-[13px] font-medium text-[#0a0a0a]">
             Rekening Pembayaran Invoice Dapur
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div>
-              <label htmlFor="md-bank-name" className="mb-1 block text-xs font-semibold text-slate-700">
-                Nama Bank <span className="text-rose-600">*</span>
+              <label htmlFor="md-bank-name" className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                Nama Bank <span className="text-[#c4242a]">*</span>
               </label>
               <input
                 id="md-bank-name"
@@ -202,8 +200,8 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               />
             </div>
             <div>
-              <label htmlFor="md-bank-number" className="mb-1 block text-xs font-semibold text-slate-700">
-                Nomor Rekening <span className="text-rose-600">*</span>
+              <label htmlFor="md-bank-number" className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                Nomor Rekening <span className="text-[#c4242a]">*</span>
               </label>
               <input
                 id="md-bank-number"
@@ -216,8 +214,8 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
             </div>
           </div>
           <div>
-            <label htmlFor="md-bank-holder" className="mb-1 block text-xs font-semibold text-slate-700">
-              Atas Nama <span className="text-rose-600">*</span>
+            <label htmlFor="md-bank-holder" className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+              Atas Nama <span className="text-[#c4242a]">*</span>
             </label>
             <input
               id="md-bank-holder"
@@ -229,11 +227,11 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
             />
           </div>
           {bankError && (
-            <p role="alert" className="text-xs font-medium text-rose-700">
+            <p role="alert" className="text-[12px] font-medium text-[#c4242a]">
               {bankError}
             </p>
           )}
-          <button type="submit" className="btn-primary min-h-[40px] w-full text-xs">
+          <button type="submit" className="btn-primary min-h-[38px] w-full text-[13px]">
             Simpan Rekening Pembayaran
           </button>
         </form>
@@ -273,7 +271,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
           </button>
         )}
 
-        <ul className="divide-y divide-slate-100 rounded-lg ring-1 ring-inset ring-slate-200">
+        <ul className="divide-y divide-[#f0f0f0] rounded-[6px] border border-[#e6e6e6] bg-white">
           {tab === 'kitchens' &&
             kitchens.map((k) =>
               editing === k.id ? (
@@ -293,13 +291,13 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                   />
                 </li>
               ) : (
-                <li key={k.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                <li key={k.id} className="flex items-center justify-between gap-2 px-3 py-2.5">
                   <div className="min-w-0">
-                    <div className="break-words text-sm font-semibold leading-snug text-slate-900">
+                    <div className="break-words text-[14px] font-medium leading-snug text-[#0a0a0a]">
                       {k.name}
                     </div>
-                    <div className="break-words text-xs text-slate-500">
-                      {k.kitchen_code} • PIC {k.pic_name} • {k.pic_phone}
+                    <div className="break-words text-[12px] text-[#6b6b6b]">
+                      <span className="font-mono">{k.kitchen_code}</span> · PIC {k.pic_name} · {k.pic_phone}
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
@@ -346,13 +344,13 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                   />
                 </li>
               ) : (
-                <li key={it.id} className="flex items-center justify-between gap-2 px-3 py-2">
+                <li key={it.id} className="flex items-center justify-between gap-2 px-3 py-2.5">
                   <div className="min-w-0">
-                    <div className="break-words text-sm font-semibold leading-snug text-slate-900">
+                    <div className="break-words text-[14px] font-medium leading-snug text-[#0a0a0a]">
                       {it.name}
                     </div>
-                    <div className="break-words text-xs text-slate-500">
-                      {it.category} • {formatRp(it.default_kitchen_price_per_kg)}/kg • margin{' '}
+                    <div className="break-words text-[12px] text-[#6b6b6b] tabular-nums">
+                      {it.category} · {formatRp(it.default_kitchen_price_per_kg)}/kg · margin{' '}
                       {formatRp(it.default_margin_per_kg)}/kg
                     </div>
                   </div>
@@ -385,14 +383,13 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   );
 }
 
-/** Unit is fixed to kg for every commodity (Invariant 1) — shown, never editable. */
 function UnitLockedField({ id }: { id: string }) {
   return (
     <div>
-      <label htmlFor={id} className="mb-1 block text-xs font-semibold text-slate-700">
+      <label htmlFor={id} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
         Satuan
       </label>
-      <input id={id} type="text" value="kg (terkunci)" readOnly disabled className="field-input bg-slate-100 text-slate-600" />
+      <input id={id} type="text" value="kg (terkunci)" readOnly disabled className="field-input bg-[#eeeeee] text-[#6b6b6b]" />
     </div>
   );
 }

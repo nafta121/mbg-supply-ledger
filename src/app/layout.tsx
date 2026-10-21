@@ -3,13 +3,13 @@ import './globals.css';
 
 export const metadata: Metadata = {
   title: 'MBG Ledger',
-  description: 'Stok supplier, pembagian ke dapur MBG, timbang terima, tagihan, dan bagi hasil.',
+  description: 'Pencatatan order bahan pangan dapur SPPG, tagihan invoice dapur, dan bagi hasil koperasi.',
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
-  themeColor: '#ffffff',
+  themeColor: '#f2f4f7',
 };
 
 export default function RootLayout({
@@ -27,11 +27,11 @@ export default function RootLayout({
           crossOrigin="anonymous"
         />
         <link
-          href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap"
+          href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;700&family=Geist+Mono:wght@400;500&display=swap"
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-[100dvh] bg-slate-50 text-slate-900 font-sans antialiased">
+      <body className="min-h-[100dvh] bg-[#f2f4f7] text-[#0a0a0a] font-sans antialiased">
         {children}
       </body>
     </html>

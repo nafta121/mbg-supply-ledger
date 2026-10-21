@@ -2,6 +2,34 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --ground: #f2f4f7;
+  --surface: #ffffff;
+  --raised: #eeeeee;
+  --border: #e6e6e6;
+  --rule: #f0f0f0;
+  --control: #d4d4d4;
+  --text: #0a0a0a;
+  --muted: #6b6b6b;
+  --accent: #141414;
+  --positive: #2e7d32;
+  --negative: #c4242a;
+  --warning: #92400e;
+  --chart-1: #141414;
+  --chart-2: #8a8a8a;
+  --chart-3: #1d5fbf;
+  --pill-positive-bg: #dcfae5;
+  --pill-positive-ink: #04250e;
+  --pill-negative-bg: #ffedea;
+  --pill-negative-ink: #831c1e;
+  --pill-warning-bg: #fffbeb;
+  --pill-warning-ink: #92400e;
+  --pill-neutral-bg: #eeeeee;
+  --pill-neutral-ink: #3d3d3d;
+  --radius-card: 8px;
+  --radius-control: 6px;
+}
+
 @layer base {
   html {
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
@@ -9,15 +37,17 @@
   }
 
   body {
-    @apply bg-slate-50 text-slate-900 font-sans antialiased;
+    background-color: var(--ground);
+    color: var(--text);
+    @apply font-sans antialiased;
   }
 
   /* Tabular numerals for all numbers so kg / Rp columns line up */
-  .font-mono,
   input[type='number'],
   table td,
   table th,
-  code {
+  code,
+  .num {
     font-variant-numeric: tabular-nums;
   }
 
@@ -27,10 +57,10 @@
   select:focus-visible,
   summary:focus-visible,
   a:focus-visible {
-    @apply outline-none ring-2 ring-emerald-600 ring-offset-2 ring-offset-white;
+    @apply outline-none ring-2 ring-[#141414] ring-offset-2 ring-offset-white;
   }
 
-  /* Hide number spinners: field users type or use quick buttons */
+  /* Hide number spinners */
   input[type='number']::-webkit-outer-spin-button,
   input[type='number']::-webkit-inner-spin-button {
     -webkit-appearance: none;
@@ -43,23 +73,27 @@
 
 @layer components {
   .card {
-    @apply rounded-xl border border-slate-200 bg-white shadow-sm;
+    @apply rounded-[8px] border border-[#e6e6e6] bg-white;
+  }
+
+  .field-label {
+    @apply mb-1.5 block text-[13px] font-medium text-[#0a0a0a];
   }
 
   .field-input {
-    @apply min-h-[44px] w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 placeholder-slate-400 transition focus:border-emerald-600;
+    @apply min-h-[40px] w-full rounded-[6px] border border-[#d4d4d4] bg-white px-3 py-2 text-[14px] text-[#0a0a0a] placeholder-[#6b6b6b] transition-colors focus:border-[#141414];
   }
 
   .btn-primary {
-    @apply inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg bg-emerald-600 px-4 text-sm font-bold text-white shadow-sm transition hover:bg-emerald-700 active:scale-[0.98] disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500;
+    @apply inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-[6px] bg-[#141414] px-4 text-[14px] font-medium text-white transition-colors hover:bg-[#262626] disabled:cursor-not-allowed disabled:bg-[#e6e6e6] disabled:text-[#6b6b6b];
   }
 
   .btn-secondary {
-    @apply inline-flex min-h-[44px] items-center justify-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 transition hover:bg-slate-50 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-[6px] border border-[#d4d4d4] bg-white px-3 text-[14px] font-medium text-[#0a0a0a] transition-colors hover:bg-[#f8f8f8] disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-chip {
-    @apply inline-flex min-h-[36px] items-center justify-center rounded-md border border-slate-300 bg-white px-2.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-100 active:scale-[0.97];
+    @apply inline-flex min-h-[34px] items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white px-2.5 text-[12px] font-medium text-[#3d3d3d] transition-colors hover:bg-[#f8f8f8];
   }
 }
 
@@ -72,7 +106,7 @@
 @media print {
   body {
     background: #ffffff !important;
-    color: #0f172a !important;
+    color: #0a0a0a !important;
   }
   .no-print {
     display: none !important;
