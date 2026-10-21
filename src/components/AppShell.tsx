@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { type ActiveTab, useMbgStore } from '../lib/mbg-store';
 import type { UserRole } from '../types/mbg';
 import { InvoiceReceiptIcon, LedgerVaultIcon, PackageBatchIcon, SettingsGearIcon } from './Icons';
@@ -9,6 +9,11 @@ import { Tab1KitchenOrders } from './Tab1KitchenOrders';
 import { Tab3KitchenInvoices } from './Tab3KitchenInvoices';
 import { Tab4ProfitSharing } from './Tab4ProfitSharing';
 import { BottomSheet } from './ui';
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt: () => Promise<void>;
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed'; platform: string }>;
+}
 
 const ROLE_PILLS: Array<{ role: UserRole; label: string }> = [
   { role: 'OWNER_ADMIN', label: 'Admin' },
@@ -59,6 +64,34 @@ export function AppShell() {
   const [pinTargetRole, setPinTargetRole] = useState<UserRole | null>(null);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => undefined);
+    }
+    const onBeforeInstall = (e: Event) => {
+      e.preventDefault();
+      setInstallPrompt(e as BeforeInstallPromptEvent);
+    };
+    const onAppInstalled = () => setInstallPrompt(null);
+    window.addEventListener('beforeinstallprompt', onBeforeInstall);
+    window.addEventListener('appinstalled', onAppInstalled);
+    return () => {
+      window.removeEventListener('beforeinstallprompt', onBeforeInstall);
+      window.removeEventListener('appinstalled', onAppInstalled);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (!installPrompt) return;
+    await installPrompt.prompt();
+    const choice = await installPrompt.userChoice;
+    if (choice.outcome === 'accepted') {
+      setInstallPrompt(null);
+    }
+  };
 
   const handleRolePillClick = (targetRole: UserRole) => {
     if (targetRole === activeRole) return;
@@ -142,6 +175,17 @@ export function AppShell() {
           </div>
 
           <div className="flex items-center gap-2">
+            {installPrompt && (
+              <button
+                type="button"
+                onClick={() => void handleInstallClick()}
+                aria-label="Instal aplikasi MBG Ledger"
+                title="Instal aplikasi di perangkat ini"
+                className="inline-flex h-[34px] items-center gap-1 rounded-[6px] border border-[#1d5fbf] bg-white px-2.5 text-[12px] font-medium text-[#1d5fbf] transition-colors hover:bg-[#f2f4f7]"
+              >
+                Instal
+              </button>
+            )}
             <div
               role="group"
               aria-label="Pilih peran"
