@@ -2,8 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-:root,
-[data-theme='theme-mbg-ledger'] {
+:root {
   --ground: #f2f4f7;
   --surface: #ffffff;
   --raised: #eeeeee;
@@ -29,22 +28,6 @@
   --pill-neutral-ink: #3d3d3d;
   --radius-card: 8px;
   --radius-control: 6px;
-
-  /* Preline semantic surface & layer tokens */
-  --background: #ffffff;
-  --background-1: #f2f4f7;
-  --background-2: #f8f9fa;
-  --layer: #ffffff;
-  --layer-line: #e6e6e6;
-  --layer-hover: #f8f9fa;
-  --primary: #141414;
-  --primary-hover: #262626;
-  --primary-foreground: #ffffff;
-  --card-line: #e6e6e6;
-  --card-divider: #f0f0f0;
-  --card-header: #f8f9fa;
-  --navbar: #ffffff;
-  --navbar-line: #e6e6e6;
 }
 
 @layer base {

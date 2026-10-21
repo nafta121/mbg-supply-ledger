@@ -492,8 +492,12 @@ export function removeOrderLine<T extends MbgData>(
 ): EngineResult<T> {
   const line = data.deliveryItems.find((di) => di.id === deliveryItemId);
   if (!line) return { ok: false, error: 'Barang tidak ditemukan.' };
-  if (isPaid(invoiceForDelivery(data, line.delivery_id))) {
+  const invoice = invoiceForDelivery(data, line.delivery_id);
+  if (isPaid(invoice)) {
     return { ok: false, error: 'Invoice dapur sudah lunas — order tidak bisa diubah.' };
+  }
+  if (data.ledgerEntries.some((le) => le.delivery_item_id === deliveryItemId && le.payout_status === 'PAID_OUT')) {
+    return { ok: false, error: 'Bagi hasil barang ini sudah dicairkan — order tidak bisa diubah.' };
   }
   if (linesForDelivery(data, line.delivery_id).length <= 1) {
     return deleteKitchenOrder(data, line.delivery_id);
@@ -506,12 +510,15 @@ export function removeOrderLine<T extends MbgData>(
   return { ok: true, data: recomputeOrder(next, line.delivery_id, nowIso) };
 }
 
-/** Deletes an open order with its invoice and ledger rows (never a Lunas order). */
+/** Deletes an open order with its invoice and ledger rows (never a Lunas or paid-out order). */
 export function deleteKitchenOrder<T extends MbgData>(data: T, deliveryId: string): EngineResult<T> {
   const delivery = data.deliveries.find((d) => d.id === deliveryId);
   if (!delivery) return { ok: false, error: 'Order tidak ditemukan.' };
   const invoice = invoiceForDelivery(data, deliveryId);
   if (isPaid(invoice)) return { ok: false, error: 'Invoice dapur sudah lunas — order tidak bisa dihapus.' };
+  if (invoice && data.ledgerEntries.some((le) => le.invoice_id === invoice.id && le.payout_status === 'PAID_OUT')) {
+    return { ok: false, error: 'Sebagian bagi hasil sudah dicairkan — order tidak bisa dihapus.' };
+  }
   return {
     ok: true,
     data: {

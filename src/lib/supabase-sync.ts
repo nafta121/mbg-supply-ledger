@@ -859,7 +859,11 @@ export async function deleteKitchenOrderFromSupabase(
   orderId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   try {
-    const { error } = await supabase.from('kitchen_orders').delete().eq('id', orderId);
+    const { error } = await supabase
+      .from('kitchen_orders')
+      .delete()
+      .eq('id', orderId)
+      .neq('status', 'BAST_LOCKED');
     if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (e) {
@@ -926,19 +930,17 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
       orderItemsRes,
       invoicesRes,
       ledgerRes,
-      splitRes,
       settingsRes,
       payoutsRes,
     ] = await Promise.all([
       supabase.from('kitchens').select('*').order('code', { ascending: true }),
       supabase.from('products').select('*').order('code', { ascending: true }),
-      supabase.from('kitchen_orders').select('*').order('created_at', { ascending: false }),
-      supabase.from('kitchen_order_items').select('*').order('created_at', { ascending: false }),
-      supabase.from('kitchen_invoices').select('*').order('created_at', { ascending: false }),
-      supabase.from('profit_ledger_entries').select('*').order('created_at', { ascending: false }),
-      supabase.from('profit_split_configs').select('*').order('created_at', { ascending: false }),
+      supabase.from('kitchen_orders').select('*').order('created_at', { ascending: false }).limit(2000),
+      supabase.from('kitchen_order_items').select('*').order('created_at', { ascending: false }).limit(5000),
+      supabase.from('kitchen_invoices').select('*').order('created_at', { ascending: false }).limit(2000),
+      supabase.from('profit_ledger_entries').select('*').order('created_at', { ascending: false }).limit(5000),
       supabase.from('app_settings').select('*').eq('id', 'default'),
-      supabase.from('profit_payout_batches').select('*').order('disbursed_at', { ascending: false }),
+      supabase.from('profit_payout_batches').select('*').order('disbursed_at', { ascending: false }).limit(1000),
     ]);
 
     if (
@@ -963,7 +965,7 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
       orderItems: (orderItemsRes.data ?? []) as KitchenOrderItemRow[],
       invoices: (invoicesRes.data ?? []) as KitchenInvoiceRow[],
       ledgerEntries: (ledgerRes.data ?? []) as ProfitLedgerRow[],
-      splitConfigs: (splitRes.data ?? []) as ProfitSplitConfigRow[],
+      splitConfigs: [],
       appSettings: (settingsRes.data ?? []) as AppSettingsRow[],
       payoutBatches: (payoutsRes.data ?? []) as ProfitPayoutBatchRow[],
     });
@@ -1012,7 +1014,6 @@ export function subscribeToMbgRealtime(
     .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_order_items' }, debouncedChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_invoices' }, debouncedChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_ledger_entries' }, debouncedChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_split_configs' }, debouncedChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, debouncedChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_payout_batches' }, debouncedChange)
     .subscribe((status) => {

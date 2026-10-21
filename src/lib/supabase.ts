@@ -1,5 +1,4 @@
-import { createBrowserClient } from '@supabase/ssr';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 /**
  * Fallback URL & Publishable Anon Key for project `nrdepkayabbbshnmyrvc`
@@ -28,7 +27,7 @@ let browserClient: SupabaseClient | null = null;
 
 export const getSupabaseClient = (): SupabaseClient => {
   if (!browserClient) {
-    browserClient = createBrowserClient(SUPABASE_PROJECT_URL, SUPABASE_PUBLIC_KEY);
+    browserClient = createClient(SUPABASE_PROJECT_URL, SUPABASE_PUBLIC_KEY);
   }
   return browserClient;
 };

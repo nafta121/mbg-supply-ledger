@@ -12,6 +12,7 @@ import {
   shortKitchenName,
   sumIdr,
 } from '../lib/ui-format';
+import { ChevronDownIcon } from './Icons';
 import { Badge, Card, NoAccess, StatRow, Toast, type ToastState } from './ui';
 
 export function Tab4ProfitSharing() {
@@ -198,14 +199,7 @@ export function Tab4ProfitSharing() {
           <span>Atur Porsi Bagi Hasil</span>
           <span className="flex items-center gap-2 text-[13px] tabular-nums text-[#6b6b6b]">
             Tim {teamPct}% : Koperasi {coopPct}%
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              className="h-4 w-4 text-[#6b6b6b] transition-transform group-open:rotate-180"
-              aria-hidden="true"
-            >
-              <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
+            <ChevronDownIcon className="h-4 w-4 text-[#6b6b6b] transition-transform group-open:rotate-180" />
           </span>
         </summary>
         <div className="space-y-3 border-t border-[#e6e6e6] bg-[#f8f9fa] p-4">
@@ -272,14 +266,7 @@ export function Tab4ProfitSharing() {
             <span>Riwayat Pencairan ({payoutBatches.length})</span>
             <span className="flex items-center gap-2 text-[13px] tabular-nums text-[#6b6b6b]">
               {formatRp(paidOutTotal)}
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                className="h-4 w-4 text-[#6b6b6b] transition-transform group-open:rotate-180"
-                aria-hidden="true"
-              >
-                <path d="m6 9 6 6 6-6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
-              </svg>
+              <ChevronDownIcon className="h-4 w-4 text-[#6b6b6b] transition-transform group-open:rotate-180" />
             </span>
           </summary>
           <ul className="divide-y divide-[#f0f0f0] border-t border-[#e6e6e6]">

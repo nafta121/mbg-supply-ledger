@@ -187,12 +187,6 @@ export function invoiceTone(status: InvoicePaymentStatus): Tone {
   return status === 'PAID' ? 'green' : 'red';
 }
 
-export function orderProgressTone(p: OrderProgress): Tone {
-  if (p === 'BAST_DONE') return 'green';
-  if (p === 'PARTIALLY_WEIGHED') return 'amber';
-  return 'slate';
-}
-
 export function payoutTone(status: LedgerPayoutStatus): Tone {
   if (status === 'AVAILABLE_FOR_PAYOUT') return 'green';
   if (status === 'PAID_OUT') return 'slate';
