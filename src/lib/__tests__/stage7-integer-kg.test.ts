@@ -8,7 +8,8 @@ import {
 } from '../courier-view';
 import { buildInvoiceWaText } from '../invoice-view';
 import { toWholeKg } from '../financial-engine';
-import { buildSafeCourierItems, createInitialSeedState, formatKg as storeFormatKg } from '../mbg-store';
+import { buildSafeCourierItems, formatKg as storeFormatKg } from '../mbg-store';
+import { createInitialSeedState } from './seed-fixture';
 import { formatKg, formatKgNum, formatShrinkKgNum, parseKgInput, parseWholeKgInput } from '../ui-format';
 
 const TRAILING_ZERO_KG = /\d[.,]\d*0\s*kg|\d\.000\s*kg/;

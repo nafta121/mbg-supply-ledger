@@ -1,114 +1,18 @@
 'use client';
 
 import React from 'react';
-import { describeShrinkReason, groupCourierStops, type KitchenStop, stopWeighedSummary } from '../lib/courier-view';
 import { buildInvoiceLines, resolvePaymentAccount } from '../lib/invoice-view';
-import { buildSafeCourierItems, useMbgStore } from '../lib/mbg-store';
-import { formatKg, formatKgNum, formatRp, formatShrinkKgNum, INVOICE_LABEL } from '../lib/ui-format';
+import { useMbgStore } from '../lib/mbg-store';
+import { formatKg, formatRp, INVOICE_LABEL } from '../lib/ui-format';
 
-export type PrintDocMode = { type: 'INVOICE'; invoiceId: string } | { type: 'BAST'; deliveryId: string };
+export type PrintDocMode = { type: 'INVOICE'; invoiceId: string };
 
 const th = 'border border-slate-300 px-2 py-1.5 text-xs';
 const td = 'border border-slate-300 px-2 py-1.5 text-xs';
 
-/**
- * Surat Jalan / BAST per Order Dapur (semua barang dalam 1 dokumen). Rendered
- * purely from the price-free courier projection, so it is safe for FIELD_TEAM
- * (Invariant 5). Lines not yet weighed leave "Diterima" blank for handwriting.
- */
-export function KitchenBastDocument({ stop }: { stop: KitchenStop }) {
-  const summary = stopWeighedSummary(stop);
-  return (
-    <div className="space-y-4 text-xs text-slate-900">
-      <div className="flex justify-between border-b-2 border-slate-900 pb-3">
-        <div>
-          <h1 className="text-base font-extrabold uppercase">Surat Jalan &amp; BAST</h1>
-          <p className="text-[11px] text-slate-600">Serah terima &amp; timbang bahan baku di dapur</p>
-        </div>
-        <div className="text-right font-mono">
-          <div className="font-bold">{stop.delivery_number}</div>
-          <div>Tanggal: {stop.delivery_date}</div>
-        </div>
-      </div>
-
-      <div>
-        <div className="font-bold">
-          Dapur Tujuan: {stop.kitchen_code} • {stop.kitchen_name}
-        </div>
-        <div>
-          PIC Penerima: {stop.pic_name} ({stop.pic_phone})
-        </div>
-      </div>
-
-      <table className="w-full table-fixed border-collapse border border-slate-300 text-xs">
-        <thead>
-          <tr className="bg-slate-100">
-            <th className={`${th} w-[34%] text-left`}>Barang</th>
-            <th className={`${th} w-[22%] text-right`}>Order (kg)</th>
-            <th className={`${th} w-[22%] text-right`}>Diterima (kg)</th>
-            <th className={`${th} w-[22%] text-right`}>Selisih (kg)</th>
-          </tr>
-        </thead>
-        <tbody>
-          {stop.items.map((it) => {
-            const why = describeShrinkReason(it.rejection_reason);
-            return (
-              <tr key={it.delivery_item_id}>
-                <td className={`${td} break-words`}>
-                  <div className="font-semibold">{it.item_name}</div>
-                  {it.is_weighed && it.qty_shrinkage_kg > 0 && why && (
-                    <div className="text-[10px] text-slate-700">Alasan selisih: {why}</div>
-                  )}
-                </td>
-                <td className={`${td} whitespace-nowrap text-right font-mono`}>{formatKgNum(it.qty_dispatched_kg)}</td>
-                <td className={`${td} whitespace-nowrap text-right font-mono font-bold`}>
-                  {it.is_weighed ? formatKgNum(it.qty_accepted_kg) : ''}
-                </td>
-                <td className={`${td} whitespace-nowrap text-right font-mono`}>
-                  {it.is_weighed ? formatShrinkKgNum(it.qty_shrinkage_kg) : ''}
-                </td>
-              </tr>
-            );
-          })}
-          <tr className="bg-slate-100 font-bold">
-            <td className={td}>Total</td>
-            <td className={`${td} whitespace-nowrap text-right font-mono`}>{formatKgNum(stop.total_dispatched_kg)}</td>
-            <td className={`${td} whitespace-nowrap text-right font-mono`}>
-              {stop.done ? formatKgNum(summary.weighed_accepted_kg) : ''}
-            </td>
-            <td className={`${td} whitespace-nowrap text-right font-mono`}>
-              {stop.done ? formatShrinkKgNum(stop.total_shrinkage_kg) : ''}
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <p className="text-[11px] text-slate-600">
-        Dapur hanya ditagih sesuai berat yang diterima pada BAST ini.
-      </p>
-
-      <div className="flex justify-between pt-4 text-[11px]">
-        <div>
-          <div className="font-bold">Kurir / Petugas Pengiriman</div>
-          <div className="mt-8 border-t border-slate-400 pt-1">&nbsp;</div>
-        </div>
-        <div className="text-right">
-          <div className="font-bold">Penerima Dapur</div>
-          <div className="mt-8 border-t border-slate-400 pt-1">{stop.pic_name}</div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
 export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
   const store = useMbgStore();
   const { invoices, kitchens, deliveries } = store;
-
-  if (doc.type === 'BAST') {
-    const stop = groupCourierStops(buildSafeCourierItems(store)).find((s) => s.delivery_id === doc.deliveryId);
-    return stop ? <KitchenBastDocument stop={stop} /> : null;
-  }
 
   const inv = invoices.find((i) => i.id === doc.invoiceId);
   if (!inv) return null;

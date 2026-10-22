@@ -2,6 +2,8 @@
 
 import React, { useEffect, useState } from 'react';
 import { type ActiveTab, useMbgStore } from '../lib/mbg-store';
+import { getSupabaseClient, isSupabaseConfigured } from '../lib/supabase';
+import { verifyRolePinRpc } from '../lib/supabase-sync';
 import type { UserRole } from '../types/mbg';
 import { InvoiceReceiptIcon, LedgerVaultIcon, PackageBatchIcon, SettingsGearIcon } from './Icons';
 import { MasterDataSheet } from './MasterDataSheet';
@@ -16,8 +18,8 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 const ROLE_PILLS: Array<{ role: UserRole; label: string }> = [
-  { role: 'OWNER_ADMIN', label: 'Admin' },
   { role: 'COOPERATIVE_VIEWER', label: 'Koperasi' },
+  { role: 'OWNER_ADMIN', label: 'Admin' },
 ];
 
 const NAV_TABS: Array<{
@@ -61,7 +63,7 @@ export function AppShell() {
   } = useMbgStore();
   const [masterOpen, setMasterOpen] = useState(false);
 
-  const [pinTargetRole, setPinTargetRole] = useState<UserRole | null>(null);
+  const [adminPinOpen, setAdminPinOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
@@ -95,33 +97,43 @@ export function AppShell() {
 
   const handleRolePillClick = (targetRole: UserRole) => {
     if (targetRole === activeRole) return;
-    const storageKey = `mbg_pin_verified_${targetRole}`;
-    if (typeof window !== 'undefined' && window.sessionStorage.getItem(storageKey) === '1') {
+    if (targetRole !== 'OWNER_ADMIN') {
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.removeItem('mbg_pin_verified_OWNER_ADMIN');
+      }
       setActiveRole(targetRole);
       return;
     }
-    setPinTargetRole(targetRole);
+    if (typeof window !== 'undefined' && window.sessionStorage.getItem('mbg_pin_verified_OWNER_ADMIN') === '1') {
+      setActiveRole('OWNER_ADMIN');
+      return;
+    }
+    setAdminPinOpen(true);
     setPinInput('');
     setPinError(null);
   };
 
-  const handleVerifyRolePin = (e: React.FormEvent) => {
+  const handleVerifyRolePin = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!pinTargetRole) return;
-    const expectedPin =
-      pinTargetRole === 'OWNER_ADMIN' ? splitConfig.admin_pin || '1122' : splitConfig.coop_pin || '3344';
-    if (pinInput.trim() !== expectedPin) {
-      setPinError('PIN salah. Periksa kembali PIN 4 digit Anda.');
+    const typedPin = pinInput.trim();
+    let verified = false;
+    if (isSupabaseConfigured && isSupabaseLive) {
+      verified = await verifyRolePinRpc(getSupabaseClient(), 'OWNER_ADMIN', typedPin);
+    } else {
+      const expectedPin = splitConfig.admin_pin || '1122';
+      verified = typedPin === expectedPin;
+    }
+    if (!verified) {
+      setPinError('PIN Admin salah. Periksa kembali PIN 4 digit Anda.');
       return;
     }
     if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem(`mbg_pin_verified_${pinTargetRole}`, '1');
+      window.sessionStorage.setItem('mbg_pin_verified_OWNER_ADMIN', '1');
     }
-    const nextRole = pinTargetRole;
-    setPinTargetRole(null);
+    setAdminPinOpen(false);
     setPinInput('');
     setPinError(null);
-    setActiveRole(nextRole);
+    setActiveRole('OWNER_ADMIN');
   };
 
   const visibleTabs = NAV_TABS.filter((t) => t.roles.includes(activeRole));
@@ -233,23 +245,19 @@ export function AppShell() {
           onClose={() => setMasterOpen(false)}
         />
 
-        {/* PIN Verification Modal when switching to Admin or Koperasi */}
+        {/* PIN Verification Modal when switching to Admin */}
         <BottomSheet
-          open={pinTargetRole !== null}
-          title={pinTargetRole === 'OWNER_ADMIN' ? 'Verifikasi PIN Admin' : 'Verifikasi PIN Koperasi'}
+          open={adminPinOpen}
+          title="Verifikasi PIN Admin"
           onClose={() => {
-            setPinTargetRole(null);
+            setAdminPinOpen(false);
             setPinInput('');
             setPinError(null);
           }}
         >
           <form onSubmit={handleVerifyRolePin} className="space-y-3 text-[14px] text-[#0a0a0a]">
             <p className="text-[13px] text-[#6b6b6b]">
-              Masukkan PIN 4 digit untuk membuka akses{' '}
-              <span className="font-medium text-[#0a0a0a]">
-                {pinTargetRole === 'OWNER_ADMIN' ? 'Admin' : 'Koperasi'}
-              </span>
-              .
+              Masukkan PIN 4 digit untuk membuka akses <span className="font-medium text-[#0a0a0a]">Admin</span>.
             </p>
             <div>
               <label htmlFor="role-pin-input" className="field-label">
@@ -279,7 +287,7 @@ export function AppShell() {
               <button
                 type="button"
                 onClick={() => {
-                  setPinTargetRole(null);
+                  setAdminPinOpen(false);
                   setPinInput('');
                   setPinError(null);
                 }}

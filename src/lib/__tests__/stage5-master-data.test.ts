@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
-  createInitialSeedState,
   upsertItemRecord,
   upsertKitchenRecord,
   validateItemInput,
   validateKitchenInput,
 } from '../mbg-store';
+import { createInitialSeedState } from './seed-fixture';
 import { INVOICE_LABEL, invoiceTone, sumIdr } from '../ui-format';
 
 const NOW = '2026-10-16T08:00:00.000Z';

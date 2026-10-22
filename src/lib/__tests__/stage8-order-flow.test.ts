@@ -8,7 +8,8 @@ import {
   summarizeVehicleLoad,
 } from '../courier-view';
 import { buildInvoiceLines, buildInvoiceProfit, buildInvoiceWaText, formatInvoiceLine, summarizeInvoice } from '../invoice-view';
-import { BUSINESS_DATE, buildSafeCourierItems, createInitialSeedState, type MbgState } from '../mbg-store';
+import { BUSINESS_DATE, buildSafeCourierItems, type MbgState } from '../mbg-store';
+import { createInitialSeedState } from './seed-fixture';
 import {
   applyBastWeights,
   createKitchenOrder,

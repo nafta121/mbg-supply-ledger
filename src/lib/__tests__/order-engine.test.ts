@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BUSINESS_DATE, createInitialSeedState, type MbgState } from '../mbg-store';
+import { BUSINESS_DATE, type MbgState } from '../mbg-store';
+import { createInitialSeedState } from './seed-fixture';
 import {
   applyBastWeights,
   createKitchenOrder,

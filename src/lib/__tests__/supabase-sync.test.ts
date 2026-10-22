@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createInitialSeedState } from '../mbg-store';
+import { createInitialSeedState } from './seed-fixture';
 import {
   type CourierKitchenOrderViewRow,
   fromCourierViewRows,

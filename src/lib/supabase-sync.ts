@@ -151,8 +151,8 @@ export interface AppSettingsRow {
   id: string;
   team_share_pct: number | string;
   coop_share_pct: number | string;
-  admin_pin: string;
-  coop_pin: string;
+  admin_pin?: string | null;
+  coop_pin?: string | null;
   payment_bank_name?: string | null;
   payment_account_number?: string | null;
   payment_account_holder?: string | null;
@@ -921,6 +921,45 @@ export async function upsertProductInSupabase(
 /**
  * Fetches full relational data from Supabase for Admin / Finance / Cooperative roles.
  */
+const APP_SETTINGS_PUBLIC_COLS =
+  'id, team_share_pct, coop_share_pct, default_kitchen_markup_rp, payment_bank_name, payment_account_number, payment_account_holder, updated_at';
+
+async function selectPagedRows<T>(
+  supabase: SupabaseClient,
+  table: string,
+  orderCol: string,
+  maxRows = 5000
+): Promise<{ data: T[] | null; error: unknown }> {
+  const pageSize = 1000;
+  const out: T[] = [];
+  for (let offset = 0; offset < maxRows; offset += pageSize) {
+    const res = await supabase
+      .from(table)
+      .select('*')
+      .order(orderCol, { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    if (res.error) return { data: null, error: res.error };
+    const batch = (res.data ?? []) as T[];
+    out.push(...batch);
+    if (batch.length < pageSize) break;
+  }
+  return { data: out, error: null };
+}
+
+export async function verifyRolePinRpc(
+  supabase: SupabaseClient,
+  role: string,
+  pin: string
+): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.rpc('rpc_verify_role_pin', { p_role: role, p_pin: pin });
+    if (error || !data || typeof data !== 'object') return false;
+    return Boolean((data as { ok?: boolean }).ok);
+  } catch {
+    return false;
+  }
+}
+
 export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promise<MbgData | null> {
   try {
     const [
@@ -935,11 +974,11 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
     ] = await Promise.all([
       supabase.from('kitchens').select('*').order('code', { ascending: true }),
       supabase.from('products').select('*').order('code', { ascending: true }),
-      supabase.from('kitchen_orders').select('*').order('created_at', { ascending: false }).limit(2000),
-      supabase.from('kitchen_order_items').select('*').order('created_at', { ascending: false }).limit(5000),
-      supabase.from('kitchen_invoices').select('*').order('created_at', { ascending: false }).limit(2000),
-      supabase.from('profit_ledger_entries').select('*').order('created_at', { ascending: false }).limit(5000),
-      supabase.from('app_settings').select('*').eq('id', 'default'),
+      selectPagedRows<KitchenOrderRow>(supabase, 'kitchen_orders', 'created_at', 2000),
+      selectPagedRows<KitchenOrderItemRow>(supabase, 'kitchen_order_items', 'created_at', 5000),
+      selectPagedRows<KitchenInvoiceRow>(supabase, 'kitchen_invoices', 'created_at', 2000),
+      selectPagedRows<ProfitLedgerRow>(supabase, 'profit_ledger_entries', 'created_at', 5000),
+      supabase.from('app_settings').select(APP_SETTINGS_PUBLIC_COLS).eq('id', 'default'),
       supabase.from('profit_payout_batches').select('*').order('disbursed_at', { ascending: false }).limit(1000),
     ]);
 
