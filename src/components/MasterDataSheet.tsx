@@ -109,6 +109,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   const [editing, setEditing] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
 
+  const [supplierName, setSupplierName] = useState<string>(splitConfig.supplier_name ?? 'Supplier MBG');
   const [bankName, setBankName] = useState<string>(splitConfig.payment_bank_name ?? 'BRI');
   const [accountNumber, setAccountNumber] = useState<string>(
     splitConfig.payment_account_number ?? '0000-0000-0000-000'
@@ -119,10 +120,17 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   const [bankError, setBankError] = useState<string | null>(null);
 
   React.useEffect(() => {
+    setSupplierName(splitConfig.supplier_name ?? 'Supplier MBG');
     setBankName(splitConfig.payment_bank_name ?? 'BRI');
     setAccountNumber(splitConfig.payment_account_number ?? '0000-0000-0000-000');
     setAccountHolder(splitConfig.payment_account_holder ?? 'Bendahara Supplier MBG');
-  }, [splitConfig.payment_bank_name, splitConfig.payment_account_number, splitConfig.payment_account_holder]);
+  }, [
+    open,
+    splitConfig.supplier_name,
+    splitConfig.payment_bank_name,
+    splitConfig.payment_account_number,
+    splitConfig.payment_account_holder,
+  ]);
 
   if (activeRole !== 'OWNER_ADMIN') return null;
 
@@ -143,7 +151,12 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   const submitBankAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     setBankError(null);
+    if (!supplierName.trim()) {
+      setBankError('Nama Supplier / Perusahaan wajib diisi.');
+      return;
+    }
     const res = await savePaymentAccount({
+      supplier_name: supplierName,
       payment_bank_name: bankName,
       payment_account_number: accountNumber,
       payment_account_holder: accountHolder,
@@ -152,7 +165,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
       setBankError(res.error);
       return;
     }
-    setToast({ kind: 'ok', text: 'Rekening pembayaran invoice berhasil disimpan ke Supabase.' });
+    setToast({ kind: 'ok', text: 'Identitas supplier & rekening invoice berhasil dikunci ke Supabase.' });
   };
 
   const addLabel: Record<MasterTab, string> = {
@@ -177,13 +190,26 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
       <div className="space-y-3">
         <Toast toast={toast} onClose={() => setToast(null)} />
 
-        {/* Rekening Pembayaran Invoice Dapur */}
+        {/* Identitas Supplier & Rekening Pembayaran Invoice Dapur */}
         <form
           onSubmit={submitBankAccount}
           className="space-y-2.5 rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] p-3"
         >
           <div className="text-[13px] font-medium text-[#0a0a0a]">
-            Rekening Pembayaran Invoice Dapur
+            Identitas Supplier &amp; Rekening Pembayaran Invoice
+          </div>
+          <div>
+            <label htmlFor="md-supplier-name" className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+              Nama Supplier / Perusahaan Kita <span className="text-[#c4242a]">*</span>
+            </label>
+            <input
+              id="md-supplier-name"
+              type="text"
+              placeholder="Contoh: CV Pangan Nusantara / Supplier MBG"
+              value={supplierName}
+              onChange={(e) => setSupplierName(e.target.value)}
+              className="field-input"
+            />
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div>
@@ -215,7 +241,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
           </div>
           <div>
             <label htmlFor="md-bank-holder" className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-              Atas Nama <span className="text-[#c4242a]">*</span>
+              Atas Nama Penerima <span className="text-[#c4242a]">*</span>
             </label>
             <input
               id="md-bank-holder"
@@ -232,7 +258,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
             </p>
           )}
           <button type="submit" className="btn-primary min-h-[38px] w-full text-[13px]">
-            Simpan Rekening Pembayaran
+            Simpan Identitas &amp; Rekening Invoice
           </button>
         </form>
 

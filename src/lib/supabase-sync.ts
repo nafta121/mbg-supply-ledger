@@ -103,6 +103,7 @@ export interface KitchenInvoiceRow {
   amount_paid_rp?: number | string | null;
   status: 'UNPAID' | 'PAID';
   paid_at?: string | null;
+  supplier_name?: string | null;
   payment_bank_name?: string | null;
   payment_account_number?: string | null;
   payment_account_holder?: string | null;
@@ -139,6 +140,7 @@ export interface ProfitSplitConfigRow {
   config_name: string;
   team_share_pct: number | string;
   cooperative_share_pct: number | string;
+  supplier_name?: string | null;
   payment_bank_name?: string | null;
   payment_account_number?: string | null;
   payment_account_holder?: string | null;
@@ -153,6 +155,7 @@ export interface AppSettingsRow {
   coop_share_pct: number | string;
   admin_pin?: string | null;
   coop_pin?: string | null;
+  supplier_name?: string | null;
   payment_bank_name?: string | null;
   payment_account_number?: string | null;
   payment_account_holder?: string | null;
@@ -282,6 +285,7 @@ export function toSupabaseRows(data: MbgData): {
     };
   });
 
+  const supplierName = data.splitConfig.supplier_name ?? 'Supplier MBG';
   const bankName = data.splitConfig.payment_bank_name ?? 'BRI';
   const accountNumber = data.splitConfig.payment_account_number ?? '0000-0000-0000-000';
   const accountHolder = data.splitConfig.payment_account_holder ?? 'Bendahara Supplier MBG';
@@ -297,6 +301,7 @@ export function toSupabaseRows(data: MbgData): {
     amount_paid_rp: inv.amount_paid,
     status: inv.payment_status === 'PAID' ? 'PAID' : 'UNPAID',
     paid_at: inv.paid_at,
+    supplier_name: inv.supplier_name ?? supplierName,
     payment_bank_name: inv.payment_bank_name ?? bankName,
     payment_account_number: inv.payment_account_number ?? accountNumber,
     payment_account_holder: inv.payment_account_holder ?? accountHolder,
@@ -367,6 +372,7 @@ export function toSupabaseRows(data: MbgData): {
     config_name: data.splitConfig.config_name,
     team_share_pct: data.splitConfig.team_share_pct,
     cooperative_share_pct: data.splitConfig.cooperative_share_pct,
+    supplier_name: supplierName,
     payment_bank_name: bankName,
     payment_account_number: accountNumber,
     payment_account_holder: accountHolder,
@@ -381,6 +387,7 @@ export function toSupabaseRows(data: MbgData): {
     coop_share_pct: data.splitConfig.cooperative_share_pct,
     admin_pin: data.splitConfig.admin_pin || '1122',
     coop_pin: data.splitConfig.coop_pin || '3344',
+    supplier_name: supplierName,
     payment_bank_name: bankName,
     payment_account_number: accountNumber,
     payment_account_holder: accountHolder,
@@ -498,6 +505,7 @@ export function fromSupabaseRows(rows: {
   const coopPctVal = appSetting ? num(appSetting.coop_share_pct) : scRow ? num(scRow.cooperative_share_pct) : 40.0;
   const cfgAdminPin = appSetting?.admin_pin || '1122';
   const cfgCoopPin = appSetting?.coop_pin || '3344';
+  const cfgSupplierName = appSetting?.supplier_name || scRow?.supplier_name || 'Supplier MBG';
   const cfgBankName = appSetting?.payment_bank_name || scRow?.payment_bank_name || 'BRI';
   const cfgAccountNumber = appSetting?.payment_account_number || scRow?.payment_account_number || '0000-0000-0000-000';
   const cfgAccountHolder =
@@ -519,9 +527,12 @@ export function fromSupabaseRows(rows: {
       payment_proof_url: null,
       paid_at: inv.paid_at ?? null,
       verified_by: null,
-      payment_bank_name: inv.payment_bank_name || cfgBankName,
-      payment_account_number: inv.payment_account_number || cfgAccountNumber,
-      payment_account_holder: inv.payment_account_holder || cfgAccountHolder,
+      supplier_name: (paid ? inv.supplier_name : cfgSupplierName || inv.supplier_name) || cfgSupplierName,
+      payment_bank_name: (paid ? inv.payment_bank_name : cfgBankName || inv.payment_bank_name) || cfgBankName,
+      payment_account_number:
+        (paid ? inv.payment_account_number : cfgAccountNumber || inv.payment_account_number) || cfgAccountNumber,
+      payment_account_holder:
+        (paid ? inv.payment_account_holder : cfgAccountHolder || inv.payment_account_holder) || cfgAccountHolder,
       created_at: inv.created_at ?? DEFAULT_ISO,
       updated_at: inv.updated_at ?? DEFAULT_ISO,
     };
@@ -534,6 +545,7 @@ export function fromSupabaseRows(rows: {
     cooperative_share_pct: coopPctVal,
     admin_pin: cfgAdminPin,
     coop_pin: cfgCoopPin,
+    supplier_name: cfgSupplierName,
     payment_bank_name: cfgBankName,
     payment_account_number: cfgAccountNumber,
     payment_account_holder: cfgAccountHolder,
@@ -806,7 +818,7 @@ export async function executeProfitPayoutRpc(
 }
 
 /**
- * RPC #5: Invokes `rpc_update_app_settings(p_team_pct, p_coop_pct, p_bank_name, p_account_number, p_account_holder)`.
+ * RPC #5: Invokes `rpc_update_app_settings(p_team_pct, p_coop_pct, p_bank_name, p_account_number, p_account_holder, p_supplier_name)`.
  * Validates `team + coop = 100`, updates `app_settings` + UNPAID invoice bank snapshots,
  * and recalculates all orders without payouts via `fn_recalculate_order_financials`.
  */
@@ -815,6 +827,7 @@ export async function updateAppSettingsRpc(
   params: {
     teamSharePct: number;
     coopSharePct: number;
+    supplierName?: string | null;
     bankName?: string | null;
     accountNumber?: string | null;
     accountHolder?: string | null;
@@ -827,6 +840,7 @@ export async function updateAppSettingsRpc(
       p_bank_name: params.bankName ?? null,
       p_account_number: params.accountNumber ?? null,
       p_account_holder: params.accountHolder ?? null,
+      p_supplier_name: params.supplierName ?? null,
     });
     if (error) {
       return { ok: false, error: error.message };
@@ -922,7 +936,7 @@ export async function upsertProductInSupabase(
  * Fetches full relational data from Supabase for Admin / Finance / Cooperative roles.
  */
 const APP_SETTINGS_PUBLIC_COLS =
-  'id, team_share_pct, coop_share_pct, default_kitchen_markup_rp, payment_bank_name, payment_account_number, payment_account_holder, updated_at';
+  'id, team_share_pct, coop_share_pct, supplier_name, payment_bank_name, payment_account_number, payment_account_holder, updated_at';
 
 async function selectPagedRows<T>(
   supabase: SupabaseClient,

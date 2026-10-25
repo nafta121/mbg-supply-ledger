@@ -25,6 +25,9 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
     <div className="space-y-3.5 text-xs text-slate-900">
       <div className="flex justify-between gap-2 border-b-2 border-slate-900 pb-3">
         <div className="min-w-0">
+          <div className="text-[11px] font-extrabold uppercase tracking-wider text-slate-700">
+            {account.supplier_name ?? 'Supplier MBG'}
+          </div>
           <h1 className="text-sm font-extrabold uppercase sm:text-base">Invoice Tagihan Dapur MBG</h1>
           <p className="text-[11px] text-slate-600">Tagihan bahan baku sesuai berat diterima (BAST)</p>
         </div>
@@ -45,7 +48,9 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
           </div>
         </div>
         <div className="text-right">
-          <div className="font-bold uppercase text-slate-500">No. Surat Jalan</div>
+          <div className="font-bold uppercase text-slate-500">Dari Supplier</div>
+          <div className="break-words text-sm font-bold">{account.supplier_name ?? 'Supplier MBG'}</div>
+          <div className="mt-1.5 font-bold uppercase text-slate-500">No. Surat Jalan</div>
           <div className="break-all font-mono font-bold">{deliv?.delivery_number}</div>
         </div>
       </div>
@@ -101,8 +106,8 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
           <div className="mt-8 border-t border-slate-400 pt-1">{kitchen?.pic_name}</div>
         </div>
         <div className="text-right">
-          <div className="font-bold">Bagian Keuangan</div>
-          <div className="mt-8 border-t border-slate-400 pt-1">&nbsp;</div>
+          <div className="font-bold">{account.supplier_name ?? 'Supplier MBG'}</div>
+          <div className="mt-8 border-t border-slate-400 pt-1">{account.payment_account_holder}</div>
         </div>
       </div>
     </div>

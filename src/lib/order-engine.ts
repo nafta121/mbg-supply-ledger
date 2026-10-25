@@ -409,6 +409,7 @@ export function createKitchenOrder<T extends MbgData>(
       payment_proof_url: null,
       paid_at: null,
       verified_by: null,
+      supplier_name: data.splitConfig.supplier_name ?? 'Supplier MBG',
       payment_bank_name: data.splitConfig.payment_bank_name ?? 'BRI',
       payment_account_number: data.splitConfig.payment_account_number ?? '0000-0000-0000-000',
       payment_account_holder: data.splitConfig.payment_account_holder ?? 'Bendahara Supplier MBG',

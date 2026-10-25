@@ -77,6 +77,11 @@ export function resolvePaymentAccount(
   const isPaid = invoice?.payment_status === 'PAID';
   const cfg = data.splitConfig;
   return {
+    supplier_name:
+      (isPaid ? invoice?.supplier_name : cfg?.supplier_name || invoice?.supplier_name) ||
+      cfg?.supplier_name ||
+      invoice?.supplier_name ||
+      'Supplier MBG',
     payment_bank_name:
       (isPaid ? invoice?.payment_bank_name : cfg?.payment_bank_name || invoice?.payment_bank_name) ||
       cfg?.payment_bank_name ||
@@ -104,6 +109,7 @@ export function buildInvoiceWaText(
   const account = resolvePaymentAccount(data, invoice);
   const out = [
     `Invoice Tagihan Dapur ${invoice.invoice_number}`,
+    `Supplier: ${account.supplier_name ?? 'Supplier MBG'}`,
     kitchen ? `${kitchen.kitchen_code} • ${shortKitchenName(kitchen.name)}` : '-',
     `Tanggal: ${invoice.invoice_date}`,
     '',

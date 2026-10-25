@@ -87,6 +87,7 @@ export interface KitchenDeliveryItem {
 }
 
 export interface PaymentAccountInfo {
+  supplier_name?: string;
   payment_bank_name: string;
   payment_account_number: string;
   payment_account_holder: string;
@@ -106,6 +107,7 @@ export interface KitchenInvoice {
   payment_proof_url: string | null;
   paid_at: string | null;
   verified_by: string | null;
+  supplier_name?: string;
   payment_bank_name?: string;
   payment_account_number?: string;
   payment_account_holder?: string;
@@ -121,6 +123,7 @@ export interface ProfitSplitConfig {
   cooperative_share_pct: number; // NUMERIC(5,2)
   admin_pin?: string;
   coop_pin?: string;
+  supplier_name?: string;
   payment_bank_name?: string;
   payment_account_number?: string;
   payment_account_holder?: string;

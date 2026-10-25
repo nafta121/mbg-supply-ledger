@@ -204,6 +204,7 @@ export function createEmptyCloudState(): MbgState {
     cooperative_share_pct: 40.0,
     admin_pin: '1122',
     coop_pin: '3344',
+    supplier_name: 'Supplier MBG',
     payment_bank_name: 'BRI',
     payment_account_number: '0000-0000-0000-000',
     payment_account_holder: 'Bendahara Supplier MBG',
@@ -608,6 +609,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   };
 
   const savePaymentAccount = async (input: PaymentAccountInfo): Promise<MasterSaveResult> => {
+    const supplierName = clean(input.supplier_name) || 'Supplier MBG';
     const bankName = clean(input.payment_bank_name);
     const accountNumber = clean(input.payment_account_number);
     const accountHolder = clean(input.payment_account_holder);
@@ -616,24 +618,27 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     if (!accountHolder) return { ok: false, error: 'Atas Nama wajib diisi.' };
 
     const s = stateRef.current;
+    const nextSplitConfig: ProfitSplitConfig = {
+      ...s.splitConfig,
+      supplier_name: supplierName,
+      payment_bank_name: bankName,
+      payment_account_number: accountNumber,
+      payment_account_holder: accountHolder,
+    };
+    const nextInvoices = s.invoices.map((inv) =>
+      inv.payment_status === 'PAID'
+        ? inv
+        : {
+            ...inv,
+            supplier_name: supplierName,
+            payment_bank_name: bankName,
+            payment_account_number: accountNumber,
+            payment_account_holder: accountHolder,
+          }
+    );
+    commit({ ...s, splitConfig: nextSplitConfig, invoices: nextInvoices });
+
     if (!isSupabaseConfigured) {
-      const nextSplitConfig: ProfitSplitConfig = {
-        ...s.splitConfig,
-        payment_bank_name: bankName,
-        payment_account_number: accountNumber,
-        payment_account_holder: accountHolder,
-      };
-      const nextInvoices = s.invoices.map((inv) =>
-        inv.payment_status === 'PAID'
-          ? inv
-          : {
-              ...inv,
-              payment_bank_name: bankName,
-              payment_account_number: accountNumber,
-              payment_account_holder: accountHolder,
-            }
-      );
-      commit({ ...s, splitConfig: nextSplitConfig, invoices: nextInvoices });
       return { ok: true };
     }
 
@@ -644,6 +649,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const rpcRes = await updateAppSettingsRpc(supabase, {
         teamSharePct: s.splitConfig.team_share_pct,
         coopSharePct: s.splitConfig.cooperative_share_pct,
+        supplierName,
         bankName,
         accountNumber,
         accountHolder,

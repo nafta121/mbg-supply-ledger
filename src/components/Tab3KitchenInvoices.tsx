@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { buildInvoiceLines, buildInvoiceWaText, summarizeInvoice } from '../lib/invoice-view';
+import { buildInvoiceLines, buildInvoiceWaText, resolvePaymentAccount, summarizeInvoice } from '../lib/invoice-view';
 import { useMbgStore } from '../lib/mbg-store';
 import { shareToWhatsApp } from '../lib/share';
 import { formatKgNum, formatRp, INVOICE_LABEL, invoiceTone, shortKitchenName, sumIdr } from '../lib/ui-format';
@@ -103,6 +103,7 @@ export function Tab3KitchenInvoices() {
             const kitchen = kitchens.find((k) => k.id === inv.kitchen_id);
             const lines = buildInvoiceLines(store, inv);
             const summary = summarizeInvoice(lines);
+            const account = resolvePaymentAccount(store, inv);
             const isPaid = inv.payment_status === 'PAID';
             const title = kitchen ? `${kitchen.kitchen_code} · ${shortKitchenName(kitchen.name)}` : '-';
 
@@ -147,6 +148,21 @@ export function Tab3KitchenInvoices() {
                     <span className="text-[20px] font-bold tracking-tight tabular-nums text-[#0a0a0a]">
                       {formatRp(inv.total_invoice_amount)}
                     </span>
+                  </div>
+
+                  <div className="rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] px-3 py-2 text-[12px]">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[#6b6b6b]">Supplier</span>
+                      <span className="truncate font-medium text-[#0a0a0a]">
+                        {account.supplier_name ?? 'Supplier MBG'}
+                      </span>
+                    </div>
+                    <div className="mt-1 flex items-center justify-between gap-2 border-t border-[#eeeeee] pt-1">
+                      <span className="text-[#6b6b6b]">Rekening</span>
+                      <span className="truncate font-mono text-[11px] font-medium text-[#0a0a0a]">
+                        {account.payment_bank_name} · {account.payment_account_number} ({account.payment_account_holder})
+                      </span>
+                    </div>
                   </div>
 
                   {isAdmin && (
