@@ -10,6 +10,7 @@ import {
 import { buildInvoiceLines, buildInvoiceProfit, buildInvoiceWaText, formatInvoiceLine, summarizeInvoice } from '../invoice-view';
 import { BUSINESS_DATE, buildSafeCourierItems, type MbgState } from '../mbg-store';
 import { createInitialSeedState } from './seed-fixture';
+import { sortAndGroupItems } from '../../components/OrderInvoiceEditSheet';
 import {
   applyBastWeights,
   createKitchenOrder,
@@ -20,6 +21,7 @@ import {
   orderProgress,
   removeOrderLine,
   summarizeOrderDraft,
+  updateKitchenOrder,
   updateProfitSplit,
 } from '../order-engine';
 import { ORDER_PROGRESS_LABEL, PAYOUT_LABEL, sumIdr } from '../ui-format';
@@ -330,6 +332,99 @@ describe('Stage 8 — seed scenario (16 Okt 2026)', () => {
     expect(text).toContain('Wortel: order 35 kg, diterima 33 kg (selisih -2 kg');
     expect(text).toContain('tidak ditagihkan ke dapur');
     expect(text).not.toMatch(/supplier/i);
+  });
+
+  it('updateKitchenOrder edits date, kitchen, item, qty, price, and margin and blocks after payout', () => {
+    const c = ctx();
+    let s = ok(
+      createKitchenOrder(
+        emptyState(),
+        { kitchen_id: 'kitchen-01', order_date: '2026-10-16', lines: [wortel, kubis] },
+        c
+      )
+    );
+    const deliv = s.deliveries[0]!;
+    const firstLine = s.deliveryItems.find((di) => di.item_id === 'item-wortel')!;
+
+    // Edit date, kitchen, item, qty, price, and margin
+    s = ok(
+      updateKitchenOrder(
+        s,
+        {
+          delivery_id: deliv.id,
+          kitchen_id: 'kitchen-02',
+          order_date: '2026-10-20',
+          lines: [
+            {
+              id: firstLine.id,
+              item_id: 'item-ayam',
+              qty_ordered_kg: 40,
+              kitchen_unit_price_rp: 45000,
+              margin_per_kg_rp: 5000,
+            },
+          ],
+        },
+        c
+      )
+    );
+
+    expect(s.deliveries[0]?.kitchen_id).toBe('kitchen-02');
+    expect(s.deliveries[0]?.delivery_date).toBe('2026-10-20');
+    expect(s.invoices[0]?.kitchen_id).toBe('kitchen-02');
+    expect(s.invoices[0]?.invoice_date).toBe('2026-10-20');
+    expect(s.invoices[0]?.due_date).toBe('2026-10-27');
+    expect(s.invoices[0]?.total_invoice_amount).toBe(40 * 45000);
+    expect(s.deliveryItems).toHaveLength(1);
+    expect(s.deliveryItems[0]?.item_id).toBe('item-ayam');
+    expect(sumIdr(s.ledgerEntries.map((le) => le.profit_amount))).toBe(40 * 5000);
+
+    // Mark paid and disburse payout -> editing must now be blocked
+    s = ok(markInvoicePaid(s, s.invoices[0]!.id, c.nowIso));
+    s = ok(executePayout(s, 'TEAM', c));
+    const blocked = updateKitchenOrder(
+      s,
+      {
+        delivery_id: deliv.id,
+        kitchen_id: 'kitchen-02',
+        order_date: '2026-10-21',
+        lines: [
+          {
+            id: firstLine.id,
+            item_id: 'item-ayam',
+            qty_ordered_kg: 50,
+            kitchen_unit_price_rp: 45000,
+            margin_per_kg_rp: 5000,
+          },
+        ],
+      },
+      c
+    );
+    expect(blocked.ok).toBe(false);
+  });
+
+  it('sortAndGroupItems sorts and groups orders/invoices by date and kitchen name', () => {
+    const sample = [
+      { id: '1', date: '2026-10-15', kitchenName: 'Dapur Cengkareng', kitchenCode: 'DPR-03', code: 'INV-01' },
+      { id: '2', date: '2026-10-18', kitchenName: 'Dapur Kebon Jeruk', kitchenCode: 'DPR-01', code: 'INV-02' },
+      { id: '3', date: '2026-10-18', kitchenName: 'Dapur Palmerah', kitchenCode: 'DPR-02', code: 'INV-03' },
+    ];
+    const getters = {
+      getDate: (x: (typeof sample)[0]) => x.date,
+      getKitchenName: (x: (typeof sample)[0]) => x.kitchenName,
+      getKitchenCode: (x: (typeof sample)[0]) => x.kitchenCode,
+      getCode: (x: (typeof sample)[0]) => x.code,
+    };
+
+    const byDateGroup = sortAndGroupItems(sample, 'date_desc', 'date', getters);
+    expect(byDateGroup.map((g) => g.label)).toEqual(['Tanggal 2026-10-18', 'Tanggal 2026-10-15']);
+    expect(byDateGroup[0]?.items.map((i) => i.id)).toEqual(['2', '3']);
+
+    const byKitchenAsc = sortAndGroupItems(sample, 'kitchen_asc', 'kitchen', getters);
+    expect(byKitchenAsc.map((g) => g.label)).toEqual([
+      'Dapur Cengkareng',
+      'Dapur Kebon Jeruk',
+      'Dapur Palmerah',
+    ]);
   });
 });
 

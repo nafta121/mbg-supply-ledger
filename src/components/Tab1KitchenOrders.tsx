@@ -14,6 +14,13 @@ import {
   shortKitchenName,
   sumIdr,
 } from '../lib/ui-format';
+import {
+  type GroupMode,
+  OrderInvoiceEditSheet,
+  sortAndGroupItems,
+  SortGroupControls,
+  type SortMode,
+} from './OrderInvoiceEditSheet';
 import { Badge, Card, NoAccess, SegmentedControl, Toast, type ToastState } from './ui';
 
 interface DraftLine {
@@ -40,25 +47,31 @@ export function Tab1KitchenOrders() {
     deliveries,
     deliveryItems,
     invoices,
+    ledgerEntries,
     createOrder,
     removeOrderLine,
     deleteOrder,
   } = useMbgStore();
 
+  const todayYmd = getJakartaTodayYmd();
   const [kitchenId, setKitchenId] = useState<string | null>(null);
   const [kitchenQuery, setKitchenQuery] = useState('');
+  const [orderDate, setOrderDate] = useState<string>(() => getJakartaTodayYmd());
   const [lines, setLines] = useState<DraftLine[]>(() => [emptyLine()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const [filter, setFilter] = useState<ListFilter>('active');
+  const [sortBy, setSortBy] = useState<SortMode>('date_desc');
+  const [groupBy, setGroupBy] = useState<GroupMode>('none');
+  const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
 
   if (activeRole !== 'OWNER_ADMIN' && activeRole !== 'FINANCE') return <NoAccess />;
 
-  const todayYmd = getJakartaTodayYmd();
+  const targetDate = orderDate || todayYmd;
   const data = { deliveries, deliveryItems, invoices };
   const kitchen = kitchens.find((k) => k.id === kitchenId) ?? null;
-  const openOrder = kitchen ? findOpenOrder(data, kitchen.id, todayYmd) : undefined;
+  const openOrder = kitchen ? findOpenOrder(data, kitchen.id, targetDate) : undefined;
   const openItemIds = new Set(openOrder ? linesForDelivery(data, openOrder.id).map((l) => l.item_id) : []);
 
   const q = kitchenQuery.trim().toLowerCase();
@@ -111,8 +124,9 @@ export function Tab1KitchenOrders() {
     setFormError(null);
   };
 
-  const startAddToKitchen = (id: string) => {
+  const startAddToKitchen = (id: string, dateYmd?: string) => {
     setKitchenId(id);
+    if (dateYmd) setOrderDate(dateYmd);
     setLines([emptyLine()]);
     setFormError(null);
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -124,7 +138,7 @@ export function Tab1KitchenOrders() {
       return;
     }
     const filled = orderLines.filter((l, idx) => l.item_id || lines[idx]!.kgStr.trim() !== '');
-    const res = await createOrder({ kitchen_id: kitchen.id, lines: filled });
+    const res = await createOrder({ kitchen_id: kitchen.id, order_date: targetDate, lines: filled });
     if (!res.ok) {
       setFormError(res.error);
       return;
@@ -133,23 +147,28 @@ export function Tab1KitchenOrders() {
     setToast({
       kind: 'ok',
       text: res.merged
-        ? `${title}: ${res.count ?? filled.length} barang ditambahkan ke order hari ini.`
+        ? `${title}: ${res.count ?? filled.length} barang ditambahkan ke order (${targetDate}).`
         : `${title}: order tersimpan (${res.count ?? filled.length} barang).`,
     });
     resetForm();
   };
 
-  const todayOrders = deliveries
-    .map((d) => ({
-      delivery: d,
-      kitchen: kitchens.find((k) => k.id === d.kitchen_id),
-      invoice: invoices.find((i) => i.delivery_id === d.id),
-      lines: deliveryItems.filter((di) => di.delivery_id === d.id),
-    }))
-    .sort((a, b) => (a.kitchen?.kitchen_code ?? '').localeCompare(b.kitchen?.kitchen_code ?? '', 'id'));
-  const activeOrders = todayOrders.filter((o) => o.invoice?.payment_status !== 'PAID');
-  const paidOrders = todayOrders.filter((o) => o.invoice?.payment_status === 'PAID');
+  const allOrders = deliveries.map((d) => ({
+    delivery: d,
+    kitchen: kitchens.find((k) => k.id === d.kitchen_id),
+    invoice: invoices.find((i) => i.delivery_id === d.id),
+    lines: deliveryItems.filter((di) => di.delivery_id === d.id),
+  }));
+  const activeOrders = allOrders.filter((o) => o.invoice?.payment_status !== 'PAID');
+  const paidOrders = allOrders.filter((o) => o.invoice?.payment_status === 'PAID');
   const shownOrders = filter === 'active' ? activeOrders : paidOrders;
+
+  const groupedOrders = sortAndGroupItems(shownOrders, sortBy, groupBy, {
+    getDate: (o) => o.delivery.delivery_date || o.invoice?.invoice_date || '',
+    getKitchenName: (o) => (o.kitchen ? shortKitchenName(o.kitchen.name) : '-'),
+    getKitchenCode: (o) => o.kitchen?.kitchen_code ?? '-',
+    getCode: (o) => o.delivery.delivery_number,
+  });
 
   const confirmDo = (text: string) => typeof window === 'undefined' || window.confirm(text);
 
@@ -189,6 +208,23 @@ export function Tab1KitchenOrders() {
           </div>
 
           <div className="space-y-4 p-4">
+            {/* Tanggal Order */}
+            <div className="space-y-1.5">
+              <label htmlFor="order-date-input" className="field-label">
+                Tanggal Order
+              </label>
+              <input
+                id="order-date-input"
+                type="date"
+                value={orderDate}
+                onChange={(e) => {
+                  setOrderDate(e.target.value);
+                  setFormError(null);
+                }}
+                className="field-input tabular-nums"
+              />
+            </div>
+
             {/* 1. Dapur tujuan (Preline Searchbox + List Group) */}
             <div className="space-y-1.5">
               <span className="field-label">Dapur Tujuan</span>
@@ -250,7 +286,7 @@ export function Tab1KitchenOrders() {
                       <li className="px-3 py-2.5 text-[12px] text-[#6b6b6b]">Dapur tidak ditemukan.</li>
                     )}
                     {kitchenMatches.map((k) => {
-                      const hasOpen = !!findOpenOrder(data, k.id, todayYmd);
+                      const hasOpen = !!findOpenOrder(data, k.id, targetDate);
                       return (
                         <li key={k.id}>
                           <button
@@ -277,8 +313,8 @@ export function Tab1KitchenOrders() {
               )}
               {openOrder && (
                 <p className="rounded-[6px] border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[12px] text-[#92400e]">
-                  Dapur ini sudah memiliki order hari ini ({openOrder.delivery_number}). Barang baru akan digabung ke
-                  invoice yang sama.
+                  Dapur ini sudah memiliki order pada tanggal {targetDate} ({openOrder.delivery_number}). Barang baru
+                  akan digabung ke invoice yang sama.
                 </p>
               )}
             </div>
@@ -432,7 +468,7 @@ export function Tab1KitchenOrders() {
       <div className="flex items-center justify-between gap-2 pt-2">
         <h2 className="text-[16px] font-medium text-[#0a0a0a]">Daftar Order Dapur</h2>
         <span className="inline-flex h-6 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2 text-[11px] font-medium text-[#3d3d3d] tabular-nums">
-          {todayOrders.length} order
+          {allOrders.length} order
         </span>
       </div>
       <SegmentedControl<ListFilter>
@@ -445,97 +481,152 @@ export function Tab1KitchenOrders() {
         ]}
       />
 
+      <SortGroupControls
+        sortBy={sortBy}
+        onSortChange={setSortBy}
+        groupBy={groupBy}
+        onGroupChange={setGroupBy}
+        idPrefix="order"
+      />
+
       {shownOrders.length === 0 && (
         <Card className="p-6 text-center text-[13px] text-[#6b6b6b]">
           {filter === 'active' ? 'Belum ada order aktif.' : 'Belum ada order yang lunas.'}
         </Card>
       )}
 
-      <div className="space-y-3">
-        {shownOrders.map(({ delivery, kitchen: k, invoice, lines: ol }) => {
-          const locked = invoice?.payment_status === 'PAID';
-          const title = k ? `${k.kitchen_code} · ${shortKitchenName(k.name)}` : '-';
-          const marginTotal = sumIdr(ol.map((l) => l.line_margin_amount));
+      <div className="space-y-4">
+        {groupedOrders.map((bucket) => {
+          const bucketTotal = sumIdr(bucket.items.map((o) => o.invoice?.total_invoice_amount ?? 0));
           return (
-            <Card as="article" key={delivery.id} className="overflow-hidden">
-              <header className="hs-card-header">
-                <div className="min-w-0">
-                  <h3 className="truncate text-[14px] font-medium text-[#0a0a0a]">{title}</h3>
-                  <p className="truncate font-mono text-[11px] text-[#6b6b6b]">{delivery.delivery_number}</p>
+            <div key={bucket.key} className="space-y-2.5">
+              {groupBy !== 'none' && (
+                <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#e6e6e6] bg-[#e9edf2] px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-1.5">
+                    {bucket.sublabel && (
+                      <span className="shrink-0 rounded-[4px] border border-[#d4d4d4] bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#3d3d3d]">
+                        {bucket.sublabel}
+                      </span>
+                    )}
+                    <span className="truncate text-[13px] font-bold text-[#0a0a0a]">{bucket.label}</span>
+                  </div>
+                  <div className="shrink-0 text-right text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+                    {bucket.items.length} order · <span className="font-bold text-[#0a0a0a]">{formatRp(bucketTotal)}</span>
+                  </div>
                 </div>
-                <Badge tone={locked ? 'green' : 'amber'}>
-                  {locked ? 'Lunas' : 'Belum Bayar'}
-                </Badge>
-              </header>
-              <ul className="divide-y divide-[#f0f0f0] px-4">
-                {ol.map((l) => {
-                  const name = items.find((i) => i.id === l.item_id)?.name ?? 'Barang';
+              )}
+
+              <div className="space-y-3">
+                {bucket.items.map(({ delivery, kitchen: k, invoice, lines: ol }) => {
+                  const locked = invoice?.payment_status === 'PAID';
+                  const hasPaidOut = invoice
+                    ? ledgerEntries.some((le) => le.invoice_id === invoice.id && le.payout_status === 'PAID_OUT')
+                    : false;
+                  const title = k ? `${k.kitchen_code} · ${shortKitchenName(k.name)}` : '-';
+                  const marginTotal = sumIdr(ol.map((l) => l.line_margin_amount));
                   return (
-                    <li key={l.id} className="flex items-center justify-between gap-2 py-2.5">
-                      <div className="min-w-0">
-                        <div className="truncate text-[14px] font-medium text-[#0a0a0a]">
-                          {name}{' '}
-                          <span className="font-normal text-[#6b6b6b] tabular-nums">
-                            · {formatKgNum(l.qty_dispatched_kg)} kg
+                    <Card as="article" key={delivery.id} className="overflow-hidden">
+                      <header className="hs-card-header">
+                        <div className="min-w-0">
+                          <h3 className="truncate text-[14px] font-medium text-[#0a0a0a]">{title}</h3>
+                          <p className="truncate font-mono text-[11px] text-[#6b6b6b] tabular-nums">
+                            {delivery.delivery_date} · {delivery.delivery_number}
+                          </p>
+                        </div>
+                        <Badge tone={locked ? 'green' : 'amber'}>{locked ? 'Lunas' : 'Belum Bayar'}</Badge>
+                      </header>
+                      <ul className="divide-y divide-[#f0f0f0] px-4">
+                        {ol.map((l) => {
+                          const name = items.find((i) => i.id === l.item_id)?.name ?? 'Barang';
+                          return (
+                            <li key={l.id} className="flex items-center justify-between gap-2 py-2.5">
+                              <div className="min-w-0">
+                                <div className="truncate text-[14px] font-medium text-[#0a0a0a]">
+                                  {name}{' '}
+                                  <span className="font-normal text-[#6b6b6b] tabular-nums">
+                                    · {formatKgNum(l.qty_dispatched_kg)} kg
+                                  </span>
+                                </div>
+                                <div className="truncate text-[12px] tabular-nums text-[#6b6b6b]">
+                                  {formatRp(l.kitchen_unit_price_snapshot)}/kg · margin{' '}
+                                  {formatRp(l.margin_per_kg_snapshot)}/kg
+                                </div>
+                              </div>
+                              <div className="flex shrink-0 items-center gap-2">
+                                <span className="text-[13px] font-bold tabular-nums text-[#0a0a0a]">
+                                  {formatRp(l.line_invoice_amount)}
+                                </span>
+                                {!locked && !hasPaidOut && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemoveLine(l.id, name)}
+                                    aria-label={`Hapus ${name} dari order ${title}`}
+                                    className="flex h-7 w-7 items-center justify-center rounded-[4px] border border-transparent text-base text-[#6b6b6b] hover:border-[#f5c2c0] hover:bg-[#ffedea] hover:text-[#831c1e]"
+                                  >
+                                    ×
+                                  </button>
+                                )}
+                              </div>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                      <footer className="hs-card-footer space-y-2">
+                        <div className="flex items-baseline justify-between gap-2 text-[13px]">
+                          <span className="text-[#6b6b6b]">Tagihan Dapur</span>
+                          <span className="text-[15px] font-bold tabular-nums text-[#0a0a0a]">
+                            {formatRp(invoice?.total_invoice_amount ?? 0)}
                           </span>
                         </div>
-                        <div className="truncate text-[12px] tabular-nums text-[#6b6b6b]">
-                          {formatRp(l.kitchen_unit_price_snapshot)}/kg · margin {formatRp(l.margin_per_kg_snapshot)}/kg
+                        <div className="flex items-baseline justify-between gap-2 text-[12px]">
+                          <span className="text-[#6b6b6b]">Bagi hasil (Tim + Koperasi)</span>
+                          <span className="font-bold tabular-nums text-[#1d5fbf]">{formatRp(marginTotal)}</span>
                         </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-2">
-                        <span className="text-[13px] font-bold tabular-nums text-[#0a0a0a]">
-                          {formatRp(l.line_invoice_amount)}
-                        </span>
-                        {!locked && (
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveLine(l.id, name)}
-                            aria-label={`Hapus ${name} dari order ${title}`}
-                            className="flex h-7 w-7 items-center justify-center rounded-[4px] border border-transparent text-base text-[#6b6b6b] hover:border-[#f5c2c0] hover:bg-[#ffedea] hover:text-[#831c1e]"
-                          >
-                            ×
-                          </button>
+                        {!hasPaidOut && (
+                          <div className={`grid gap-2 pt-1 ${locked ? 'grid-cols-1' : 'grid-cols-3'}`}>
+                            <button
+                              type="button"
+                              onClick={() => setEditingDeliveryId(delivery.id)}
+                              className="btn-secondary min-h-[36px] text-[12px]"
+                            >
+                              Edit Order
+                            </button>
+                            {!locked && (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => startAddToKitchen(delivery.kitchen_id, delivery.delivery_date)}
+                                  className="btn-secondary min-h-[36px] text-[12px]"
+                                >
+                                  + Tambah Barang
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteOrder(delivery.id, title)}
+                                  className="btn-secondary min-h-[36px] border-[#f5c2c0] text-[12px] !text-[#c4242a] hover:!bg-[#ffedea]"
+                                >
+                                  Hapus Order
+                                </button>
+                              </>
+                            )}
+                          </div>
                         )}
-                      </div>
-                    </li>
+                      </footer>
+                    </Card>
                   );
                 })}
-              </ul>
-              <footer className="hs-card-footer space-y-2">
-                <div className="flex items-baseline justify-between gap-2 text-[13px]">
-                  <span className="text-[#6b6b6b]">Tagihan Dapur</span>
-                  <span className="text-[15px] font-bold tabular-nums text-[#0a0a0a]">
-                    {formatRp(invoice?.total_invoice_amount ?? 0)}
-                  </span>
-                </div>
-                <div className="flex items-baseline justify-between gap-2 text-[12px]">
-                  <span className="text-[#6b6b6b]">Bagi hasil (Tim + Koperasi)</span>
-                  <span className="font-bold tabular-nums text-[#1d5fbf]">{formatRp(marginTotal)}</span>
-                </div>
-                {!locked && (
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => startAddToKitchen(delivery.kitchen_id)}
-                      className="btn-secondary min-h-[36px] text-[12px]"
-                    >
-                      + Tambah Barang
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteOrder(delivery.id, title)}
-                      className="btn-secondary min-h-[36px] border-[#f5c2c0] text-[12px] !text-[#c4242a] hover:!bg-[#ffedea]"
-                    >
-                      Hapus Order
-                    </button>
-                  </div>
-                )}
-              </footer>
-            </Card>
+              </div>
+            </div>
           );
         })}
       </div>
+
+      <OrderInvoiceEditSheet
+        deliveryId={editingDeliveryId}
+        mode="order"
+        onClose={() => setEditingDeliveryId(null)}
+        onSaved={(msg) => setToast({ kind: 'ok', text: msg })}
+      />
     </section>
   );
 }

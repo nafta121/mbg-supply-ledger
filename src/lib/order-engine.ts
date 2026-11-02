@@ -71,7 +71,20 @@ export interface OrderLineInput {
 
 export interface CreateOrderInput {
   kitchen_id: string;
+  order_date?: string;
   lines: OrderLineInput[];
+}
+
+export interface UpdateOrderLineInput extends OrderLineInput {
+  id?: string;
+  qty_accepted_kg?: number;
+}
+
+export interface UpdateOrderInput {
+  delivery_id: string;
+  kitchen_id: string;
+  order_date: string;
+  lines: UpdateOrderLineInput[];
 }
 
 export interface UpdateBastInput {
@@ -359,6 +372,7 @@ export function createKitchenOrder<T extends MbgData>(
 ): EngineResult<T> {
   const kitchen = data.kitchens.find((k) => k.id === input.kitchen_id);
   if (!kitchen) return { ok: false, error: 'Pilih dapur tujuan.' };
+  const targetDate = (input.order_date ?? '').trim() || ctx.today;
 
   const lines = input.lines.map((l) => ({
     ...l,
@@ -367,7 +381,7 @@ export function createKitchenOrder<T extends MbgData>(
     margin_per_kg_rp: senToIdr(idrToSen(Number.isFinite(l.margin_per_kg_rp) ? l.margin_per_kg_rp : 0)),
   }));
 
-  const open = findOpenOrder(data, kitchen.id, ctx.today);
+  const open = findOpenOrder(data, kitchen.id, targetDate);
   const existingItemIds = open ? linesForDelivery(data, open.id).map((l) => l.item_id) : [];
   const error = validateOrderLines(data, lines, existingItemIds);
   if (error) return { ok: false, error };
@@ -379,14 +393,14 @@ export function createKitchenOrder<T extends MbgData>(
     deliveryId = open.id;
   } else {
     deliveryId = ctx.uid('deliv');
-    const base = `${compactDate(ctx.today)}-${kitchen.kitchen_code.replace('-', '')}`;
+    const base = `${compactDate(targetDate)}-${kitchen.kitchen_code.replace('-', '')}`;
     const deliveryNumber = nextDocNumber('SJ', base, data.deliveries.map((d) => d.delivery_number));
     const invoiceNumber = nextDocNumber('INV', base, data.invoices.map((i) => i.invoice_number));
     const delivery: KitchenDelivery = {
       id: deliveryId,
       delivery_number: deliveryNumber,
       kitchen_id: kitchen.id,
-      delivery_date: ctx.today,
+      delivery_date: targetDate,
       status: 'IN_TRANSIT',
       courier_user_id: 'field-1',
       bast_signed_by_name: kitchen.pic_name,
@@ -401,8 +415,8 @@ export function createKitchenOrder<T extends MbgData>(
       invoice_number: invoiceNumber,
       kitchen_id: kitchen.id,
       delivery_id: deliveryId,
-      invoice_date: ctx.today,
-      due_date: addDays(ctx.today, DUE_DAYS),
+      invoice_date: targetDate,
+      due_date: addDays(targetDate, DUE_DAYS),
       total_invoice_amount: 0,
       amount_paid: 0,
       payment_status: 'UNPAID',
@@ -423,6 +437,105 @@ export function createKitchenOrder<T extends MbgData>(
   next = { ...next, deliveryItems: [...next.deliveryItems, ...newLines] };
   next = recomputeOrder(next, deliveryId, ctx.nowIso);
   return { ok: true, data: next, delivery_id: deliveryId, merged: !!open, count: newLines.length };
+}
+
+/**
+ * Updates an existing Order Dapur & Invoice Dapur (date, kitchen, item, qty, price, margin).
+ * Allowed as long as profit sharing for this order has not been disbursed (PAID_OUT).
+ */
+export function updateKitchenOrder<T extends MbgData>(
+  data: T,
+  input: UpdateOrderInput,
+  ctx: EngineCtx
+): EngineResult<T> {
+  const delivery = data.deliveries.find((d) => d.id === input.delivery_id);
+  if (!delivery) return { ok: false, error: 'Order dapur tidak ditemukan.' };
+  const invoice = invoiceForDelivery(data, delivery.id);
+  if (invoice && data.ledgerEntries.some((le) => le.invoice_id === invoice.id && le.payout_status === 'PAID_OUT')) {
+    return { ok: false, error: 'Bagi hasil untuk order ini sudah dicairkan — order dan invoice tidak dapat diubah.' };
+  }
+  const kitchen = data.kitchens.find((k) => k.id === input.kitchen_id);
+  if (!kitchen) return { ok: false, error: 'Pilih dapur tujuan.' };
+  const orderDate = (input.order_date ?? '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(orderDate)) {
+    return { ok: false, error: 'Tanggal order/invoice tidak valid.' };
+  }
+
+  const normalizedLines: UpdateOrderLineInput[] = input.lines.map((l) => ({
+    ...l,
+    qty_ordered_kg: Number.isFinite(l.qty_ordered_kg) ? roundKg(l.qty_ordered_kg) : 0,
+    kitchen_unit_price_rp: senToIdr(idrToSen(Number.isFinite(l.kitchen_unit_price_rp) ? l.kitchen_unit_price_rp : 0)),
+    margin_per_kg_rp: senToIdr(idrToSen(Number.isFinite(l.margin_per_kg_rp) ? l.margin_per_kg_rp : 0)),
+  }));
+
+  const error = validateOrderLines(data, normalizedLines, []);
+  if (error) return { ok: false, error };
+
+  const existingById = new Map(linesForDelivery(data, delivery.id).map((di) => [di.id, di]));
+  const updatedItems: KitchenDeliveryItem[] = normalizedLines.map((l) => {
+    const prev = l.id ? existingById.get(l.id) : undefined;
+    const qty = roundKg(l.qty_ordered_kg);
+    const r = reconcileKitchenOrderLine({
+      qty_ordered_kg: qty,
+      qty_accepted_kg: qty,
+      kitchen_unit_price_rp: l.kitchen_unit_price_rp,
+      margin_per_kg_rp: l.margin_per_kg_rp,
+    });
+    return {
+      id: prev?.id ?? ctx.uid('ditem'),
+      delivery_id: delivery.id,
+      item_id: l.item_id,
+      qty_dispatched_kg: r.qty_ordered_kg,
+      qty_accepted_kg: r.qty_accepted_kg,
+      qty_shrinkage_kg: r.qty_shrinkage_kg,
+      kitchen_unit_price_snapshot: r.kitchen_unit_price_rp,
+      margin_per_kg_snapshot: r.margin_per_kg_rp,
+      line_invoice_amount: r.line_invoice_amount,
+      line_margin_amount: r.line_margin_amount,
+      weighed_at: prev?.weighed_at ?? ctx.nowIso,
+      rejection_reason: null,
+      created_at: prev?.created_at ?? ctx.nowIso,
+      updated_at: ctx.nowIso,
+    };
+  });
+
+  const keptIds = new Set(updatedItems.map((i) => i.id));
+  const otherDeliveryItems = data.deliveryItems.filter((di) => di.delivery_id !== delivery.id);
+  const nextDeliveries = data.deliveries.map((d) =>
+    d.id === delivery.id
+      ? {
+          ...d,
+          kitchen_id: kitchen.id,
+          delivery_date: orderDate,
+          bast_signed_by_name: kitchen.pic_name,
+          updated_at: ctx.nowIso,
+        }
+      : d
+  );
+  const nextInvoices = data.invoices.map((inv) =>
+    inv.delivery_id === delivery.id
+      ? {
+          ...inv,
+          kitchen_id: kitchen.id,
+          invoice_date: orderDate,
+          due_date: addDays(orderDate, DUE_DAYS),
+          updated_at: ctx.nowIso,
+        }
+      : inv
+  );
+  const nextLedger = data.ledgerEntries.filter(
+    (le) => le.invoice_id !== invoice?.id || keptIds.has(le.delivery_item_id)
+  );
+
+  let next: T = {
+    ...data,
+    deliveries: nextDeliveries,
+    deliveryItems: [...otherDeliveryItems, ...updatedItems],
+    invoices: nextInvoices,
+    ledgerEntries: nextLedger,
+  };
+  next = recomputeOrder(next, delivery.id, ctx.nowIso);
+  return { ok: true, data: next, delivery_id: delivery.id, count: updatedItems.length };
 }
 
 /**

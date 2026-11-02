@@ -5,6 +5,13 @@ import { buildInvoiceLines, buildInvoiceWaText, resolvePaymentAccount, summarize
 import { useMbgStore } from '../lib/mbg-store';
 import { shareToWhatsApp } from '../lib/share';
 import { formatKgNum, formatRp, INVOICE_LABEL, invoiceTone, shortKitchenName, sumIdr } from '../lib/ui-format';
+import {
+  type GroupMode,
+  OrderInvoiceEditSheet,
+  sortAndGroupItems,
+  SortGroupControls,
+  type SortMode,
+} from './OrderInvoiceEditSheet';
 import { PrintableDocument, type PrintDocMode } from './PrintDocuments';
 import { Badge, Card, NoAccess, Toast, type ToastState } from './ui';
 
@@ -12,9 +19,12 @@ type InvFilter = 'unpaid' | 'paid' | 'all';
 
 export function Tab3KitchenInvoices() {
   const store = useMbgStore();
-  const { activeRole, invoices, kitchens, markInvoicePaid } = store;
+  const { activeRole, invoices, kitchens, ledgerEntries, markInvoicePaid } = store;
 
   const [invFilter, setInvFilter] = useState<InvFilter>('unpaid');
+  const [sortBy, setSortBy] = useState<SortMode>('date_desc');
+  const [groupBy, setGroupBy] = useState<GroupMode>('none');
+  const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   const [printDoc, setPrintDoc] = useState<PrintDocMode | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
 
@@ -27,9 +37,17 @@ export function Tab3KitchenInvoices() {
   const unpaidTotal = sumIdr(unpaid.map((i) => i.total_invoice_amount));
   const paidTotal = sumIdr(paid.map((i) => i.total_invoice_amount));
 
-  const filteredInvoices = (invFilter === 'paid' ? paid : invFilter === 'unpaid' ? unpaid : invoices)
-    .slice()
-    .sort((a, b) => a.invoice_number.localeCompare(b.invoice_number, 'id'));
+  const filteredInvoices = invFilter === 'paid' ? paid : invFilter === 'unpaid' ? unpaid : invoices;
+
+  const groupedInvoices = sortAndGroupItems(filteredInvoices, sortBy, groupBy, {
+    getDate: (inv) => inv.invoice_date || '',
+    getKitchenName: (inv) => {
+      const k = kitchens.find((x) => x.id === inv.kitchen_id);
+      return k ? shortKitchenName(k.name) : '-';
+    },
+    getKitchenCode: (inv) => kitchens.find((x) => x.id === inv.kitchen_id)?.kitchen_code ?? '-',
+    getCode: (inv) => inv.invoice_number,
+  });
 
   return (
     <section aria-label="Invoice Dapur" className="space-y-3.5">
@@ -92,129 +110,186 @@ export function Tab3KitchenInvoices() {
           ))}
         </div>
 
+        <SortGroupControls
+          sortBy={sortBy}
+          onSortChange={setSortBy}
+          groupBy={groupBy}
+          onGroupChange={setGroupBy}
+          idPrefix="invoice"
+        />
+
         <Toast toast={toast} onClose={() => setToast(null)} />
 
         {filteredInvoices.length === 0 && (
           <Card className="p-6 text-center text-[13px] text-[#6b6b6b]">Tidak ada invoice pada filter ini.</Card>
         )}
 
-        <div className="space-y-3">
-          {filteredInvoices.map((inv) => {
-            const kitchen = kitchens.find((k) => k.id === inv.kitchen_id);
-            const lines = buildInvoiceLines(store, inv);
-            const summary = summarizeInvoice(lines);
-            const account = resolvePaymentAccount(store, inv);
-            const isPaid = inv.payment_status === 'PAID';
-            const title = kitchen ? `${kitchen.kitchen_code} · ${shortKitchenName(kitchen.name)}` : '-';
-
+        <div className="space-y-4">
+          {groupedInvoices.map((bucket) => {
+            const bucketTotal = sumIdr(bucket.items.map((i) => i.total_invoice_amount));
             return (
-              <Card as="article" key={inv.id} className="overflow-hidden">
-                <div className="hs-card-header">
-                  <div className="min-w-0">
-                    <h2 className="truncate text-[14px] font-medium text-[#0a0a0a]">{title}</h2>
-                    <p className="truncate font-mono text-[11px] text-[#6b6b6b]">{inv.invoice_number}</p>
+              <div key={bucket.key} className="space-y-2.5">
+                {groupBy !== 'none' && (
+                  <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#e6e6e6] bg-[#e9edf2] px-3 py-2">
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      {bucket.sublabel && (
+                        <span className="shrink-0 rounded-[4px] border border-[#d4d4d4] bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#3d3d3d]">
+                          {bucket.sublabel}
+                        </span>
+                      )}
+                      <span className="truncate text-[13px] font-bold text-[#0a0a0a]">{bucket.label}</span>
+                    </div>
+                    <div className="shrink-0 text-right text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+                      {bucket.items.length} invoice · <span className="font-bold text-[#0a0a0a]">{formatRp(bucketTotal)}</span>
+                    </div>
                   </div>
-                  <Badge tone={invoiceTone(inv.payment_status)}>{INVOICE_LABEL[inv.payment_status]}</Badge>
-                </div>
+                )}
 
-                <ul className="divide-y divide-[#f0f0f0] px-4">
-                  {lines.map((l) => (
-                    <li key={l.id} className="space-y-0.5 py-2.5 text-[13px]">
-                      <div className="flex items-baseline justify-between gap-2">
-                        <span className="min-w-0 truncate font-medium text-[#0a0a0a]">{l.item_name}</span>
-                        <span className="shrink-0 font-bold tabular-nums text-[#0a0a0a]">{formatRp(l.line_total)}</span>
-                      </div>
-                      <div className="text-[12px] tabular-nums text-[#6b6b6b]">
-                        {formatKgNum(l.qty_accepted_kg)} kg × {formatRp(l.unit_price)}
-                      </div>
-                      {l.weighed && l.qty_shrinkage_kg > 0 && (
-                        <div className="text-[11px] text-[#c4242a]">
-                          Order {formatKgNum(l.qty_ordered_kg)} kg, selisih -{formatKgNum(l.qty_shrinkage_kg)} kg tidak
-                          ditagih{l.reason ? ` · ${l.reason}` : ''}
+                <div className="space-y-3">
+                  {bucket.items.map((inv) => {
+                    const kitchen = kitchens.find((k) => k.id === inv.kitchen_id);
+                    const lines = buildInvoiceLines(store, inv);
+                    const summary = summarizeInvoice(lines);
+                    const account = resolvePaymentAccount(store, inv);
+                    const isPaid = inv.payment_status === 'PAID';
+                    const hasPaidOut = ledgerEntries.some(
+                      (le) => le.invoice_id === inv.id && le.payout_status === 'PAID_OUT'
+                    );
+                    const title = kitchen ? `${kitchen.kitchen_code} · ${shortKitchenName(kitchen.name)}` : '-';
+
+                    return (
+                      <Card as="article" key={inv.id} className="overflow-hidden">
+                        <div className="hs-card-header">
+                          <div className="min-w-0">
+                            <h2 className="truncate text-[14px] font-medium text-[#0a0a0a]">{title}</h2>
+                            <p className="truncate font-mono text-[11px] text-[#6b6b6b] tabular-nums">
+                              {inv.invoice_date} · {inv.invoice_number}
+                            </p>
+                          </div>
+                          <Badge tone={invoiceTone(inv.payment_status)}>{INVOICE_LABEL[inv.payment_status]}</Badge>
                         </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
 
-                <div className="hs-card-footer space-y-2.5">
-                  <div className="flex items-end justify-between gap-2">
-                    <span className="text-[12px] text-[#6b6b6b]">
-                      Total Tagihan Dapur
-                      <span className="block tabular-nums text-[#6b6b6b]">
-                        {summary.line_count} barang · {formatKgNum(summary.total_accepted_kg)} kg
-                      </span>
-                    </span>
-                    <span className="text-[20px] font-bold tracking-tight tabular-nums text-[#0a0a0a]">
-                      {formatRp(inv.total_invoice_amount)}
-                    </span>
-                  </div>
+                        <ul className="divide-y divide-[#f0f0f0] px-4">
+                          {lines.map((l) => (
+                            <li key={l.id} className="space-y-0.5 py-2.5 text-[13px]">
+                              <div className="flex items-baseline justify-between gap-2">
+                                <span className="min-w-0 truncate font-medium text-[#0a0a0a]">{l.item_name}</span>
+                                <span className="shrink-0 font-bold tabular-nums text-[#0a0a0a]">
+                                  {formatRp(l.line_total)}
+                                </span>
+                              </div>
+                              <div className="text-[12px] tabular-nums text-[#6b6b6b]">
+                                {formatKgNum(l.qty_accepted_kg)} kg × {formatRp(l.unit_price)}
+                              </div>
+                              {l.weighed && l.qty_shrinkage_kg > 0 && (
+                                <div className="text-[11px] text-[#c4242a]">
+                                  Order {formatKgNum(l.qty_ordered_kg)} kg, selisih -{formatKgNum(l.qty_shrinkage_kg)}{' '}
+                                  kg tidak ditagih{l.reason ? ` · ${l.reason}` : ''}
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
 
-                  <div className="rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] px-3 py-2 text-[12px]">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-[#6b6b6b]">Supplier</span>
-                      <span className="truncate font-medium text-[#0a0a0a]">
-                        {account.supplier_name ?? 'Supplier MBG'}
-                      </span>
-                    </div>
-                    <div className="mt-1 flex items-center justify-between gap-2 border-t border-[#eeeeee] pt-1">
-                      <span className="text-[#6b6b6b]">Rekening</span>
-                      <span className="truncate font-mono text-[11px] font-medium text-[#0a0a0a]">
-                        {account.payment_bank_name} · {account.payment_account_number} ({account.payment_account_holder})
-                      </span>
-                    </div>
-                  </div>
+                        <div className="hs-card-footer space-y-2.5">
+                          <div className="flex items-end justify-between gap-2">
+                            <span className="text-[12px] text-[#6b6b6b]">
+                              Total Tagihan Dapur
+                              <span className="block tabular-nums text-[#6b6b6b]">
+                                {summary.line_count} barang · {formatKgNum(summary.total_accepted_kg)} kg
+                              </span>
+                            </span>
+                            <span className="text-[20px] font-bold tracking-tight tabular-nums text-[#0a0a0a]">
+                              {formatRp(inv.total_invoice_amount)}
+                            </span>
+                          </div>
 
-                  {isAdmin && (
-                    <div className="space-y-2 pt-0.5">
-                      {!isPaid && (
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            const res = await markInvoicePaid(inv.id);
-                            setToast(
-                              res.ok
-                                ? { kind: 'ok', text: `${title} lunas. Bagi hasil siap dicairkan.` }
-                                : { kind: 'error', text: res.error }
-                            );
-                          }}
-                          className="btn-primary w-full"
-                        >
-                          Tandai Lunas
-                        </button>
-                      )}
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setPrintDoc({ type: 'INVOICE', invoiceId: inv.id })}
-                          className="btn-secondary min-h-[36px] px-2 text-[12px]"
-                        >
-                          Cetak / PDF Invoice
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() =>
-                            void shareToWhatsApp(kitchen?.pic_phone, buildInvoiceWaText(store, inv)).then((ok) =>
-                              setToast(
-                                ok
-                                  ? { kind: 'ok', text: 'Tagihan disalin & WhatsApp dibuka.' }
-                                  : { kind: 'error', text: 'Gagal menyalin otomatis. WhatsApp tetap dibuka.' }
-                              )
-                            )
-                          }
-                          className="btn-secondary min-h-[36px] px-2 text-[12px]"
-                        >
-                          Salin &amp; Kirim WA
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                          <div className="rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] px-3 py-2 text-[12px]">
+                            <div className="flex items-center justify-between gap-2">
+                              <span className="text-[#6b6b6b]">Supplier</span>
+                              <span className="truncate font-medium text-[#0a0a0a]">
+                                {account.supplier_name ?? 'Supplier MBG'}
+                              </span>
+                            </div>
+                            <div className="mt-1 flex items-center justify-between gap-2 border-t border-[#eeeeee] pt-1">
+                              <span className="text-[#6b6b6b]">Rekening</span>
+                              <span className="truncate font-mono text-[11px] font-medium text-[#0a0a0a]">
+                                {account.payment_bank_name} · {account.payment_account_number} (
+                                {account.payment_account_holder})
+                              </span>
+                            </div>
+                          </div>
+
+                          {isAdmin && (
+                            <div className="space-y-2 pt-0.5">
+                              {!isPaid && (
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const res = await markInvoicePaid(inv.id);
+                                    setToast(
+                                      res.ok
+                                        ? { kind: 'ok', text: `${title} lunas. Bagi hasil siap dicairkan.` }
+                                        : { kind: 'error', text: res.error }
+                                    );
+                                  }}
+                                  className="btn-primary w-full"
+                                >
+                                  Tandai Lunas
+                                </button>
+                              )}
+                              <div className={`grid gap-2 ${!hasPaidOut ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                                {!hasPaidOut && (
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingDeliveryId(inv.delivery_id)}
+                                    className="btn-secondary min-h-[36px] px-2 text-[12px]"
+                                  >
+                                    Edit Invoice
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => setPrintDoc({ type: 'INVOICE', invoiceId: inv.id })}
+                                  className="btn-secondary min-h-[36px] px-2 text-[12px]"
+                                >
+                                  Cetak / PDF
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void shareToWhatsApp(kitchen?.pic_phone, buildInvoiceWaText(store, inv)).then((ok) =>
+                                      setToast(
+                                        ok
+                                          ? { kind: 'ok', text: 'Tagihan disalin & WhatsApp dibuka.' }
+                                          : { kind: 'error', text: 'Gagal menyalin otomatis. WhatsApp tetap dibuka.' }
+                                      )
+                                    )
+                                  }
+                                  className="btn-secondary min-h-[36px] px-2 text-[12px]"
+                                >
+                                  Salin &amp; WA
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </Card>
+                    );
+                  })}
                 </div>
-              </Card>
+              </div>
             );
           })}
         </div>
       </div>
+
+      <OrderInvoiceEditSheet
+        deliveryId={editingDeliveryId}
+        mode="invoice"
+        onClose={() => setEditingDeliveryId(null)}
+        onSaved={(msg) => setToast({ kind: 'ok', text: msg })}
+      />
 
       {/* On-screen print preview */}
       {printDoc && (

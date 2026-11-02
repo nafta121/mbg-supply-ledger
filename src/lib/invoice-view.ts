@@ -76,27 +76,21 @@ export function resolvePaymentAccount(
 ): PaymentAccountInfo {
   const isPaid = invoice?.payment_status === 'PAID';
   const cfg = data.splitConfig;
+  const pick = (invVal?: string, cfgVal?: string, fallback = '') =>
+    (isPaid ? invVal || cfgVal : cfgVal || invVal) || fallback;
   return {
-    supplier_name:
-      (isPaid ? invoice?.supplier_name : cfg?.supplier_name || invoice?.supplier_name) ||
-      cfg?.supplier_name ||
-      invoice?.supplier_name ||
-      'Supplier MBG',
-    payment_bank_name:
-      (isPaid ? invoice?.payment_bank_name : cfg?.payment_bank_name || invoice?.payment_bank_name) ||
-      cfg?.payment_bank_name ||
-      invoice?.payment_bank_name ||
-      'BRI',
-    payment_account_number:
-      (isPaid ? invoice?.payment_account_number : cfg?.payment_account_number || invoice?.payment_account_number) ||
-      cfg?.payment_account_number ||
-      invoice?.payment_account_number ||
-      '0000-0000-0000-000',
-    payment_account_holder:
-      (isPaid ? invoice?.payment_account_holder : cfg?.payment_account_holder || invoice?.payment_account_holder) ||
-      cfg?.payment_account_holder ||
-      invoice?.payment_account_holder ||
-      'Bendahara Supplier MBG',
+    supplier_name: pick(invoice?.supplier_name, cfg?.supplier_name, 'Supplier MBG'),
+    payment_bank_name: pick(invoice?.payment_bank_name, cfg?.payment_bank_name, 'BRI'),
+    payment_account_number: pick(
+      invoice?.payment_account_number,
+      cfg?.payment_account_number,
+      '0000-0000-0000-000'
+    ),
+    payment_account_holder: pick(
+      invoice?.payment_account_holder,
+      cfg?.payment_account_holder,
+      'Bendahara Supplier MBG'
+    ),
   };
 }
 

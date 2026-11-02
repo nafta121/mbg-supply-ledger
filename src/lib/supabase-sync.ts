@@ -32,7 +32,7 @@ import {
   roundKg,
   senToIdr,
 } from './financial-engine';
-import type { CreateOrderInput, MbgData, UpdateBastInput } from './order-engine';
+import type { CreateOrderInput, MbgData, UpdateBastInput, UpdateOrderInput } from './order-engine';
 
 const DEFAULT_DATE = '2026-10-16';
 const DEFAULT_ISO = '2026-10-16T06:00:00.000Z';
@@ -736,6 +736,44 @@ export async function upsertKitchenOrderRpc(
 }
 
 /**
+ * RPC #1b: Invokes `rpc_update_kitchen_order(p_order_id, p_kitchen_id, p_order_date, p_items)`
+ * to edit an existing order/invoice's date, kitchen, items, qty, price, and margin in PostgreSQL.
+ */
+export async function updateKitchenOrderRpc(
+  supabase: SupabaseClient,
+  input: UpdateOrderInput
+): Promise<{ ok: true; order_id: string; count: number } | { ok: false; error: string }> {
+  try {
+    const payload = input.lines.map((l) => ({
+      id: l.id ?? null,
+      product_id: l.item_id,
+      item_id: l.item_id,
+      qty_ordered_kg: roundKg(l.qty_ordered_kg),
+      qty_accepted_kg: l.qty_accepted_kg != null ? roundKg(l.qty_accepted_kg) : null,
+      kitchen_unit_price_rp: l.kitchen_unit_price_rp,
+      margin_per_kg_rp: l.margin_per_kg_rp,
+    }));
+    const { data, error } = await supabase.rpc('rpc_update_kitchen_order', {
+      p_order_id: input.delivery_id,
+      p_kitchen_id: input.kitchen_id,
+      p_order_date: input.order_date,
+      p_items: payload,
+    });
+    if (error) {
+      return { ok: false, error: error.message };
+    }
+    const res = (data ?? {}) as Record<string, unknown>;
+    return {
+      ok: true,
+      order_id: String(res.order_id ?? input.delivery_id),
+      count: Number(res.count ?? payload.length),
+    };
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : 'Gagal memperbarui order/invoice di Supabase.' };
+  }
+}
+
+/**
  * RPC #2: Invokes atomic `rpc_submit_courier_weighing_batch(p_items JSONB)` SECURITY DEFINER RPC
  * in a single database transaction (no N+1 loop).
  * PostgreSQL updates all items and executes `fn_recalculate_order_financials` for each order.
@@ -1011,6 +1049,16 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
       return null;
     }
 
+    let appSettingsRows = settingsRes.data as AppSettingsRow[] | null;
+    if (settingsRes.error) {
+      const fallbackRes = await supabase
+        .from('app_settings')
+        .select('id, team_share_pct, coop_share_pct, payment_bank_name, payment_account_number, payment_account_holder, updated_at')
+        .eq('id', 'default');
+      if (fallbackRes.error) return null;
+      appSettingsRows = (fallbackRes.data ?? []) as AppSettingsRow[];
+    }
+
     return fromSupabaseRows({
       kitchens: kitchensRes.data as KitchenRow[],
       products: productsRes.data as ProductRow[],
@@ -1019,7 +1067,7 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
       invoices: (invoicesRes.data ?? []) as KitchenInvoiceRow[],
       ledgerEntries: (ledgerRes.data ?? []) as ProfitLedgerRow[],
       splitConfigs: [],
-      appSettings: (settingsRes.data ?? []) as AppSettingsRow[],
+      appSettings: appSettingsRows ?? [],
       payoutBatches: (payoutsRes.data ?? []) as ProfitPayoutBatchRow[],
     });
   } catch {

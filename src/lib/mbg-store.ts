@@ -22,6 +22,9 @@ import {
   type OrderLineInput,
   removeOrderLine as removeOrderLineEngine,
   type UpdateBastInput,
+  updateKitchenOrder,
+  type UpdateOrderInput,
+  type UpdateOrderLineInput,
   updateProfitSplit,
 } from './order-engine';
 import { getSupabaseClient, isSupabaseConfigured } from './supabase';
@@ -35,6 +38,7 @@ import {
   markInvoicePaidRpc,
   subscribeToMbgRealtime,
   updateAppSettingsRpc,
+  updateKitchenOrderRpc,
   upsertKitchenInSupabase,
   upsertKitchenOrderRpc,
   upsertProductInSupabase,
@@ -42,7 +46,13 @@ import {
 import { formatIdr, formatKg, getJakartaTodayYmd } from './ui-format';
 
 export { buildSafeCourierItems } from './order-engine';
-export type { CreateOrderInput, OrderLineInput, UpdateBastInput } from './order-engine';
+export type {
+  CreateOrderInput,
+  OrderLineInput,
+  UpdateBastInput,
+  UpdateOrderInput,
+  UpdateOrderLineInput,
+} from './order-engine';
 export type { PaymentAccountInfo } from '../types/mbg';
 export { formatIdr, formatKg } from './ui-format';
 
@@ -92,6 +102,8 @@ export interface MbgContextValue extends MbgState {
   setActiveTab: (tab: ActiveTab) => void;
   /** "Simpan Order & Kirim ke Daftar Kurir" via `rpc_upsert_kitchen_order`. */
   createOrder: (input: CreateOrderInput) => Promise<ActionResult>;
+  /** Edits date, kitchen, items, qty, price, and margin of an existing Order / Invoice via `rpc_update_kitchen_order`. */
+  updateOrder: (input: UpdateOrderInput) => Promise<ActionResult>;
   removeOrderLine: (delivery_item_id: string) => Promise<ActionResult>;
   deleteOrder: (delivery_id: string) => Promise<ActionResult>;
   /** Marks invoice paid via `rpc_mark_invoice_paid`. */
@@ -353,7 +365,8 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     setSyncError(null);
     try {
       const supabase = getSupabaseClient();
-      const rpcRes = await upsertKitchenOrderRpc(supabase, input, getJakartaTodayYmd());
+      const orderDate = clean(input.order_date) || getJakartaTodayYmd();
+      const rpcRes = await upsertKitchenOrderRpc(supabase, input, orderDate);
       if (!rpcRes.ok) {
         handleCloudError(`Gagal menyimpan order: ${rpcRes.error}`);
         return { ok: false, error: rpcRes.error };
@@ -363,6 +376,39 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menyimpan order ke Supabase.';
       handleCloudError(`Gagal menyimpan order: ${msg}`);
+      return { ok: false, error: msg };
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  /**
+   * RPC #1b: Updates an existing kitchen order & invoice (date, kitchen, items, qty, price, margin)
+   * via `rpc_update_kitchen_order`.
+   */
+  const updateOrder = async (input: UpdateOrderInput): Promise<ActionResult> => {
+    const precheck = updateKitchenOrder(stateRef.current, input, runtimeCtx());
+    if (!precheck.ok) return { ok: false, error: precheck.error };
+
+    if (!isSupabaseConfigured) {
+      commit(precheck.data);
+      return { ok: true, count: precheck.count };
+    }
+
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      const supabase = getSupabaseClient();
+      const rpcRes = await updateKitchenOrderRpc(supabase, input);
+      if (!rpcRes.ok) {
+        handleCloudError(`Gagal memperbarui order/invoice: ${rpcRes.error}`);
+        return { ok: false, error: rpcRes.error };
+      }
+      await pullFromSupabase();
+      return { ok: true, count: rpcRes.count };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Gagal memperbarui order/invoice di Supabase.';
+      handleCloudError(`Gagal memperbarui order/invoice: ${msg}`);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -609,10 +655,11 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   };
 
   const savePaymentAccount = async (input: PaymentAccountInfo): Promise<MasterSaveResult> => {
-    const supplierName = clean(input.supplier_name) || 'Supplier MBG';
+    const supplierName = clean(input.supplier_name);
     const bankName = clean(input.payment_bank_name);
     const accountNumber = clean(input.payment_account_number);
     const accountHolder = clean(input.payment_account_holder);
+    if (!supplierName) return { ok: false, error: 'Nama Supplier / Perusahaan wajib diisi.' };
     if (!bankName) return { ok: false, error: 'Nama Bank wajib diisi.' };
     if (!accountNumber) return { ok: false, error: 'Nomor Rekening wajib diisi.' };
     if (!accountHolder) return { ok: false, error: 'Atas Nama wajib diisi.' };
@@ -739,6 +786,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     setActiveRole,
     setActiveTab,
     createOrder,
+    updateOrder,
     removeOrderLine,
     deleteOrder,
     markInvoicePaid,
