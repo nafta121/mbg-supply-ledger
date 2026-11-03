@@ -1,5 +1,6 @@
 {
   "scanned": "2026-11-03",
+  "designMd": "design.md",
   "findings": {
     "fonts": "Geist + Geist Mono (src/app/layout.tsx L43-46, tailwind.config.js L10-13)",
     "palette": "Custom properties in src/app/globals.css L5-31 (:root) plus arbitrary hex classes in src/components/*",
