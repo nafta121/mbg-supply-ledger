@@ -1,10 +1,20 @@
-import { describe, expect, it } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Sql } from 'postgres';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  executeHyperdriveAction,
+  isHyperdriveConfigured,
+  resolveHyperdriveConnectionString,
+} from '../hyperdrive';
 import { createInitialSeedState } from './seed-fixture';
 import {
   type CourierKitchenOrderViewRow,
+  fetchMbgDataFromSupabase,
   fromCourierViewRows,
   fromSupabaseRows,
+  setHyperdriveEndpointStateForTest,
   toSupabaseRows,
+  updateKitchenOrderRpc,
 } from '../supabase-sync';
 
 describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
@@ -174,6 +184,156 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
     expect(restored.splitConfig.payment_bank_name).toBe('BRI');
     expect(restored.splitConfig.payment_account_number).toBe('388801005597504');
     expect(restored.splitConfig.payment_account_holder).toBe('Yoga Eko Setiawan');
+  });
+
+  it('updateKitchenOrderRpc normalizes payload and returns RPC result or error', async () => {
+    const rpcMock = vi.fn().mockResolvedValueOnce({
+      data: { order_id: 'deliv-01', count: 2 },
+      error: null,
+    });
+    const fakeClient = { rpc: rpcMock } as unknown as SupabaseClient;
+
+    const okRes = await updateKitchenOrderRpc(fakeClient, {
+      delivery_id: 'deliv-01',
+      kitchen_id: 'kitchen-02',
+      order_date: '2026-10-20',
+      lines: [
+        {
+          id: 'ditem-01',
+          item_id: 'item-wortel',
+          qty_ordered_kg: 35,
+          qty_accepted_kg: 33.1264,
+          kitchen_unit_price_rp: 14000,
+          margin_per_kg_rp: 2000,
+        },
+      ],
+    });
+
+    expect(okRes).toEqual({ ok: true, order_id: 'deliv-01', count: 2 });
+    expect(rpcMock).toHaveBeenCalledWith('rpc_update_kitchen_order', {
+      p_order_id: 'deliv-01',
+      p_kitchen_id: 'kitchen-02',
+      p_order_date: '2026-10-20',
+      p_items: [
+        {
+          id: 'ditem-01',
+          product_id: 'item-wortel',
+          item_id: 'item-wortel',
+          qty_ordered_kg: 35,
+          qty_accepted_kg: 33.126,
+          kitchen_unit_price_rp: 14000,
+          margin_per_kg_rp: 2000,
+        },
+      ],
+    });
+
+    rpcMock.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'Bagi hasil sudah dicairkan' },
+    });
+    const errRes = await updateKitchenOrderRpc(fakeClient, {
+      delivery_id: 'deliv-01',
+      kitchen_id: 'kitchen-02',
+      order_date: '2026-10-20',
+      lines: [],
+    });
+    expect(errRes).toEqual({ ok: false, error: 'Bagi hasil sudah dicairkan' });
+  });
+
+  it('fetchMbgDataFromSupabase falls back cleanly when app_settings lacks supplier_name column', async () => {
+    const seed = createInitialSeedState();
+    const rows = toSupabaseRows(seed);
+    let appSettingsCalls = 0;
+
+    const fakeClient = {
+      from: (table: string) => ({
+        select: () => ({
+          order: () => {
+            if (table === 'kitchens') return Promise.resolve({ data: rows.kitchens, error: null });
+            if (table === 'products') return Promise.resolve({ data: rows.products, error: null });
+            return {
+              limit: () => Promise.resolve({ data: rows.payoutBatches, error: null }),
+              range: () => {
+                if (table === 'kitchen_orders') return Promise.resolve({ data: rows.orders, error: null });
+                if (table === 'kitchen_order_items') return Promise.resolve({ data: rows.orderItems, error: null });
+                if (table === 'kitchen_invoices') return Promise.resolve({ data: rows.invoices, error: null });
+                if (table === 'profit_ledger_entries') return Promise.resolve({ data: rows.ledgerEntries, error: null });
+                return Promise.resolve({ data: [], error: null });
+              },
+            };
+          },
+          eq: () => {
+            appSettingsCalls += 1;
+            if (appSettingsCalls === 1) {
+              return Promise.resolve({ data: null, error: { message: 'column supplier_name does not exist' } });
+            }
+            return Promise.resolve({
+              data: [
+                {
+                  id: 'default',
+                  team_share_pct: 60,
+                  coop_share_pct: 40,
+                  payment_bank_name: 'BCA',
+                  payment_account_number: '1234567890',
+                  payment_account_holder: 'Koperasi MBG',
+                },
+              ],
+              error: null,
+            });
+          },
+        }),
+      }),
+    } as unknown as SupabaseClient;
+
+    const data = await fetchMbgDataFromSupabase(fakeClient);
+    expect(appSettingsCalls).toBe(2);
+    expect(data).not.toBeNull();
+    expect(data?.splitConfig.payment_bank_name).toBe('BCA');
+    expect(data?.splitConfig.payment_account_number).toBe('1234567890');
+    expect(data?.splitConfig.payment_account_holder).toBe('Koperasi MBG');
+  });
+
+  it('resolves Cloudflare Hyperdrive connectionString and executes RPC actions over Hyperdrive', async () => {
+    expect(isHyperdriveConfigured({})).toBe(false);
+    expect(
+      resolveHyperdriveConnectionString({
+        HYPERDRIVE: { connectionString: 'postgresql://postgres:secret@edge.hyperdrive.cloudflare:5432/postgres' },
+      })
+    ).toBe('postgresql://postgres:secret@edge.hyperdrive.cloudflare:5432/postgres');
+
+    const endMock = vi.fn().mockResolvedValue(undefined);
+    const fakeSql = Object.assign(
+      vi.fn().mockResolvedValue([{ res: { order_id: 'deliv-hd-1', order_code: 'SJ-HD-01', merged: false, count: 1 } }]),
+      {
+        json: (v: unknown) => v,
+        array: (v: unknown) => v,
+        end: endMock,
+      }
+    ) as unknown as Sql;
+
+    const result = await executeHyperdriveAction(
+      {
+        action: 'upsert_order',
+        orderDate: '2026-10-20',
+        input: {
+          kitchen_id: 'kitchen-01',
+          lines: [{ item_id: 'item-wortel', qty_ordered_kg: 25.5, kitchen_unit_price_rp: 14000, margin_per_kg_rp: 2000 }],
+        },
+      },
+      { HYPERDRIVE: { connectionString: 'postgresql://postgres:secret@edge.hyperdrive.cloudflare:5432/postgres' } },
+      () => fakeSql
+    );
+
+    expect(result).toEqual({
+      ok: true,
+      order_id: 'deliv-hd-1',
+      order_code: 'SJ-HD-01',
+      merged: false,
+      count: 1,
+    });
+    expect(endMock).toHaveBeenCalledTimes(1);
+
+    setHyperdriveEndpointStateForTest('unknown');
   });
 });
 

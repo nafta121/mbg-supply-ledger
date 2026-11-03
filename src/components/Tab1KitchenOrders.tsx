@@ -1,10 +1,9 @@
 'use client';
 
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
 import { type OrderLineInput, useMbgStore } from '../lib/mbg-store';
 import { findOpenOrder, linesForDelivery, summarizeOrderDraft } from '../lib/order-engine';
 import {
-  formatKg,
   formatKgNum,
   formatRp,
   formatThousands,
@@ -15,29 +14,18 @@ import {
   sumIdr,
 } from '../lib/ui-format';
 import {
+  emptyDraftLine,
   type GroupMode,
+  type OrderDraftLine,
   OrderInvoiceEditSheet,
+  OrderLinesSection,
   sortAndGroupItems,
   SortGroupControls,
   type SortMode,
 } from './OrderInvoiceEditSheet';
 import { Badge, Card, NoAccess, SegmentedControl, Toast, type ToastState } from './ui';
 
-interface DraftLine {
-  key: number;
-  item_id: string;
-  kgStr: string;
-  priceStr: string;
-  marginStr: string;
-}
-
 type ListFilter = 'active' | 'paid';
-
-let lineSeq = 0;
-const emptyLine = (): DraftLine => ({ key: (lineSeq += 1), item_id: '', kgStr: '', priceStr: '', marginStr: '' });
-
-/** Rupiah input: keeps only digits and re-formats with thousand dots ("14.000"). */
-const rpText = (raw: string): string => (raw.replace(/\D/g, '') ? formatThousands(parseRpInput(raw)) : '');
 
 export function Tab1KitchenOrders() {
   const {
@@ -57,7 +45,7 @@ export function Tab1KitchenOrders() {
   const [kitchenId, setKitchenId] = useState<string | null>(null);
   const [kitchenQuery, setKitchenQuery] = useState('');
   const [orderDate, setOrderDate] = useState<string>(() => getJakartaTodayYmd());
-  const [lines, setLines] = useState<DraftLine[]>(() => [emptyLine()]);
+  const [lines, setLines] = useState<OrderDraftLine[]>(() => [emptyDraftLine()]);
   const [formError, setFormError] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
   const [filter, setFilter] = useState<ListFilter>('active');
@@ -66,11 +54,39 @@ export function Tab1KitchenOrders() {
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
 
+  const kitchenById = useMemo(() => new Map(kitchens.map((k) => [k.id, k])), [kitchens]);
+  const itemById = useMemo(() => new Map(items.map((it) => [it.id, it])), [items]);
+
+  const allOrders = useMemo(
+    () =>
+      deliveries.map((d) => ({
+        delivery: d,
+        kitchen: kitchenById.get(d.kitchen_id),
+        invoice: invoices.find((i) => i.delivery_id === d.id),
+        lines: deliveryItems.filter((di) => di.delivery_id === d.id),
+      })),
+    [deliveries, kitchenById, invoices, deliveryItems]
+  );
+  const activeOrders = useMemo(() => allOrders.filter((o) => o.invoice?.payment_status !== 'PAID'), [allOrders]);
+  const paidOrders = useMemo(() => allOrders.filter((o) => o.invoice?.payment_status === 'PAID'), [allOrders]);
+  const shownOrders = filter === 'active' ? activeOrders : paidOrders;
+
+  const groupedOrders = useMemo(
+    () =>
+      sortAndGroupItems(shownOrders, sortBy, groupBy, {
+        getDate: (o) => o.delivery.delivery_date || o.invoice?.invoice_date || '',
+        getKitchenName: (o) => (o.kitchen ? shortKitchenName(o.kitchen.name) : '-'),
+        getKitchenCode: (o) => o.kitchen?.kitchen_code ?? '-',
+        getCode: (o) => o.delivery.delivery_number,
+      }),
+    [shownOrders, sortBy, groupBy]
+  );
+
   if (activeRole !== 'OWNER_ADMIN' && activeRole !== 'FINANCE') return <NoAccess />;
 
   const targetDate = orderDate || todayYmd;
   const data = { deliveries, deliveryItems, invoices };
-  const kitchen = kitchens.find((k) => k.id === kitchenId) ?? null;
+  const kitchen = kitchenId ? (kitchenById.get(kitchenId) ?? null) : null;
   const openOrder = kitchen ? findOpenOrder(data, kitchen.id, targetDate) : undefined;
   const openItemIds = new Set(openOrder ? linesForDelivery(data, openOrder.id).map((l) => l.item_id) : []);
 
@@ -91,11 +107,11 @@ export function Tab1KitchenOrders() {
   }));
   const summary = summarizeOrderDraft(previewLines);
 
-  const patchLine = (key: number, patch: Partial<DraftLine>) =>
+  const patchLine = (key: number, patch: Partial<OrderDraftLine>) =>
     setLines((prev) => prev.map((l) => (l.key === key ? { ...l, ...patch } : l)));
 
   const pickItem = (key: number, itemId: string) => {
-    const it = items.find((i) => i.id === itemId);
+    const it = itemById.get(itemId);
     setLines((prev) =>
       prev.map((l) => {
         if (l.key !== key) return l;
@@ -120,14 +136,14 @@ export function Tab1KitchenOrders() {
   const resetForm = () => {
     setKitchenId(null);
     setKitchenQuery('');
-    setLines([emptyLine()]);
+    setLines([emptyDraftLine()]);
     setFormError(null);
   };
 
   const startAddToKitchen = (id: string, dateYmd?: string) => {
     setKitchenId(id);
     if (dateYmd) setOrderDate(dateYmd);
-    setLines([emptyLine()]);
+    setLines([emptyDraftLine()]);
     setFormError(null);
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
@@ -152,23 +168,6 @@ export function Tab1KitchenOrders() {
     });
     resetForm();
   };
-
-  const allOrders = deliveries.map((d) => ({
-    delivery: d,
-    kitchen: kitchens.find((k) => k.id === d.kitchen_id),
-    invoice: invoices.find((i) => i.delivery_id === d.id),
-    lines: deliveryItems.filter((di) => di.delivery_id === d.id),
-  }));
-  const activeOrders = allOrders.filter((o) => o.invoice?.payment_status !== 'PAID');
-  const paidOrders = allOrders.filter((o) => o.invoice?.payment_status === 'PAID');
-  const shownOrders = filter === 'active' ? activeOrders : paidOrders;
-
-  const groupedOrders = sortAndGroupItems(shownOrders, sortBy, groupBy, {
-    getDate: (o) => o.delivery.delivery_date || o.invoice?.invoice_date || '',
-    getKitchenName: (o) => (o.kitchen ? shortKitchenName(o.kitchen.name) : '-'),
-    getKitchenCode: (o) => o.kitchen?.kitchen_code ?? '-',
-    getCode: (o) => o.delivery.delivery_number,
-  });
 
   const confirmDo = (text: string) => typeof window === 'undefined' || window.confirm(text);
 
@@ -319,137 +318,22 @@ export function Tab1KitchenOrders() {
               )}
             </div>
 
-            {/* 2. Daftar barang pesanan (Preline Repeater Cards) */}
-            <div className="space-y-2.5">
-              <span className="field-label">Daftar Barang Pesanan</span>
-              {lines.map((l, idx) => {
-                const chosenElsewhere = new Set(lines.filter((o) => o.key !== l.key).map((o) => o.item_id));
-                const kg = parseKgInput(l.kgStr);
-                const price = parseRpInput(l.priceStr);
-                const lineTotal = kg > 0 && price > 0 ? summarizeOrderDraft([previewLines[idx]!]).estimated_invoice : 0;
-                const idp = `ol-${l.key}`;
-                return (
-                  <div key={l.key} className="space-y-2.5 rounded-[8px] border border-[#e6e6e6] bg-[#f8f9fa] p-3">
-                    <div className="flex items-end gap-2">
-                      <div className="min-w-0 flex-1">
-                        <label htmlFor={`${idp}-item`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                          Barang {idx + 1}
-                        </label>
-                        <select
-                          id={`${idp}-item`}
-                          value={l.item_id}
-                          onChange={(e) => pickItem(l.key, e.target.value)}
-                          className="field-input"
-                        >
-                          <option value="">Pilih barang…</option>
-                          {items.map((it) => {
-                            const taken = openItemIds.has(it.id) || chosenElsewhere.has(it.id);
-                            return (
-                              <option key={it.id} value={it.id} disabled={taken}>
-                                {it.name}
-                                {openItemIds.has(it.id) ? ' (sudah di order)' : ''}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-                      {lines.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => setLines((prev) => prev.filter((o) => o.key !== l.key))}
-                          aria-label={`Hapus baris barang ${idx + 1}`}
-                          className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white text-base text-[#6b6b6b] hover:border-[#f5c2c0] hover:bg-[#ffedea] hover:text-[#831c1e]"
-                        >
-                          ×
-                        </button>
-                      )}
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      <div>
-                        <label htmlFor={`${idp}-kg`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                          Berat (kg)
-                        </label>
-                        <input
-                          id={`${idp}-kg`}
-                          type="text"
-                          inputMode="decimal"
-                          step="any"
-                          placeholder="0"
-                          value={l.kgStr}
-                          onChange={(e) => patchLine(l.key, { kgStr: e.target.value })}
-                          className="field-input text-right font-medium tabular-nums"
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor={`${idp}-price`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                          Harga / kg (Rp)
-                        </label>
-                        <input
-                          id={`${idp}-price`}
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="0"
-                          value={l.priceStr}
-                          onChange={(e) => patchLine(l.key, { priceStr: rpText(e.target.value) })}
-                          className="field-input text-right tabular-nums"
-                        />
-                      </div>
-                      <div>
-                        <label htmlFor={`${idp}-margin`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                          Margin / kg
-                        </label>
-                        <input
-                          id={`${idp}-margin`}
-                          type="text"
-                          inputMode="numeric"
-                          placeholder="0"
-                          value={l.marginStr}
-                          onChange={(e) => patchLine(l.key, { marginStr: rpText(e.target.value) })}
-                          className="field-input text-right tabular-nums"
-                        />
-                      </div>
-                    </div>
-                    {lineTotal > 0 && (
-                      <div className="flex items-baseline justify-between border-t border-[#e6e6e6] pt-2 text-[12px] tabular-nums">
-                        <span className="text-[#6b6b6b]">
-                          {formatKg(kg)} × {formatRp(price)}
-                        </span>
-                        <span className="font-bold text-[#0a0a0a]">{formatRp(lineTotal)}</span>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              <button
-                type="button"
-                onClick={() => setLines((prev) => [...prev, emptyLine()])}
-                className="btn-secondary min-h-[38px] w-full text-[13px]"
-              >
-                + Tambah Barang Lain
-              </button>
-            </div>
-
-            {/* 3. Preline Divided Ledger Summary Strip */}
-            <div className="grid grid-cols-3 divide-x divide-[#e6e6e6] rounded-[8px] border border-[#e6e6e6] bg-[#f8f9fa]">
-              <div className="px-3 py-2.5">
-                <div className="text-[11px] text-[#6b6b6b]">Total Berat</div>
-                <div className="mt-0.5 truncate text-[14px] font-medium tabular-nums text-[#0a0a0a]">
-                  {formatKgNum(summary.total_kg)} <span className="text-[12px] text-[#6b6b6b]">kg</span>
-                </div>
-              </div>
-              <div className="px-3 py-2.5">
-                <div className="text-[11px] text-[#6b6b6b]">Tagihan Dapur</div>
-                <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#0a0a0a]">
-                  {formatRp(summary.estimated_invoice)}
-                </div>
-              </div>
-              <div className="px-3 py-2.5">
-                <div className="text-[11px] text-[#6b6b6b]">Bagi Hasil</div>
-                <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#1d5fbf]">
-                  {formatRp(summary.estimated_margin)}
-                </div>
-              </div>
-            </div>
+            {/* 2 & 3. Daftar barang pesanan + Divided Ledger Summary Strip */}
+            <OrderLinesSection
+              lines={lines}
+              items={items}
+              previewLines={previewLines}
+              summary={summary}
+              idPrefix="ol"
+              sectionLabel="Daftar Barang Pesanan"
+              kgLabel="Berat (kg)"
+              invoiceTotalLabel="Tagihan Dapur"
+              disabledItemIds={openItemIds}
+              onPickItem={pickItem}
+              onPatchLine={patchLine}
+              onRemoveLine={(key) => setLines((prev) => prev.filter((o) => o.key !== key))}
+              onAddLine={() => setLines((prev) => [...prev, emptyDraftLine()])}
+            />
 
             {formError && (
               <p role="alert" className="rounded-[6px] border border-[#f5c2c0] bg-[#ffedea] px-3 py-2 text-[13px] font-medium text-[#831c1e]">
@@ -537,7 +421,7 @@ export function Tab1KitchenOrders() {
                       </header>
                       <ul className="divide-y divide-[#f0f0f0] px-4">
                         {ol.map((l) => {
-                          const name = items.find((i) => i.id === l.item_id)?.name ?? 'Barang';
+                          const name = itemById.get(l.item_id)?.name ?? 'Barang';
                           return (
                             <li key={l.id} className="flex items-center justify-between gap-2 py-2.5">
                               <div className="min-w-0">

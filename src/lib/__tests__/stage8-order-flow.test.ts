@@ -402,6 +402,56 @@ describe('Stage 8 — seed scenario (16 Okt 2026)', () => {
     expect(blocked.ok).toBe(false);
   });
 
+  it('updateKitchenOrder preserves shrinkage and rejection_reason when editing price/date of a weighed order', () => {
+    const c = ctx();
+    let s = ok(
+      createKitchenOrder(emptyState(), { kitchen_id: 'kitchen-01', order_date: '2026-10-16', lines: [wortel] }, c)
+    );
+    const deliv = s.deliveries[0]!;
+    const line = s.deliveryItems[0]!;
+
+    // Apply BAST weight with 2 kg shrinkage (ordered 35 kg, accepted 33 kg)
+    s = ok(
+      applyBastWeights(
+        s,
+        [{ delivery_item_id: line.id, qty_accepted_kg: 33, rejection_reason: 'Barang Rusak/Reject — busuk' }],
+        c.nowIso
+      )
+    );
+    expect(s.deliveryItems[0]?.qty_dispatched_kg).toBe(35);
+    expect(s.deliveryItems[0]?.qty_accepted_kg).toBe(33);
+    expect(s.deliveryItems[0]?.qty_shrinkage_kg).toBe(2);
+
+    // Edit date and unit price without changing accepted kg (33 kg)
+    s = ok(
+      updateKitchenOrder(
+        s,
+        {
+          delivery_id: deliv.id,
+          kitchen_id: 'kitchen-01',
+          order_date: '2026-10-19',
+          lines: [
+            {
+              id: line.id,
+              item_id: 'item-wortel',
+              qty_ordered_kg: 35,
+              qty_accepted_kg: 33,
+              kitchen_unit_price_rp: 15000,
+              margin_per_kg_rp: 2500,
+            },
+          ],
+        },
+        c
+      )
+    );
+
+    expect(s.deliveryItems[0]?.qty_dispatched_kg).toBe(35);
+    expect(s.deliveryItems[0]?.qty_accepted_kg).toBe(33);
+    expect(s.deliveryItems[0]?.qty_shrinkage_kg).toBe(2);
+    expect(s.deliveryItems[0]?.rejection_reason).toBe('Barang Rusak/Reject — busuk');
+    expect(s.invoices[0]?.total_invoice_amount).toBe(33 * 15000);
+  });
+
   it('sortAndGroupItems sorts and groups orders/invoices by date and kitchen name', () => {
     const sample = [
       { id: '1', date: '2026-10-15', kitchenName: 'Dapur Cengkareng', kitchenCode: 'DPR-03', code: 'INV-01' },

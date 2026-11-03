@@ -464,6 +464,8 @@ export function updateKitchenOrder<T extends MbgData>(
   const normalizedLines: UpdateOrderLineInput[] = input.lines.map((l) => ({
     ...l,
     qty_ordered_kg: Number.isFinite(l.qty_ordered_kg) ? roundKg(l.qty_ordered_kg) : 0,
+    qty_accepted_kg:
+      l.qty_accepted_kg != null && Number.isFinite(l.qty_accepted_kg) ? roundKg(l.qty_accepted_kg) : undefined,
     kitchen_unit_price_rp: senToIdr(idrToSen(Number.isFinite(l.kitchen_unit_price_rp) ? l.kitchen_unit_price_rp : 0)),
     margin_per_kg_rp: senToIdr(idrToSen(Number.isFinite(l.margin_per_kg_rp) ? l.margin_per_kg_rp : 0)),
   }));
@@ -474,10 +476,16 @@ export function updateKitchenOrder<T extends MbgData>(
   const existingById = new Map(linesForDelivery(data, delivery.id).map((di) => [di.id, di]));
   const updatedItems: KitchenDeliveryItem[] = normalizedLines.map((l) => {
     const prev = l.id ? existingById.get(l.id) : undefined;
-    const qty = roundKg(l.qty_ordered_kg);
+    const acceptedKg = roundKg(l.qty_accepted_kg ?? l.qty_ordered_kg);
+    const keepShrink =
+      prev !== undefined &&
+      prev.item_id === l.item_id &&
+      acceptedKg === roundKg(prev.qty_accepted_kg) &&
+      roundKg(prev.qty_dispatched_kg) >= acceptedKg;
+    const orderedKg = keepShrink ? roundKg(prev.qty_dispatched_kg) : Math.max(roundKg(l.qty_ordered_kg), acceptedKg);
     const r = reconcileKitchenOrderLine({
-      qty_ordered_kg: qty,
-      qty_accepted_kg: qty,
+      qty_ordered_kg: orderedKg,
+      qty_accepted_kg: acceptedKg,
       kitchen_unit_price_rp: l.kitchen_unit_price_rp,
       margin_per_kg_rp: l.margin_per_kg_rp,
     });
@@ -493,7 +501,7 @@ export function updateKitchenOrder<T extends MbgData>(
       line_invoice_amount: r.line_invoice_amount,
       line_margin_amount: r.line_margin_amount,
       weighed_at: prev?.weighed_at ?? ctx.nowIso,
-      rejection_reason: null,
+      rejection_reason: keepShrink ? prev.rejection_reason : null,
       created_at: prev?.created_at ?? ctx.nowIso,
       updated_at: ctx.nowIso,
     };

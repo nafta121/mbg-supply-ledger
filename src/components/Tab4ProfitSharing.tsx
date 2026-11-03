@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { buildInvoiceProfit } from '../lib/invoice-view';
 import { useMbgStore } from '../lib/mbg-store';
 import type { BeneficiaryType, LedgerPayoutStatus } from '../types/mbg';
@@ -30,24 +30,47 @@ export function Tab4ProfitSharing() {
   const [teamPctInput, setTeamPctInput] = useState(String(splitConfig.team_share_pct));
   const [toast, setToast] = useState<ToastState>(null);
 
+  const kitchenById = useMemo(() => new Map(kitchens.map((k) => [k.id, k])), [kitchens]);
+
+  const { availTeam, availCoop, availTotal, lockedTeam, lockedCoop, lockedTotal } = useMemo(() => {
+    const sumBy = (status: LedgerPayoutStatus, who: BeneficiaryType) =>
+      sumIdr(
+        ledgerEntries
+          .filter((le) => le.payout_status === status && le.beneficiary_type === who)
+          .map((le) => le.profit_amount)
+      );
+    const aTeam = sumBy('AVAILABLE_FOR_PAYOUT', 'TEAM');
+    const aCoop = sumBy('AVAILABLE_FOR_PAYOUT', 'COOPERATIVE');
+    const lTeam = sumBy('LOCKED_UNPAID', 'TEAM');
+    const lCoop = sumBy('LOCKED_UNPAID', 'COOPERATIVE');
+    return {
+      availTeam: aTeam,
+      availCoop: aCoop,
+      availTotal: sumIdr([aTeam, aCoop]),
+      lockedTeam: lTeam,
+      lockedCoop: lCoop,
+      lockedTotal: sumIdr([lTeam, lCoop]),
+    };
+  }, [ledgerEntries]);
+
+  const paidOutTotal = useMemo(
+    () => sumIdr(payoutBatches.map((p) => p.total_payout_amount)),
+    [payoutBatches]
+  );
+
+  const invoiceProfits = useMemo(
+    () =>
+      invoices.map((inv) => ({
+        inv,
+        kitchen: kitchenById.get(inv.kitchen_id),
+        profit: buildInvoiceProfit({ ledgerEntries }, inv.id),
+      })),
+    [invoices, kitchenById, ledgerEntries]
+  );
+
   if (activeRole === 'FIELD_TEAM') return <NoAccess />;
 
   const isAdmin = activeRole === 'OWNER_ADMIN' || activeRole === 'FINANCE';
-
-  const sumBy = (status: LedgerPayoutStatus, who: BeneficiaryType) =>
-    sumIdr(
-      ledgerEntries
-        .filter((le) => le.payout_status === status && le.beneficiary_type === who)
-        .map((le) => le.profit_amount)
-    );
-
-  const availTeam = sumBy('AVAILABLE_FOR_PAYOUT', 'TEAM');
-  const availCoop = sumBy('AVAILABLE_FOR_PAYOUT', 'COOPERATIVE');
-  const availTotal = sumIdr([availTeam, availCoop]);
-  const lockedTeam = sumBy('LOCKED_UNPAID', 'TEAM');
-  const lockedCoop = sumBy('LOCKED_UNPAID', 'COOPERATIVE');
-  const lockedTotal = sumIdr([lockedTeam, lockedCoop]);
-  const paidOutTotal = sumIdr(payoutBatches.map((p) => p.total_payout_amount));
 
   const teamPct = splitConfig.team_share_pct;
   const coopPct = splitConfig.cooperative_share_pct;
@@ -299,9 +322,7 @@ export function Tab4ProfitSharing() {
           <div className="p-6 text-center text-[13px] text-[#6b6b6b]">Belum ada rincian bagi hasil.</div>
         ) : (
           <ul className="divide-y divide-[#f0f0f0]">
-            {invoices.map((inv) => {
-              const kitchen = kitchens.find((k) => k.id === inv.kitchen_id);
-              const profit = buildInvoiceProfit({ ledgerEntries }, inv.id);
+            {invoiceProfits.map(({ inv, kitchen, profit }) => {
               const teamStatus: LedgerPayoutStatus = profit.team_status;
               const coopStatus: LedgerPayoutStatus = profit.coop_status;
               const split = teamStatus !== coopStatus;

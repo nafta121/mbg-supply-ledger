@@ -1,0 +1,30 @@
+#:schema node_modules/wrangler/config-schema.json
+name = "mbg-supply-ledger"
+main = "src/worker.ts"
+compatibility_date = "2025-04-01"
+compatibility_flags = ["nodejs_compat"]
+
+[assets]
+directory = "./out"
+binding = "ASSETS"
+
+[observability]
+enabled = true
+
+# ==============================================================================
+# Cloudflare Hyperdrive Configuration (Supabase PostgreSQL Pooler & Query Cache)
+# Docs: https://developers.cloudflare.com/hyperdrive/
+#
+# 1. Buat konfigurasi Hyperdrive menuju database Supabase PostgreSQL Anda:
+#    npx wrangler hyperdrive create mbg-supabase-hyperdrive \
+#      --connection-string="postgresql://postgres.nrdepkayabbbshnmyrvc:[YOUR-DB-PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:5432/postgres"
+#
+# 2. Ganti `id` di bawah dengan ID Hyperdrive yang dihasilkan oleh perintah di atas.
+# 3. Untuk pengembangan lokal (`wrangler dev` / `next dev`), isi variabel environment:
+#    CLOUDFLARE_HYPERDRIVE_LOCAL_CONNECTION_STRING_HYPERDRIVE="postgresql://..."
+#    atau HYPERDRIVE_CONNECTION_STRING="postgresql://..."
+# ==============================================================================
+[[hyperdrive]]
+binding = "HYPERDRIVE"
+id = "b25c4027b55f44c8a219ac965d2f2720"
+localConnectionString = "postgresql://postgres:postgres@127.0.0.1:54322/postgres"

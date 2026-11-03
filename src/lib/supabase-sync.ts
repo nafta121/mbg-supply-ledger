@@ -32,7 +32,7 @@ import {
   roundKg,
   senToIdr,
 } from './financial-engine';
-import type { CreateOrderInput, MbgData, UpdateBastInput, UpdateOrderInput } from './order-engine';
+import type { CreateOrderInput, MbgData, UpdateOrderInput } from './order-engine';
 
 const DEFAULT_DATE = '2026-10-16';
 const DEFAULT_ISO = '2026-10-16T06:00:00.000Z';
@@ -672,26 +672,40 @@ export function fromCourierViewRows(rows: CourierKitchenOrderViewRow[]): SafeCou
   });
 }
 
-// ---------- Direct Cloud Fetching & RPC Operations ----------
+// ---------- Direct Cloud Fetching & RPC Operations (Cloudflare Hyperdrive + Supabase JS Fallback) ----------
 
-/**
- * Fetches ONLY from `v_courier_kitchen_orders` for role `FIELD_TEAM` (Lapangan).
- * Guarantees zero price/margin columns ever appear in the browser Network Inspector (Invariant 5).
- */
-export async function fetchCourierOrdersFromSupabase(
-  supabase: SupabaseClient
-): Promise<SafeCourierBastItem[] | null> {
+type HyperdriveEndpointState = 'unknown' | 'active' | 'unavailable';
+let hyperdriveEndpointState: HyperdriveEndpointState = 'unknown';
+
+export function setHyperdriveEndpointStateForTest(state: HyperdriveEndpointState): void {
+  hyperdriveEndpointState = state;
+}
+
+function shouldTryHyperdrive(requireConfirmedActive = false): boolean {
+  if (hyperdriveEndpointState === 'unavailable') return false;
+  if (hyperdriveEndpointState === 'active') return true;
+  if (requireConfirmedActive) return false;
+  return typeof window !== 'undefined' && typeof fetch === 'function';
+}
+
+async function postHyperdriveAction(
+  body: Record<string, unknown>
+): Promise<{ handled: false } | { handled: true; data: Record<string, unknown> }> {
+  if (!shouldTryHyperdrive(true)) return { handled: false };
   try {
-    const { data, error } = await supabase
-      .from('v_courier_kitchen_orders')
-      .select(
-        'order_id,order_code,order_date,order_status,kitchen_id,kitchen_code,kitchen_name,pic_name,pic_phone,item_id,order_item_id,product_id,product_name_snapshot,qty_ordered_kg,qty_accepted_kg,qty_shrinkage_kg,is_weighed,shrinkage_reason,shrinkage_note,is_locked'
-      )
-      .order('order_date', { ascending: false });
-    if (error || !data) return null;
-    return fromCourierViewRows(data as CourierKitchenOrderViewRow[]);
+    const res = await fetch('/api/hyperdrive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (res.status === 503) {
+      hyperdriveEndpointState = 'unavailable';
+      return { handled: false };
+    }
+    const json = (await res.json()) as Record<string, unknown>;
+    return { handled: true, data: json };
   } catch {
-    return null;
+    return { handled: false };
   }
 }
 
@@ -705,6 +719,17 @@ export async function upsertKitchenOrderRpc(
   input: CreateOrderInput & { notes?: string | null },
   orderDate: string
 ): Promise<{ ok: true; order_id: string; order_code: string; merged: boolean; count: number } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'upsert_order', input, orderDate });
+  if (hd.handled) {
+    if (!hd.data.ok) return { ok: false, error: String(hd.data.error ?? 'Gagal menyimpan order.') };
+    return {
+      ok: true,
+      order_id: String(hd.data.order_id ?? ''),
+      order_code: String(hd.data.order_code ?? ''),
+      merged: Boolean(hd.data.merged),
+      count: Number(hd.data.count ?? input.lines.length),
+    };
+  }
   try {
     const payload = input.lines.map((l) => ({
       product_id: l.item_id,
@@ -743,6 +768,15 @@ export async function updateKitchenOrderRpc(
   supabase: SupabaseClient,
   input: UpdateOrderInput
 ): Promise<{ ok: true; order_id: string; count: number } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'update_order', input });
+  if (hd.handled) {
+    if (!hd.data.ok) return { ok: false, error: String(hd.data.error ?? 'Gagal memperbarui order/invoice.') };
+    return {
+      ok: true,
+      order_id: String(hd.data.order_id ?? input.delivery_id),
+      count: Number(hd.data.count ?? input.lines.length),
+    };
+  }
   try {
     const payload = input.lines.map((l) => ({
       id: l.id ?? null,
@@ -774,38 +808,7 @@ export async function updateKitchenOrderRpc(
 }
 
 /**
- * RPC #2: Invokes atomic `rpc_submit_courier_weighing_batch(p_items JSONB)` SECURITY DEFINER RPC
- * in a single database transaction (no N+1 loop).
- * PostgreSQL updates all items and executes `fn_recalculate_order_financials` for each order.
- */
-export async function submitCourierWeighingBatchRpc(
-  supabase: SupabaseClient,
-  lines: UpdateBastInput[]
-): Promise<{ ok: true; count: number } | { ok: false; error: string }> {
-  try {
-    const payload = lines.map((line) => {
-      const parsed = parseShrinkReason(line.rejection_reason ?? null);
-      return {
-        item_id: line.delivery_item_id,
-        qty_accepted_kg: roundKg(line.qty_accepted_kg),
-        shrinkage_reason: parsed.reason,
-        shrinkage_note: parsed.note || null,
-      };
-    });
-    const { error } = await supabase.rpc('rpc_submit_courier_weighing_batch', {
-      p_items: payload,
-    });
-    if (error) {
-      return { ok: false, error: error.message };
-    }
-    return { ok: true, count: lines.length };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan timbangan ke Supabase.' };
-  }
-}
-
-/**
- * RPC #3: Invokes `rpc_mark_invoice_paid(p_invoice_id)` in PostgreSQL.
+ * RPC #2: Invokes `rpc_mark_invoice_paid(p_invoice_id)` in PostgreSQL.
  * Validates all items are weighed, marks invoice PAID, and unlocks `profit_ledger_entries`
  * from `LOCKED_UNPAID` to `AVAILABLE_FOR_PAYOUT`.
  */
@@ -813,6 +816,10 @@ export async function markInvoicePaidRpc(
   supabase: SupabaseClient,
   invoiceId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'mark_invoice_paid', invoiceId });
+  if (hd.handled) {
+    return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menandai invoice lunas.') };
+  }
   try {
     const { error } = await supabase.rpc('rpc_mark_invoice_paid', {
       p_invoice_id: invoiceId,
@@ -836,6 +843,15 @@ export async function executeProfitPayoutRpc(
   target: BeneficiaryType | 'BOTH',
   entryIds?: string[] | null
 ): Promise<{ ok: true; count: number; total_payout_rp: number } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'execute_payout', target, entryIds: entryIds ?? null });
+  if (hd.handled) {
+    if (!hd.data.ok) return { ok: false, error: String(hd.data.error ?? 'Gagal mencairkan bagi hasil.') };
+    return {
+      ok: true,
+      count: Number(hd.data.count ?? 0),
+      total_payout_rp: Number(hd.data.total_payout_rp ?? 0),
+    };
+  }
   try {
     const { data, error } = await supabase.rpc('rpc_execute_profit_payout', {
       p_target: target,
@@ -871,6 +887,10 @@ export async function updateAppSettingsRpc(
     accountHolder?: string | null;
   }
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'update_app_settings', params });
+  if (hd.handled) {
+    return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menyimpan pengaturan.') };
+  }
   try {
     const { error } = await supabase.rpc('rpc_update_app_settings', {
       p_team_pct: params.teamSharePct,
@@ -897,6 +917,10 @@ export async function deleteOrderItemFromSupabase(
   supabase: SupabaseClient,
   itemId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'delete_order_item', itemId });
+  if (hd.handled) {
+    return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menghapus baris order.') };
+  }
   try {
     const { error } = await supabase.from('kitchen_order_items').delete().eq('id', itemId);
     if (error) return { ok: false, error: error.message };
@@ -910,6 +934,10 @@ export async function deleteKitchenOrderFromSupabase(
   supabase: SupabaseClient,
   orderId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'delete_order', orderId });
+  if (hd.handled) {
+    return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menghapus order.') };
+  }
   try {
     const { error } = await supabase
       .from('kitchen_orders')
@@ -927,6 +955,10 @@ export async function upsertKitchenInSupabase(
   supabase: SupabaseClient,
   kitchen: Kitchen
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'upsert_kitchen', kitchen });
+  if (hd.handled) {
+    return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menyimpan dapur.') };
+  }
   try {
     const row: KitchenRow = {
       id: kitchen.id,
@@ -951,6 +983,10 @@ export async function upsertProductInSupabase(
   supabase: SupabaseClient,
   item: Item
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'upsert_product', item });
+  if (hd.handled) {
+    return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menyimpan barang.') };
+  }
   try {
     const row: ProductRow = {
       id: item.id,
@@ -1003,6 +1039,10 @@ export async function verifyRolePinRpc(
   role: string,
   pin: string
 ): Promise<boolean> {
+  const hd = await postHyperdriveAction({ action: 'verify_role_pin', role, pin });
+  if (hd.handled) {
+    return Boolean(hd.data.ok);
+  }
   try {
     const { data, error } = await supabase.rpc('rpc_verify_role_pin', { p_role: role, p_pin: pin });
     if (error || !data || typeof data !== 'object') return false;
@@ -1013,6 +1053,23 @@ export async function verifyRolePinRpc(
 }
 
 export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promise<MbgData | null> {
+  if (shouldTryHyperdrive(false)) {
+    try {
+      const res = await fetch('/api/hyperdrive', { method: 'GET', cache: 'no-store' });
+      if (res.status === 503) {
+        hyperdriveEndpointState = 'unavailable';
+      } else if (res.ok) {
+        const json = (await res.json()) as { ok?: boolean; data?: MbgData };
+        if (json.ok && json.data) {
+          hyperdriveEndpointState = 'active';
+          return json.data;
+        }
+      }
+    } catch {
+      hyperdriveEndpointState = 'unavailable';
+    }
+  }
+
   try {
     const [
       kitchensRes,
@@ -1079,6 +1136,12 @@ export async function deleteKitchenFromSupabase(
   supabase: SupabaseClient,
   kitchenId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'delete_kitchen', kitchenId });
+  if (hd.handled) {
+    return hd.data.ok
+      ? { ok: true }
+      : { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki histori order.' };
+  }
   const { error } = await supabase.from('kitchens').delete().eq('id', kitchenId);
   if (error) return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki histori order.' };
   return { ok: true };
@@ -1088,6 +1151,12 @@ export async function deleteProductFromSupabase(
   supabase: SupabaseClient,
   productId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
+  const hd = await postHyperdriveAction({ action: 'delete_product', productId });
+  if (hd.handled) {
+    return hd.data.ok
+      ? { ok: true }
+      : { ok: false, error: 'Barang tidak dapat dihapus karena masih digunakan di order dapur.' };
+  }
   const { error } = await supabase.from('products').delete().eq('id', productId);
   if (error) return { ok: false, error: 'Barang tidak dapat dihapus karena masih digunakan di order dapur.' };
   return { ok: true };

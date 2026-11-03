@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { buildInvoiceLines, buildInvoiceWaText, resolvePaymentAccount, summarizeInvoice } from '../lib/invoice-view';
 import { useMbgStore } from '../lib/mbg-store';
 import { shareToWhatsApp } from '../lib/share';
@@ -28,26 +28,31 @@ export function Tab3KitchenInvoices() {
   const [printDoc, setPrintDoc] = useState<PrintDocMode | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
 
-  if (activeRole === 'FIELD_TEAM') return <NoAccess />;
-
-  const isAdmin = activeRole === 'OWNER_ADMIN' || activeRole === 'FINANCE';
-
-  const unpaid = invoices.filter((i) => i.payment_status !== 'PAID');
-  const paid = invoices.filter((i) => i.payment_status === 'PAID');
-  const unpaidTotal = sumIdr(unpaid.map((i) => i.total_invoice_amount));
-  const paidTotal = sumIdr(paid.map((i) => i.total_invoice_amount));
+  const kitchenById = useMemo(() => new Map(kitchens.map((k) => [k.id, k])), [kitchens]);
+  const unpaid = useMemo(() => invoices.filter((i) => i.payment_status !== 'PAID'), [invoices]);
+  const paid = useMemo(() => invoices.filter((i) => i.payment_status === 'PAID'), [invoices]);
+  const unpaidTotal = useMemo(() => sumIdr(unpaid.map((i) => i.total_invoice_amount)), [unpaid]);
+  const paidTotal = useMemo(() => sumIdr(paid.map((i) => i.total_invoice_amount)), [paid]);
 
   const filteredInvoices = invFilter === 'paid' ? paid : invFilter === 'unpaid' ? unpaid : invoices;
 
-  const groupedInvoices = sortAndGroupItems(filteredInvoices, sortBy, groupBy, {
-    getDate: (inv) => inv.invoice_date || '',
-    getKitchenName: (inv) => {
-      const k = kitchens.find((x) => x.id === inv.kitchen_id);
-      return k ? shortKitchenName(k.name) : '-';
-    },
-    getKitchenCode: (inv) => kitchens.find((x) => x.id === inv.kitchen_id)?.kitchen_code ?? '-',
-    getCode: (inv) => inv.invoice_number,
-  });
+  const groupedInvoices = useMemo(
+    () =>
+      sortAndGroupItems(filteredInvoices, sortBy, groupBy, {
+        getDate: (inv) => inv.invoice_date || '',
+        getKitchenName: (inv) => {
+          const k = kitchenById.get(inv.kitchen_id);
+          return k ? shortKitchenName(k.name) : '-';
+        },
+        getKitchenCode: (inv) => kitchenById.get(inv.kitchen_id)?.kitchen_code ?? '-',
+        getCode: (inv) => inv.invoice_number,
+      }),
+    [filteredInvoices, sortBy, groupBy, kitchenById]
+  );
+
+  if (activeRole === 'FIELD_TEAM') return <NoAccess />;
+
+  const isAdmin = activeRole === 'OWNER_ADMIN' || activeRole === 'FINANCE';
 
   return (
     <section aria-label="Invoice Dapur" className="space-y-3.5">
@@ -147,7 +152,7 @@ export function Tab3KitchenInvoices() {
 
                 <div className="space-y-3">
                   {bucket.items.map((inv) => {
-                    const kitchen = kitchens.find((k) => k.id === inv.kitchen_id);
+                    const kitchen = kitchenById.get(inv.kitchen_id);
                     const lines = buildInvoiceLines(store, inv);
                     const summary = summarizeInvoice(lines);
                     const account = resolvePaymentAccount(store, inv);
