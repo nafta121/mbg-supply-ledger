@@ -367,7 +367,7 @@ export function Tab1KitchenOrders() {
           {allOrders.length} order
         </span>
       </div>
-      <SegmentedControl<ListFilter>
+      <SegmentedControl
         label="Filter order"
         value={filter}
         onChange={setFilter}

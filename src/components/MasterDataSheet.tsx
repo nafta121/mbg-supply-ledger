@@ -258,11 +258,11 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
             </p>
           )}
           <button type="submit" className="btn-primary min-h-[38px] w-full text-[13px]">
-            Simpan Identitas &amp; Rekening Invoice
+            Simpan Rekening Invoice
           </button>
         </form>
 
-        <SegmentedControl<MasterTab>
+        <SegmentedControl
           label="Jenis data master"
           value={tab}
           onChange={switchTab}
