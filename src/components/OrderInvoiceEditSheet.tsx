@@ -568,11 +568,13 @@ export function OrderInvoiceEditSheet({ deliveryId, mode, onClose, onSaved }: Or
           onAddLine={() => setLines((prev) => [...prev, emptyDraftLine()])}
         />
 
-        {error && (
-          <p role="alert" className="rounded-[6px] border border-error-border bg-error-bg px-3 py-2 text-[12px] font-medium text-error-ink">
-            {error}
-          </p>
-        )}
+        <div className="min-h-[1lh]">
+          {error && (
+            <p role="alert" className="rounded-[6px] border border-error-border bg-error-bg px-3 py-2 text-[12px] font-medium text-error-ink">
+              {error}
+            </p>
+          )}
+        </div>
 
         <div className="grid grid-cols-2 gap-2 pt-1">
           <button type="button" onClick={onClose} className="btn-secondary min-h-[40px] w-full">

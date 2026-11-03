@@ -85,11 +85,13 @@ function MasterForm<T extends { id?: string }>({
         );
       })}
       {extra}
-      {error && (
-        <p role="alert" className="text-[13px] font-medium text-error">
-          {error}
-        </p>
-      )}
+      <div className="min-h-[1lh]">
+        {error && (
+          <p role="alert" className="text-[13px] font-medium text-error">
+            {error}
+          </p>
+        )}
+      </div>
       <div className="grid grid-cols-2 gap-2">
         <button type="button" onClick={onCancel} className="btn-secondary min-h-[40px]">
           Batal
@@ -139,11 +141,10 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
     setEditing(null);
   };
 
-  const done = async (resPromise: Promise<MasterSaveResult>, text: string): Promise<MasterSaveResult> => {
+  const done = async (resPromise: Promise<MasterSaveResult>, _text: string): Promise<MasterSaveResult> => {
     const res = await resPromise;
     if (res.ok) {
       setEditing(null);
-      setToast({ kind: 'ok', text });
     }
     return res;
   };
@@ -165,7 +166,6 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
       setBankError(res.error);
       return;
     }
-    setToast({ kind: 'ok', text: 'Identitas supplier & rekening invoice berhasil dikunci ke Supabase.' });
   };
 
   const addLabel: Record<MasterTab, string> = {
@@ -174,9 +174,9 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   };
 
   const rowBtn =
-    'min-h-[34px] shrink-0 rounded-[6px] border border-control bg-white px-2.5 text-[12px] font-medium text-ink-2 hover:bg-paper-2';
+    'min-h-[34px] shrink-0 rounded-[6px] border border-control bg-white px-2.5 text-[12px] font-medium text-ink-2 transition-colors hover:bg-paper-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50';
   const delBtn =
-    'min-h-[34px] shrink-0 rounded-[6px] border border-error-border bg-white px-2.5 text-[12px] font-medium text-error hover:bg-error-bg';
+    'min-h-[34px] shrink-0 rounded-[6px] border border-error-border bg-white px-2.5 text-[12px] font-medium text-error transition-colors hover:bg-error-bg active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50';
 
   return (
     <BottomSheet
@@ -252,12 +252,14 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               className="field-input"
             />
           </div>
-          {bankError && (
-            <p role="alert" className="text-[12px] font-medium text-error">
-              {bankError}
-            </p>
-          )}
-          <button type="submit" className="btn-primary min-h-[38px] w-full text-[13px]">
+          <div className="min-h-[1lh]">
+            {bankError && (
+              <p role="alert" className="text-[12px] font-medium text-error">
+                {bankError}
+              </p>
+            )}
+          </div>
+          <button type="submit" className="btn-secondary min-h-[38px] w-full text-[13px]">
             Simpan Rekening Invoice
           </button>
         </form>
@@ -322,8 +324,10 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                     <div className="break-words text-[14px] font-medium leading-snug text-ink">
                       {k.name}
                     </div>
-                    <div className="break-words text-[12px] text-muted">
-                      <span className="font-mono">{k.kitchen_code}</span> · PIC {k.pic_name} · {k.pic_phone}
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 break-words text-[12px] text-muted">
+                      <span className="font-mono">{k.kitchen_code}</span>
+                      <span>PIC {k.pic_name}</span>
+                      <span className="tabular-nums">{k.pic_phone}</span>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
@@ -335,11 +339,9 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                       onClick={async () => {
                         if (typeof window !== 'undefined' && !window.confirm(`Hapus dapur ${k.name}?`)) return;
                         const res = await deleteKitchen(k.id);
-                        setToast(
-                          res.ok
-                            ? { kind: 'ok', text: `Dapur ${k.kitchen_code} dihapus dari Supabase.` }
-                            : { kind: 'error', text: res.error }
-                        );
+                        if (!res.ok) {
+                          setToast({ kind: 'error', text: res.error });
+                        }
                       }}
                       className={delBtn}
                     >
@@ -375,9 +377,10 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                     <div className="break-words text-[14px] font-medium leading-snug text-ink">
                       {it.name}
                     </div>
-                    <div className="break-words text-[12px] text-muted tabular-nums">
-                      {it.category} · {formatRp(it.default_kitchen_price_per_kg)}/kg · margin{' '}
-                      {formatRp(it.default_margin_per_kg)}/kg
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 break-words text-[12px] text-muted tabular-nums">
+                      <span>{it.category}</span>
+                      <span>{formatRp(it.default_kitchen_price_per_kg)}/kg</span>
+                      <span>margin {formatRp(it.default_margin_per_kg)}/kg</span>
                     </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1.5">
@@ -389,11 +392,9 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                       onClick={async () => {
                         if (typeof window !== 'undefined' && !window.confirm(`Hapus barang ${it.name}?`)) return;
                         const res = await deleteItem(it.id);
-                        setToast(
-                          res.ok
-                            ? { kind: 'ok', text: `Barang ${it.name} dihapus dari Supabase.` }
-                            : { kind: 'error', text: res.error }
-                        );
+                        if (!res.ok) {
+                          setToast({ kind: 'error', text: res.error });
+                        }
                       }}
                       className={delBtn}
                     >

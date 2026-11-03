@@ -184,13 +184,6 @@ export function Tab1KitchenOrders() {
       setFormError(res.error);
       return;
     }
-    const title = `${kitchen.kitchen_code} · ${shortKitchenName(kitchen.name)}`;
-    setToast({
-      kind: 'ok',
-      text: res.merged
-        ? `${title}: ${res.count ?? filled.length} barang ditambahkan ke order (${targetDate}).`
-        : `${title}: order tersimpan (${res.count ?? filled.length} barang).`,
-    });
     resetForm();
   };
 
@@ -199,13 +192,13 @@ export function Tab1KitchenOrders() {
   const handleRemoveLine = async (lineId: string, label: string) => {
     if (!confirmDo(`Hapus ${label} dari order?`)) return;
     const res = await removeOrderLine(lineId);
-    setToast(res.ok ? { kind: 'ok', text: `${label} dihapus dari order.` } : { kind: 'error', text: res.error });
+    if (!res.ok) setToast({ kind: 'error', text: res.error });
   };
 
   const handleDeleteOrder = async (deliveryId: string, label: string) => {
     if (!confirmDo(`Hapus seluruh order ${label}? Invoice & bagi hasilnya ikut terhapus.`)) return;
     const res = await deleteOrder(deliveryId);
-    setToast(res.ok ? { kind: 'ok', text: `Order ${label} dihapus.` } : { kind: 'error', text: res.error });
+    if (!res.ok) setToast({ kind: 'error', text: res.error });
   };
 
   return (
@@ -247,7 +240,8 @@ export function Tab1KitchenOrders() {
         </div>
       </div>
 
-      <details open ref={formRef} className="card group scroll-mt-16 overflow-hidden">
+      <div className="space-y-3.5 lg:grid lg:grid-cols-12 lg:items-start lg:gap-4 lg:space-y-0">
+        <details open ref={formRef} className="card group scroll-mt-16 overflow-hidden lg:col-span-5 lg:sticky lg:top-28">
         <summary className="hs-card-header cursor-pointer list-none bg-paper-2 transition-colors hover:bg-paper-3">
           <div className="flex min-w-0 items-center gap-2">
             <h2 className="text-[15px] font-medium text-ink">Buat Order Dapur Baru</h2>
@@ -394,20 +388,23 @@ export function Tab1KitchenOrders() {
               onAddLine={() => setLines((prev) => [...prev, emptyDraftLine()])}
             />
 
-            {formError && (
-              <p role="alert" className="rounded-[6px] border border-error-border bg-error-bg px-3 py-2 text-[13px] font-medium text-error-ink">
-                {formError}
-              </p>
-            )}
+            <div className="min-h-[1lh]">
+              {formError && (
+                <p role="alert" className="rounded-[6px] border border-error-border bg-error-bg px-3 py-2 text-[13px] font-medium text-error-ink">
+                  {formError}
+                </p>
+              )}
+            </div>
 
             <button type="button" onClick={submit} className="btn-primary min-h-[44px] w-full">
               Simpan Order Dapur
             </button>
           </div>
-      </details>
+        </details>
 
-      {/* Unified Daftar Order Dapur Ledger Toolbar */}
-      <div className="ledger-toolbar">
+        <div className="space-y-3.5 lg:col-span-7">
+          {/* Unified Daftar Order Dapur Ledger Toolbar */}
+          <div className="ledger-toolbar">
         <div className="hs-card-header bg-paper-2">
           <h2 className="text-[15px] font-medium text-ink">Daftar Order Dapur</h2>
           <span className="inline-flex h-6 items-center rounded-[6px] border border-rule bg-white px-2 text-[11px] font-medium text-ink-2 tabular-nums">
@@ -459,8 +456,9 @@ export function Tab1KitchenOrders() {
                     )}
                     <span className="truncate text-[13px] font-bold text-ink">{bucket.label}</span>
                   </div>
-                  <div className="shrink-0 text-right text-[11px] font-medium text-ink-2 tabular-nums">
-                    {bucket.items.length} order · <span className="font-bold text-ink">{formatRp(bucketTotal)}</span>
+                  <div className="flex shrink-0 items-center gap-2 text-right text-[11px] font-medium text-ink-2 tabular-nums">
+                    <span>{bucket.items.length} order</span>
+                    <span className="font-bold text-ink">{formatRp(bucketTotal)}</span>
                   </div>
                 </div>
               )}
@@ -471,7 +469,7 @@ export function Tab1KitchenOrders() {
                   const hasPaidOut = invoice
                     ? ledgerEntries.some((le) => le.invoice_id === invoice.id && le.payout_status === 'PAID_OUT')
                     : false;
-                  const title = k ? `${k.kitchen_code} · ${shortKitchenName(k.name)}` : '-';
+                  const title = k ? `${k.kitchen_code} — ${shortKitchenName(k.name)}` : '-';
                   const marginTotal = sumIdr(ol.map((l) => l.line_margin_amount));
                   const totalKg = ol.reduce((acc, l) => acc + l.qty_dispatched_kg, 0);
                   const isExpanded = expandedIds.has(delivery.id);
@@ -485,9 +483,12 @@ export function Tab1KitchenOrders() {
                       >
                         <div className="min-w-0">
                           <h3 className="truncate text-[14px] font-medium text-ink">{title}</h3>
-                          <p className="truncate font-mono text-[11px] text-muted tabular-nums">
-                            {delivery.delivery_date} · {delivery.delivery_number} · {ol.length} brg (
-                            {formatKgNum(totalKg)} kg)
+                          <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-muted tabular-nums">
+                            <span>{delivery.delivery_date}</span>
+                            <span>{delivery.delivery_number}</span>
+                            <span>
+                              {ol.length} brg ({formatKgNum(totalKg)} kg)
+                            </span>
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
@@ -516,15 +517,15 @@ export function Tab1KitchenOrders() {
                               return (
                                 <li key={l.id} className="flex items-center justify-between gap-2 py-2.5">
                                   <div className="min-w-0">
-                                    <div className="truncate text-[14px] font-medium text-ink">
-                                      {name}{' '}
-                                      <span className="font-normal text-muted tabular-nums">
-                                        · {formatKgNum(l.qty_dispatched_kg)} kg
+                                    <div className="flex flex-wrap items-baseline gap-x-1.5 truncate text-[14px] font-medium text-ink">
+                                      <span>{name}</span>
+                                      <span className="text-[12px] font-normal text-muted tabular-nums">
+                                        ({formatKgNum(l.qty_dispatched_kg)} kg)
                                       </span>
                                     </div>
-                                    <div className="truncate text-[12px] tabular-nums text-muted">
-                                      {formatRp(l.kitchen_unit_price_snapshot)}/kg · margin{' '}
-                                      {formatRp(l.margin_per_kg_snapshot)}/kg
+                                    <div className="flex flex-wrap items-center gap-x-2 text-[12px] tabular-nums text-muted">
+                                      <span>{formatRp(l.kitchen_unit_price_snapshot)}/kg</span>
+                                      <span>margin {formatRp(l.margin_per_kg_snapshot)}/kg</span>
                                     </div>
                                   </div>
                                   <div className="flex shrink-0 items-center gap-2">
@@ -596,6 +597,8 @@ export function Tab1KitchenOrders() {
             </div>
           );
         })}
+          </div>
+        </div>
       </div>
 
       <OrderInvoiceEditSheet

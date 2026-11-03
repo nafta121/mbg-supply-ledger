@@ -86,8 +86,6 @@ export function Tab4ProfitSharing() {
   const teamPct = splitConfig.team_share_pct;
   const coopPct = splitConfig.cooperative_share_pct;
 
-  const BENEFICIARY_LABEL: Record<BeneficiaryType, string> = { TEAM: 'Tim', COOPERATIVE: 'Koperasi' };
-
   const handlePayout = async (who: BeneficiaryType | 'ALL') => {
     if (!isAdmin) return;
     const total = who === 'ALL' ? availTotal : who === 'TEAM' ? availTeam : availCoop;
@@ -95,10 +93,7 @@ export function Tab4ProfitSharing() {
     const res = await executePayout(who === 'ALL' ? 'BOTH' : who);
     if (!res.ok) {
       setToast({ kind: 'error', text: res.error });
-      return;
     }
-    const label = who === 'ALL' ? 'Hak Tim & Hak Koperasi' : `Hak ${BENEFICIARY_LABEL[who]}`;
-    setToast({ kind: 'ok', text: `${label} ${formatRp(total)} berhasil dicairkan.` });
   };
 
   const applySplit = async (teamVal: number) => {
@@ -109,9 +104,7 @@ export function Tab4ProfitSharing() {
     const res = await updateProfitSplitPercentage(team, coop);
     if (!res.ok) {
       setToast({ kind: 'error', text: res.error });
-      return;
     }
-    setToast({ kind: 'ok', text: `Porsi diubah: Tim ${team}% · Koperasi ${coop}%.` });
   };
 
   return (
@@ -128,8 +121,10 @@ export function Tab4ProfitSharing() {
 
       <Toast toast={toast} onClose={() => setToast(null)} />
 
-      {/* Main Preline Ledger Card: Siap Dicairkan + Proportional Split Track */}
-      <Card className="overflow-hidden">
+      <div className="space-y-3.5 lg:grid lg:grid-cols-12 lg:items-start lg:gap-4 lg:space-y-0">
+        <div className="space-y-3.5 lg:col-span-5 lg:sticky lg:top-28">
+          {/* Main Preline Ledger Card: Siap Dicairkan + Proportional Split Track */}
+          <Card className="overflow-hidden">
         <div className="hs-card-header bg-paper-2">
           <span className="text-[14px] font-medium text-ink">Siap Dicairkan</span>
           <span className="text-[11px] text-muted">Dari invoice dapur yang sudah lunas</span>
@@ -211,8 +206,9 @@ export function Tab4ProfitSharing() {
             <div className="mt-0.5 truncate text-[16px] font-bold tabular-nums text-ink">
               {formatRp(lockedTotal)}
             </div>
-            <div className="mt-0.5 text-[11px] tabular-nums text-muted">
-              Koperasi {formatRp(lockedCoop)} · Tim {formatRp(lockedTeam)}
+            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] tabular-nums text-muted">
+              <span>Koperasi {formatRp(lockedCoop)}</span>
+              <span>Tim {formatRp(lockedTeam)}</span>
             </div>
           </div>
           <div className="p-3.5">
@@ -287,8 +283,9 @@ export function Tab4ProfitSharing() {
               </div>
             </>
           ) : (
-            <p className="text-[13px] text-muted">
-              Tim {teamPct}% · Koperasi {coopPct}%
+            <p className="flex items-center gap-x-2 text-[13px] text-muted">
+              <span>Tim {teamPct}%</span>
+              <span>Koperasi {coopPct}%</span>
             </p>
           )}
         </div>
@@ -306,11 +303,11 @@ export function Tab4ProfitSharing() {
           <ul className="divide-y divide-rule-2 border-t border-rule">
             {payoutBatches.map((pb) => (
               <li key={pb.id} className="flex items-center justify-between gap-2 px-4 py-2.5 text-[13px]">
-                <span className="min-w-0 truncate text-muted">
+                <span className="flex min-w-0 items-center gap-x-2 truncate text-muted">
                   <span className="font-medium text-ink">
                     {pb.beneficiary_type === 'TEAM' ? 'Tim' : 'Koperasi'}
-                  </span>{' '}
-                  · {new Date(pb.disbursed_at).toLocaleDateString('id-ID')}
+                  </span>
+                  <span>{new Date(pb.disbursed_at).toLocaleDateString('id-ID')}</span>
                 </span>
                 <span className="shrink-0 font-bold tabular-nums text-ink">
                   {formatRp(pb.total_payout_amount)}
@@ -320,9 +317,10 @@ export function Tab4ProfitSharing() {
           </ul>
         </details>
       )}
+        </div>
 
-      {/* Per-kitchen breakdown (Expandable Ledger Queue) */}
-      <Card as="section" className="overflow-hidden">
+        {/* Per-kitchen breakdown (Expandable Ledger Queue) */}
+        <Card as="section" className="overflow-hidden lg:col-span-7">
         <div className="hs-card-header bg-paper-2">
           <div className="flex items-center gap-2">
             <h2 className="text-[14px] font-medium text-ink">Rincian per Invoice Dapur</h2>
@@ -361,10 +359,11 @@ export function Tab4ProfitSharing() {
                   >
                     <div className="min-w-0">
                       <div className="truncate text-[14px] font-medium text-ink">
-                        {kitchen ? `${kitchen.kitchen_code} · ${shortKitchenName(kitchen.name)}` : '-'}
+                        {kitchen ? `${kitchen.kitchen_code} — ${shortKitchenName(kitchen.name)}` : '-'}
                       </div>
-                      <div className="truncate text-[11px] text-muted tabular-nums">
-                        <span className="font-mono">{inv.invoice_number}</span> · {formatKgNum(profit.total_accepted_kg)} kg
+                      <div className="flex items-center gap-x-2 truncate text-[11px] text-muted tabular-nums">
+                        <span className="font-mono">{inv.invoice_number}</span>
+                        <span>({formatKgNum(profit.total_accepted_kg)} kg)</span>
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center gap-2">
@@ -418,7 +417,8 @@ export function Tab4ProfitSharing() {
             })}
           </ul>
         )}
-      </Card>
+        </Card>
+      </div>
     </section>
   );
 }

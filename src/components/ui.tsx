@@ -10,19 +10,11 @@ const TONE_BADGE: Record<Tone, string> = {
   slate: 'border border-rule bg-paper-3 text-ink-2',
 };
 
-const TONE_DOT: Record<Tone, string> = {
-  green: 'bg-success',
-  amber: 'bg-warning',
-  red: 'bg-error',
-  slate: 'bg-muted',
-};
-
 export function Badge({ tone, children }: { tone: Tone; children: React.ReactNode }) {
   return (
     <span
-      className={`inline-flex h-6 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-[6px] px-2 text-[11px] font-medium ${TONE_BADGE[tone]}`}
+      className={`inline-flex h-6 shrink-0 items-center whitespace-nowrap rounded-[6px] px-2 text-[11px] font-medium ${TONE_BADGE[tone]}`}
     >
-      <span aria-hidden="true" className={`h-1.5 w-1.5 rounded-full ${TONE_DOT[tone]}`} />
       {children}
     </span>
   );
@@ -104,10 +96,6 @@ export function Toast({ toast, onClose }: { toast: ToastState; onClose: () => vo
       }`}
     >
       <div className="flex min-w-0 items-center gap-2">
-        <span
-          aria-hidden="true"
-          className={`h-2 w-2 shrink-0 rounded-full ${isError ? 'bg-error' : 'bg-success'}`}
-        />
         <span className="min-w-0">{toast.text}</span>
       </div>
       <button
@@ -163,7 +151,7 @@ export function BottomSheet({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[12px] border border-rule bg-white sm:rounded-[10px]"
+        className="relative max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[8px] border border-rule bg-white sm:rounded-[8px]"
       >
         <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-control sm:hidden" />
         <div className="flex items-center justify-between border-b border-rule bg-paper-2 px-4 py-3">

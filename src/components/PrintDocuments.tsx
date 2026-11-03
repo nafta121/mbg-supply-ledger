@@ -68,12 +68,12 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
             <tr key={l.id}>
               <td className={`${td} break-words font-semibold`}>
                 {l.item_name}
-                {!l.weighed && <div className="text-[10px] font-normal text-muted">Estimasi (belum ditimbang)</div>}
+                {!l.weighed && <div className="text-[11px] font-normal text-muted">Estimasi (belum ditimbang)</div>}
               </td>
               <td className={`${td} whitespace-nowrap text-right font-bold tabular-nums`}>
                 <div className="font-mono">{formatKg(l.qty_accepted_kg)}</div>
                 {l.qty_ordered_kg !== l.qty_accepted_kg && (
-                  <div className="text-[10px] font-normal text-muted">Order {formatKg(l.qty_ordered_kg)}</div>
+                  <div className="text-[11px] font-normal text-muted">Order {formatKg(l.qty_ordered_kg)}</div>
                 )}
               </td>
               <td className={`${td} whitespace-nowrap text-right font-mono`}>{formatRp(l.unit_price)}</td>
@@ -93,8 +93,9 @@ export function PrintableDocument({ doc }: { doc: PrintDocMode }) {
         <div className="text-[11px] font-bold text-muted">
           Transfer pembayaran ke rekening:
         </div>
-        <div className="mt-0.5 font-mono text-sm font-extrabold text-ink">
-          {account.payment_bank_name} • {account.payment_account_number}
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 font-mono text-sm font-extrabold text-ink">
+          <span>{account.payment_bank_name}</span>
+          <span>{account.payment_account_number}</span>
         </div>
         <div className="text-xs font-semibold text-ink-2">a.n. {account.payment_account_holder}</div>
       </div>

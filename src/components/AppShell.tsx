@@ -154,7 +154,7 @@ export function AppShell() {
       </a>
 
       <div
-        className={`mx-auto flex min-h-[100dvh] max-w-2xl flex-col border-x border-rule bg-paper ${
+        className={`mx-auto flex min-h-[100dvh] max-w-2xl lg:max-w-5xl flex-col border-x border-rule bg-paper ${
           showNav ? 'pb-20 sm:pb-8' : 'pb-6'
         }`}
       >
@@ -280,11 +280,13 @@ export function AppShell() {
                 className="field-input text-center text-lg tracking-widest tabular-nums"
               />
             </div>
-            {pinError && (
-              <p role="alert" className="rounded-[6px] bg-error-bg px-3 py-2 text-[12px] font-medium text-error-ink">
-                {pinError}
-              </p>
-            )}
+            <div className="min-h-[1lh]">
+              {pinError && (
+                <p role="alert" className="rounded-[6px] bg-error-bg px-3 py-2 text-[12px] font-medium text-error-ink">
+                  {pinError}
+                </p>
+              )}
+            </div>
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -309,7 +311,7 @@ export function AppShell() {
             aria-label="Navigasi utama"
             className="no-print fixed bottom-0 left-0 right-0 z-30 sm:sticky sm:top-[56px] sm:bottom-auto sm:order-none"
           >
-            <div className="mx-auto max-w-2xl border-t border-rule bg-white px-2 pb-[env(safe-area-inset-bottom)] sm:border-b sm:border-t-0 sm:bg-paper-2 sm:px-4 sm:pb-0">
+            <div className="mx-auto max-w-2xl lg:max-w-5xl border-t border-rule bg-white px-2 pb-[env(safe-area-inset-bottom)] sm:border-b sm:border-t-0 sm:bg-paper-2 sm:px-4 sm:pb-0">
               <div
                 className="grid sm:gap-2"
                 style={{ gridTemplateColumns: `repeat(${visibleTabs.length}, minmax(0, 1fr))` }}

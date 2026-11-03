@@ -85,20 +85,14 @@ export function Tab3KitchenInvoices() {
         <Card className="overflow-hidden">
           <div className="grid grid-cols-3 divide-x divide-rule">
             <div className="p-3.5">
-              <div className="inline-flex items-center gap-1.5 text-[11px] text-muted">
-                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-warning" />
-                Belum Dibayar
-              </div>
+              <div className="text-[11px] text-muted">Belum Dibayar</div>
               <div className="mt-1 truncate text-[17px] font-bold tracking-tight tabular-nums text-ink">
                 {formatRp(unpaidTotal)}
               </div>
               <div className="mt-0.5 text-[11px] text-muted tabular-nums">{unpaid.length} tagihan terbuka</div>
             </div>
             <div className="p-3.5">
-              <div className="inline-flex items-center gap-1.5 text-[11px] text-muted">
-                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-success" />
-                Sudah Lunas
-              </div>
+              <div className="text-[11px] text-muted">Sudah Lunas</div>
               <div className="mt-1 truncate text-[17px] font-bold tracking-tight tabular-nums text-success">
                 {formatRp(paidTotal)}
               </div>
@@ -178,8 +172,9 @@ export function Tab3KitchenInvoices() {
                       )}
                       <span className="truncate text-[13px] font-bold text-ink">{bucket.label}</span>
                     </div>
-                    <div className="shrink-0 text-right text-[11px] font-medium text-ink-2 tabular-nums">
-                      {bucket.items.length} invoice · <span className="font-bold text-ink">{formatRp(bucketTotal)}</span>
+                    <div className="flex shrink-0 items-center gap-2 text-right text-[11px] font-medium text-ink-2 tabular-nums">
+                      <span>{bucket.items.length} invoice</span>
+                      <span className="font-bold text-ink">{formatRp(bucketTotal)}</span>
                     </div>
                   </div>
                 )}
@@ -194,8 +189,11 @@ export function Tab3KitchenInvoices() {
                     const hasPaidOut = ledgerEntries.some(
                       (le) => le.invoice_id === inv.id && le.payout_status === 'PAID_OUT'
                     );
-                    const title = kitchen ? `${kitchen.kitchen_code} · ${shortKitchenName(kitchen.name)}` : '-';
+                    const title = kitchen ? `${kitchen.kitchen_code} — ${shortKitchenName(kitchen.name)}` : '-';
                     const isExpanded = expandedIds.has(inv.id);
+                    const firstExpandedUnpaidId = filteredInvoices.find(
+                      (i) => i.payment_status !== 'PAID' && expandedIds.has(i.id)
+                    )?.id;
 
                     return (
                       <Card as="article" key={inv.id} className="overflow-hidden">
@@ -207,9 +205,12 @@ export function Tab3KitchenInvoices() {
                         >
                           <div className="min-w-0">
                             <h2 className="truncate text-[14px] font-medium text-ink">{title}</h2>
-                            <p className="truncate font-mono text-[11px] text-muted tabular-nums">
-                              {inv.invoice_date} · {inv.invoice_number} · {summary.line_count} brg (
-                              {formatKgNum(summary.total_accepted_kg)} kg)
+                            <p className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11px] text-muted tabular-nums">
+                              <span>{inv.invoice_date}</span>
+                              <span>{inv.invoice_number}</span>
+                              <span>
+                                {summary.line_count} brg ({formatKgNum(summary.total_accepted_kg)} kg)
+                              </span>
                             </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
@@ -243,7 +244,7 @@ export function Tab3KitchenInvoices() {
                                     <div className="text-[11px] text-error">
                                       Order {formatKgNum(l.qty_ordered_kg)} kg, selisih -
                                       {formatKgNum(l.qty_shrinkage_kg)} kg tidak ditagih
-                                      {l.reason ? ` · ${l.reason}` : ''}
+                                      {l.reason ? ` (${l.reason})` : ''}
                                     </div>
                                   )}
                                 </li>
@@ -254,8 +255,9 @@ export function Tab3KitchenInvoices() {
                               <div className="flex items-end justify-between gap-2">
                                 <span className="text-[12px] text-muted">
                                   Total Tagihan Dapur
-                                  <span className="block tabular-nums text-muted">
-                                    {summary.line_count} barang · {formatKgNum(summary.total_accepted_kg)} kg
+                                  <span className="flex items-center gap-x-2 tabular-nums text-muted">
+                                    <span>{summary.line_count} barang</span>
+                                    <span>({formatKgNum(summary.total_accepted_kg)} kg)</span>
                                   </span>
                                 </span>
                                 <span className="text-[20px] font-bold tracking-tight tabular-nums text-ink">
@@ -272,9 +274,10 @@ export function Tab3KitchenInvoices() {
                                 </div>
                                 <div className="mt-1 flex items-center justify-between gap-2 border-t border-paper-3 pt-1">
                                   <span className="text-muted">Rekening</span>
-                                  <span className="truncate font-mono text-[11px] font-medium text-ink">
-                                    {account.payment_bank_name} · {account.payment_account_number} (
-                                    {account.payment_account_holder})
+                                  <span className="flex flex-wrap items-center justify-end gap-x-1.5 truncate font-mono text-[11px] font-medium text-ink">
+                                    <span>{account.payment_bank_name}</span>
+                                    <span>{account.payment_account_number}</span>
+                                    <span>({account.payment_account_holder})</span>
                                   </span>
                                 </div>
                               </div>
@@ -286,13 +289,11 @@ export function Tab3KitchenInvoices() {
                                       type="button"
                                       onClick={async () => {
                                         const res = await markInvoicePaid(inv.id);
-                                        setToast(
-                                          res.ok
-                                            ? { kind: 'ok', text: `${title} lunas. Bagi hasil siap dicairkan.` }
-                                            : { kind: 'error', text: res.error }
-                                        );
+                                        if (!res.ok) {
+                                          setToast({ kind: 'error', text: res.error });
+                                        }
                                       }}
-                                      className="btn-primary w-full"
+                                      className={`${inv.id === firstExpandedUnpaidId ? 'btn-primary' : 'btn-secondary'} w-full`}
                                     >
                                       Tandai Lunas
                                     </button>
@@ -363,7 +364,7 @@ export function Tab3KitchenInvoices() {
             role="dialog"
             aria-modal="true"
             aria-label="Pratinjau dokumen"
-            className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[12px] border border-rule bg-white p-4 sm:rounded-[10px]"
+            className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[8px] border border-rule bg-white p-4 sm:rounded-[8px]"
           >
             <div className="mb-3 flex items-center justify-between gap-2 border-b border-rule pb-3">
               <span className="text-[15px] font-medium text-ink">Pratinjau Invoice</span>
