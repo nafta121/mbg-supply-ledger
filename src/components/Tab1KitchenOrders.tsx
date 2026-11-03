@@ -13,6 +13,7 @@ import {
   shortKitchenName,
   sumIdr,
 } from '../lib/ui-format';
+import { ChevronDownIcon } from './Icons';
 import {
   emptyDraftLine,
   type GroupMode,
@@ -51,6 +52,7 @@ export function Tab1KitchenOrders() {
   const [filter, setFilter] = useState<ListFilter>('active');
   const [sortBy, setSortBy] = useState<SortMode>('date_desc');
   const [groupBy, setGroupBy] = useState<GroupMode>('none');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   const formRef = useRef<HTMLDivElement>(null);
 
@@ -70,6 +72,16 @@ export function Tab1KitchenOrders() {
   const activeOrders = useMemo(() => allOrders.filter((o) => o.invoice?.payment_status !== 'PAID'), [allOrders]);
   const paidOrders = useMemo(() => allOrders.filter((o) => o.invoice?.payment_status === 'PAID'), [allOrders]);
   const shownOrders = filter === 'active' ? activeOrders : paidOrders;
+  const allExpanded = shownOrders.length > 0 && shownOrders.every((o) => expandedIds.has(o.delivery.id));
+  const toggleCard = (id: string) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleExpandAll = () =>
+    setExpandedIds(allExpanded ? new Set() : new Set(shownOrders.map((o) => o.delivery.id)));
 
   const groupedOrders = useMemo(
     () =>
@@ -371,6 +383,9 @@ export function Tab1KitchenOrders() {
         groupBy={groupBy}
         onGroupChange={setGroupBy}
         idPrefix="order"
+        allExpanded={allExpanded}
+        onToggleExpandAll={toggleExpandAll}
+        itemCount={shownOrders.length}
       />
 
       {shownOrders.length === 0 && (
@@ -408,94 +423,122 @@ export function Tab1KitchenOrders() {
                     : false;
                   const title = k ? `${k.kitchen_code} · ${shortKitchenName(k.name)}` : '-';
                   const marginTotal = sumIdr(ol.map((l) => l.line_margin_amount));
+                  const totalKg = ol.reduce((acc, l) => acc + l.qty_dispatched_kg, 0);
+                  const isExpanded = expandedIds.has(delivery.id);
                   return (
                     <Card as="article" key={delivery.id} className="overflow-hidden">
-                      <header className="hs-card-header">
+                      <button
+                        type="button"
+                        aria-expanded={isExpanded}
+                        onClick={() => toggleCard(delivery.id)}
+                        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-[#f8f9fa]"
+                      >
                         <div className="min-w-0">
                           <h3 className="truncate text-[14px] font-medium text-[#0a0a0a]">{title}</h3>
                           <p className="truncate font-mono text-[11px] text-[#6b6b6b] tabular-nums">
-                            {delivery.delivery_date} · {delivery.delivery_number}
+                            {delivery.delivery_date} · {delivery.delivery_number} · {ol.length} brg (
+                            {formatKgNum(totalKg)} kg)
                           </p>
                         </div>
-                        <Badge tone={locked ? 'green' : 'amber'}>{locked ? 'Lunas' : 'Belum Bayar'}</Badge>
-                      </header>
-                      <ul className="divide-y divide-[#f0f0f0] px-4">
-                        {ol.map((l) => {
-                          const name = itemById.get(l.item_id)?.name ?? 'Barang';
-                          return (
-                            <li key={l.id} className="flex items-center justify-between gap-2 py-2.5">
-                              <div className="min-w-0">
-                                <div className="truncate text-[14px] font-medium text-[#0a0a0a]">
-                                  {name}{' '}
-                                  <span className="font-normal text-[#6b6b6b] tabular-nums">
-                                    · {formatKgNum(l.qty_dispatched_kg)} kg
-                                  </span>
-                                </div>
-                                <div className="truncate text-[12px] tabular-nums text-[#6b6b6b]">
-                                  {formatRp(l.kitchen_unit_price_snapshot)}/kg · margin{' '}
-                                  {formatRp(l.margin_per_kg_snapshot)}/kg
-                                </div>
-                              </div>
-                              <div className="flex shrink-0 items-center gap-2">
-                                <span className="text-[13px] font-bold tabular-nums text-[#0a0a0a]">
-                                  {formatRp(l.line_invoice_amount)}
-                                </span>
-                                {!locked && !hasPaidOut && (
-                                  <button
-                                    type="button"
-                                    onClick={() => handleRemoveLine(l.id, name)}
-                                    aria-label={`Hapus ${name} dari order ${title}`}
-                                    className="flex h-7 w-7 items-center justify-center rounded-[4px] border border-transparent text-base text-[#6b6b6b] hover:border-[#f5c2c0] hover:bg-[#ffedea] hover:text-[#831c1e]"
-                                  >
-                                    ×
-                                  </button>
-                                )}
-                              </div>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                      <footer className="hs-card-footer space-y-2">
-                        <div className="flex items-baseline justify-between gap-2 text-[13px]">
-                          <span className="text-[#6b6b6b]">Tagihan Dapur</span>
-                          <span className="text-[15px] font-bold tabular-nums text-[#0a0a0a]">
-                            {formatRp(invoice?.total_invoice_amount ?? 0)}
-                          </span>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <div className="text-right">
+                            <div className="text-[13px] font-bold tabular-nums text-[#0a0a0a]">
+                              {formatRp(invoice?.total_invoice_amount ?? 0)}
+                            </div>
+                            <div className="text-[11px] font-medium tabular-nums text-[#1d5fbf]">
+                              Margin {formatRp(marginTotal)}
+                            </div>
+                          </div>
+                          <Badge tone={locked ? 'green' : 'amber'}>{locked ? 'Lunas' : 'Belum Bayar'}</Badge>
+                          <ChevronDownIcon
+                            className={`h-4 w-4 shrink-0 text-[#6b6b6b] transition-transform ${
+                              isExpanded ? 'rotate-180' : ''
+                            }`}
+                          />
                         </div>
-                        <div className="flex items-baseline justify-between gap-2 text-[12px]">
-                          <span className="text-[#6b6b6b]">Bagi hasil (Tim + Koperasi)</span>
-                          <span className="font-bold tabular-nums text-[#1d5fbf]">{formatRp(marginTotal)}</span>
-                        </div>
-                        {!hasPaidOut && (
-                          <div className={`grid gap-2 pt-1 ${locked ? 'grid-cols-1' : 'grid-cols-3'}`}>
-                            <button
-                              type="button"
-                              onClick={() => setEditingDeliveryId(delivery.id)}
-                              className="btn-secondary min-h-[36px] text-[12px]"
-                            >
-                              Edit Order
-                            </button>
-                            {!locked && (
-                              <>
+                      </button>
+
+                      {isExpanded && (
+                        <>
+                          <ul className="divide-y divide-[#f0f0f0] border-t border-[#e6e6e6] px-4">
+                            {ol.map((l) => {
+                              const name = itemById.get(l.item_id)?.name ?? 'Barang';
+                              return (
+                                <li key={l.id} className="flex items-center justify-between gap-2 py-2.5">
+                                  <div className="min-w-0">
+                                    <div className="truncate text-[14px] font-medium text-[#0a0a0a]">
+                                      {name}{' '}
+                                      <span className="font-normal text-[#6b6b6b] tabular-nums">
+                                        · {formatKgNum(l.qty_dispatched_kg)} kg
+                                      </span>
+                                    </div>
+                                    <div className="truncate text-[12px] tabular-nums text-[#6b6b6b]">
+                                      {formatRp(l.kitchen_unit_price_snapshot)}/kg · margin{' '}
+                                      {formatRp(l.margin_per_kg_snapshot)}/kg
+                                    </div>
+                                  </div>
+                                  <div className="flex shrink-0 items-center gap-2">
+                                    <span className="text-[13px] font-bold tabular-nums text-[#0a0a0a]">
+                                      {formatRp(l.line_invoice_amount)}
+                                    </span>
+                                    {!locked && !hasPaidOut && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveLine(l.id, name)}
+                                        aria-label={`Hapus ${name} dari order ${title}`}
+                                        className="flex h-7 w-7 items-center justify-center rounded-[4px] border border-transparent text-base text-[#6b6b6b] hover:border-[#f5c2c0] hover:bg-[#ffedea] hover:text-[#831c1e]"
+                                      >
+                                        ×
+                                      </button>
+                                    )}
+                                  </div>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                          <footer className="hs-card-footer space-y-2">
+                            <div className="flex items-baseline justify-between gap-2 text-[13px]">
+                              <span className="text-[#6b6b6b]">Tagihan Dapur</span>
+                              <span className="text-[15px] font-bold tabular-nums text-[#0a0a0a]">
+                                {formatRp(invoice?.total_invoice_amount ?? 0)}
+                              </span>
+                            </div>
+                            <div className="flex items-baseline justify-between gap-2 text-[12px]">
+                              <span className="text-[#6b6b6b]">Bagi hasil (Tim + Koperasi)</span>
+                              <span className="font-bold tabular-nums text-[#1d5fbf]">{formatRp(marginTotal)}</span>
+                            </div>
+                            {!hasPaidOut && (
+                              <div className={`grid gap-2 pt-1 ${locked ? 'grid-cols-1' : 'grid-cols-3'}`}>
                                 <button
                                   type="button"
-                                  onClick={() => startAddToKitchen(delivery.kitchen_id, delivery.delivery_date)}
+                                  onClick={() => setEditingDeliveryId(delivery.id)}
                                   className="btn-secondary min-h-[36px] text-[12px]"
                                 >
-                                  + Tambah Barang
+                                  Edit Order
                                 </button>
-                                <button
-                                  type="button"
-                                  onClick={() => handleDeleteOrder(delivery.id, title)}
-                                  className="btn-secondary min-h-[36px] border-[#f5c2c0] text-[12px] !text-[#c4242a] hover:!bg-[#ffedea]"
-                                >
-                                  Hapus Order
-                                </button>
-                              </>
+                                {!locked && (
+                                  <>
+                                    <button
+                                      type="button"
+                                      onClick={() => startAddToKitchen(delivery.kitchen_id, delivery.delivery_date)}
+                                      className="btn-secondary min-h-[36px] text-[12px]"
+                                    >
+                                      + Tambah Barang
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteOrder(delivery.id, title)}
+                                      className="btn-secondary min-h-[36px] border-[#f5c2c0] text-[12px] !text-[#c4242a] hover:!bg-[#ffedea]"
+                                    >
+                                      Hapus Order
+                                    </button>
+                                  </>
+                                )}
+                              </div>
                             )}
-                          </div>
-                        )}
-                      </footer>
+                          </footer>
+                        </>
+                      )}
                     </Card>
                   );
                 })}

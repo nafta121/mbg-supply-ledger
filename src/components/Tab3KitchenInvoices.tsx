@@ -5,6 +5,7 @@ import { buildInvoiceLines, buildInvoiceWaText, resolvePaymentAccount, summarize
 import { useMbgStore } from '../lib/mbg-store';
 import { shareToWhatsApp } from '../lib/share';
 import { formatKgNum, formatRp, INVOICE_LABEL, invoiceTone, shortKitchenName, sumIdr } from '../lib/ui-format';
+import { ChevronDownIcon } from './Icons';
 import {
   type GroupMode,
   OrderInvoiceEditSheet,
@@ -24,6 +25,7 @@ export function Tab3KitchenInvoices() {
   const [invFilter, setInvFilter] = useState<InvFilter>('unpaid');
   const [sortBy, setSortBy] = useState<SortMode>('date_desc');
   const [groupBy, setGroupBy] = useState<GroupMode>('none');
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   const [printDoc, setPrintDoc] = useState<PrintDocMode | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
@@ -35,6 +37,16 @@ export function Tab3KitchenInvoices() {
   const paidTotal = useMemo(() => sumIdr(paid.map((i) => i.total_invoice_amount)), [paid]);
 
   const filteredInvoices = invFilter === 'paid' ? paid : invFilter === 'unpaid' ? unpaid : invoices;
+  const allExpanded = filteredInvoices.length > 0 && filteredInvoices.every((i) => expandedIds.has(i.id));
+  const toggleCard = (id: string) =>
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const toggleExpandAll = () =>
+    setExpandedIds(allExpanded ? new Set() : new Set(filteredInvoices.map((i) => i.id)));
 
   const groupedInvoices = useMemo(
     () =>
@@ -121,6 +133,9 @@ export function Tab3KitchenInvoices() {
           groupBy={groupBy}
           onGroupChange={setGroupBy}
           idPrefix="invoice"
+          allExpanded={allExpanded}
+          onToggleExpandAll={toggleExpandAll}
+          itemCount={filteredInvoices.length}
         />
 
         <Toast toast={toast} onClose={() => setToast(null)} />
@@ -161,124 +176,150 @@ export function Tab3KitchenInvoices() {
                       (le) => le.invoice_id === inv.id && le.payout_status === 'PAID_OUT'
                     );
                     const title = kitchen ? `${kitchen.kitchen_code} · ${shortKitchenName(kitchen.name)}` : '-';
+                    const isExpanded = expandedIds.has(inv.id);
 
                     return (
                       <Card as="article" key={inv.id} className="overflow-hidden">
-                        <div className="hs-card-header">
+                        <button
+                          type="button"
+                          aria-expanded={isExpanded}
+                          onClick={() => toggleCard(inv.id)}
+                          className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-[#f8f9fa]"
+                        >
                           <div className="min-w-0">
                             <h2 className="truncate text-[14px] font-medium text-[#0a0a0a]">{title}</h2>
                             <p className="truncate font-mono text-[11px] text-[#6b6b6b] tabular-nums">
-                              {inv.invoice_date} · {inv.invoice_number}
+                              {inv.invoice_date} · {inv.invoice_number} · {summary.line_count} brg (
+                              {formatKgNum(summary.total_accepted_kg)} kg)
                             </p>
                           </div>
-                          <Badge tone={invoiceTone(inv.payment_status)}>{INVOICE_LABEL[inv.payment_status]}</Badge>
-                        </div>
-
-                        <ul className="divide-y divide-[#f0f0f0] px-4">
-                          {lines.map((l) => (
-                            <li key={l.id} className="space-y-0.5 py-2.5 text-[13px]">
-                              <div className="flex items-baseline justify-between gap-2">
-                                <span className="min-w-0 truncate font-medium text-[#0a0a0a]">{l.item_name}</span>
-                                <span className="shrink-0 font-bold tabular-nums text-[#0a0a0a]">
-                                  {formatRp(l.line_total)}
-                                </span>
-                              </div>
-                              <div className="text-[12px] tabular-nums text-[#6b6b6b]">
-                                {formatKgNum(l.qty_accepted_kg)} kg × {formatRp(l.unit_price)}
-                              </div>
-                              {l.weighed && l.qty_shrinkage_kg > 0 && (
-                                <div className="text-[11px] text-[#c4242a]">
-                                  Order {formatKgNum(l.qty_ordered_kg)} kg, selisih -{formatKgNum(l.qty_shrinkage_kg)}{' '}
-                                  kg tidak ditagih{l.reason ? ` · ${l.reason}` : ''}
-                                </div>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-
-                        <div className="hs-card-footer space-y-2.5">
-                          <div className="flex items-end justify-between gap-2">
-                            <span className="text-[12px] text-[#6b6b6b]">
-                              Total Tagihan Dapur
-                              <span className="block tabular-nums text-[#6b6b6b]">
-                                {summary.line_count} barang · {formatKgNum(summary.total_accepted_kg)} kg
-                              </span>
-                            </span>
-                            <span className="text-[20px] font-bold tracking-tight tabular-nums text-[#0a0a0a]">
+                          <div className="flex shrink-0 items-center gap-2">
+                            <span className="text-[13px] font-bold tabular-nums text-[#0a0a0a]">
                               {formatRp(inv.total_invoice_amount)}
                             </span>
+                            <Badge tone={invoiceTone(inv.payment_status)}>{INVOICE_LABEL[inv.payment_status]}</Badge>
+                            <ChevronDownIcon
+                              className={`h-4 w-4 shrink-0 text-[#6b6b6b] transition-transform ${
+                                isExpanded ? 'rotate-180' : ''
+                              }`}
+                            />
                           </div>
+                        </button>
 
-                          <div className="rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] px-3 py-2 text-[12px]">
-                            <div className="flex items-center justify-between gap-2">
-                              <span className="text-[#6b6b6b]">Supplier</span>
-                              <span className="truncate font-medium text-[#0a0a0a]">
-                                {account.supplier_name ?? 'Supplier MBG'}
-                              </span>
-                            </div>
-                            <div className="mt-1 flex items-center justify-between gap-2 border-t border-[#eeeeee] pt-1">
-                              <span className="text-[#6b6b6b]">Rekening</span>
-                              <span className="truncate font-mono text-[11px] font-medium text-[#0a0a0a]">
-                                {account.payment_bank_name} · {account.payment_account_number} (
-                                {account.payment_account_holder})
-                              </span>
-                            </div>
-                          </div>
+                        {isExpanded && (
+                          <>
+                            <ul className="divide-y divide-[#f0f0f0] border-t border-[#e6e6e6] px-4">
+                              {lines.map((l) => (
+                                <li key={l.id} className="space-y-0.5 py-2.5 text-[13px]">
+                                  <div className="flex items-baseline justify-between gap-2">
+                                    <span className="min-w-0 truncate font-medium text-[#0a0a0a]">{l.item_name}</span>
+                                    <span className="shrink-0 font-bold tabular-nums text-[#0a0a0a]">
+                                      {formatRp(l.line_total)}
+                                    </span>
+                                  </div>
+                                  <div className="text-[12px] tabular-nums text-[#6b6b6b]">
+                                    {formatKgNum(l.qty_accepted_kg)} kg × {formatRp(l.unit_price)}
+                                  </div>
+                                  {l.weighed && l.qty_shrinkage_kg > 0 && (
+                                    <div className="text-[11px] text-[#c4242a]">
+                                      Order {formatKgNum(l.qty_ordered_kg)} kg, selisih -
+                                      {formatKgNum(l.qty_shrinkage_kg)} kg tidak ditagih
+                                      {l.reason ? ` · ${l.reason}` : ''}
+                                    </div>
+                                  )}
+                                </li>
+                              ))}
+                            </ul>
 
-                          {isAdmin && (
-                            <div className="space-y-2 pt-0.5">
-                              {!isPaid && (
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    const res = await markInvoicePaid(inv.id);
-                                    setToast(
-                                      res.ok
-                                        ? { kind: 'ok', text: `${title} lunas. Bagi hasil siap dicairkan.` }
-                                        : { kind: 'error', text: res.error }
-                                    );
-                                  }}
-                                  className="btn-primary w-full"
-                                >
-                                  Tandai Lunas
-                                </button>
-                              )}
-                              <div className={`grid gap-2 ${!hasPaidOut ? 'grid-cols-3' : 'grid-cols-2'}`}>
-                                {!hasPaidOut && (
-                                  <button
-                                    type="button"
-                                    onClick={() => setEditingDeliveryId(inv.delivery_id)}
-                                    className="btn-secondary min-h-[36px] px-2 text-[12px]"
-                                  >
-                                    Edit Invoice
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => setPrintDoc({ type: 'INVOICE', invoiceId: inv.id })}
-                                  className="btn-secondary min-h-[36px] px-2 text-[12px]"
-                                >
-                                  Cetak / PDF
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() =>
-                                    void shareToWhatsApp(kitchen?.pic_phone, buildInvoiceWaText(store, inv)).then((ok) =>
-                                      setToast(
-                                        ok
-                                          ? { kind: 'ok', text: 'Tagihan disalin & WhatsApp dibuka.' }
-                                          : { kind: 'error', text: 'Gagal menyalin otomatis. WhatsApp tetap dibuka.' }
-                                      )
-                                    )
-                                  }
-                                  className="btn-secondary min-h-[36px] px-2 text-[12px]"
-                                >
-                                  Salin &amp; WA
-                                </button>
+                            <div className="hs-card-footer space-y-2.5">
+                              <div className="flex items-end justify-between gap-2">
+                                <span className="text-[12px] text-[#6b6b6b]">
+                                  Total Tagihan Dapur
+                                  <span className="block tabular-nums text-[#6b6b6b]">
+                                    {summary.line_count} barang · {formatKgNum(summary.total_accepted_kg)} kg
+                                  </span>
+                                </span>
+                                <span className="text-[20px] font-bold tracking-tight tabular-nums text-[#0a0a0a]">
+                                  {formatRp(inv.total_invoice_amount)}
+                                </span>
                               </div>
+
+                              <div className="rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] px-3 py-2 text-[12px]">
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="text-[#6b6b6b]">Supplier</span>
+                                  <span className="truncate font-medium text-[#0a0a0a]">
+                                    {account.supplier_name ?? 'Supplier MBG'}
+                                  </span>
+                                </div>
+                                <div className="mt-1 flex items-center justify-between gap-2 border-t border-[#eeeeee] pt-1">
+                                  <span className="text-[#6b6b6b]">Rekening</span>
+                                  <span className="truncate font-mono text-[11px] font-medium text-[#0a0a0a]">
+                                    {account.payment_bank_name} · {account.payment_account_number} (
+                                    {account.payment_account_holder})
+                                  </span>
+                                </div>
+                              </div>
+
+                              {isAdmin && (
+                                <div className="space-y-2 pt-0.5">
+                                  {!isPaid && (
+                                    <button
+                                      type="button"
+                                      onClick={async () => {
+                                        const res = await markInvoicePaid(inv.id);
+                                        setToast(
+                                          res.ok
+                                            ? { kind: 'ok', text: `${title} lunas. Bagi hasil siap dicairkan.` }
+                                            : { kind: 'error', text: res.error }
+                                        );
+                                      }}
+                                      className="btn-primary w-full"
+                                    >
+                                      Tandai Lunas
+                                    </button>
+                                  )}
+                                  <div className={`grid gap-2 ${!hasPaidOut ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                                    {!hasPaidOut && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setEditingDeliveryId(inv.delivery_id)}
+                                        className="btn-secondary min-h-[36px] px-2 text-[12px]"
+                                      >
+                                        Edit Invoice
+                                      </button>
+                                    )}
+                                    <button
+                                      type="button"
+                                      onClick={() => setPrintDoc({ type: 'INVOICE', invoiceId: inv.id })}
+                                      className="btn-secondary min-h-[36px] px-2 text-[12px]"
+                                    >
+                                      Cetak / PDF
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() =>
+                                        void shareToWhatsApp(kitchen?.pic_phone, buildInvoiceWaText(store, inv)).then(
+                                          (ok) =>
+                                            setToast(
+                                              ok
+                                                ? { kind: 'ok', text: 'Tagihan disalin & WhatsApp dibuka.' }
+                                                : {
+                                                    kind: 'error',
+                                                    text: 'Gagal menyalin otomatis. WhatsApp tetap dibuka.',
+                                                  }
+                                            )
+                                        )
+                                      }
+                                      className="btn-secondary min-h-[36px] px-2 text-[12px]"
+                                    >
+                                      Salin &amp; WA
+                                    </button>
+                                  </div>
+                                </div>
+                              )}
                             </div>
-                          )}
-                        </div>
+                          </>
+                        )}
                       </Card>
                     );
                   })}

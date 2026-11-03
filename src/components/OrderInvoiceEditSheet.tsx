@@ -25,6 +25,9 @@ export interface SortGroupControlsProps {
   groupBy: GroupMode;
   onGroupChange: (v: GroupMode) => void;
   idPrefix: string;
+  allExpanded?: boolean;
+  onToggleExpandAll?: () => void;
+  itemCount?: number;
 }
 
 export function SortGroupControls({
@@ -33,6 +36,9 @@ export function SortGroupControls({
   groupBy,
   onGroupChange,
   idPrefix,
+  allExpanded = false,
+  onToggleExpandAll,
+  itemCount = 0,
 }: SortGroupControlsProps) {
   return (
     <div className="grid grid-cols-2 gap-2 rounded-[8px] border border-[#e6e6e6] bg-white p-2.5">
@@ -67,6 +73,20 @@ export function SortGroupControls({
           <option value="kitchen">Per Nama Dapur</option>
         </select>
       </div>
+      {onToggleExpandAll && itemCount > 0 && (
+        <div className="col-span-2 flex items-center justify-between border-t border-[#f0f0f0] pt-2">
+          <span className="text-[11px] text-[#6b6b6b] tabular-nums">
+            Rincian kartu ({itemCount})
+          </span>
+          <button
+            type="button"
+            onClick={onToggleExpandAll}
+            className="inline-flex min-h-[28px] items-center gap-1 rounded-[6px] border border-[#d4d4d4] bg-[#f8f9fa] px-2.5 text-[11px] font-medium text-[#0a0a0a] transition-colors hover:bg-[#eeeeee]"
+          >
+            {allExpanded ? 'Tutup Semua' : 'Buka Semua'}
+          </button>
+        </div>
+      )}
     </div>
   );
 }
