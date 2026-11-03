@@ -7,3 +7,5 @@ dist/
 .vercel
 *.log
 tsconfig.tsbuildinfo
+.hallmark/before*
+.hallmark/compare*

@@ -1,0 +1,12 @@
+{
+  "scanned": "2026-11-03",
+  "findings": {
+    "fonts": "Geist + Geist Mono (src/app/layout.tsx L43-46, tailwind.config.js L10-13)",
+    "palette": "Custom properties in src/app/globals.css L5-31 (:root) plus arbitrary hex classes in src/components/*",
+    "motion": "Tailwind CSS transitions (no external motion library, package.json)",
+    "spacing": "Tailwind default 4pt scale (tailwind.config.js)",
+    "framework": "Next.js 14.2.35 App Router (package.json L14)"
+  },
+  "preserve": ["font stack", "palette", "spacing scale", "app shell & wiring"],
+  "introduce": ["Hallmark Floor tokens", "app-scope gate compliance", "stamp"]
+}

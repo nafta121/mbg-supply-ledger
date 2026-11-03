@@ -71,35 +71,35 @@ export function Tab3KitchenInvoices() {
       <div className="no-print space-y-3.5">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <h1 className="text-[20px] font-bold tracking-tight text-[#0a0a0a]">Invoice Dapur</h1>
-            <p className="text-[12px] text-[#6b6b6b]">Rekap tagihan bahan baku dapur dan pelunasan</p>
+            <h1 className="text-[20px] font-bold tracking-tight text-ink">Invoice Dapur</h1>
+            <p className="text-[12px] text-muted">Rekap tagihan bahan baku dapur dan pelunasan</p>
           </div>
-          <span className="inline-flex h-6 shrink-0 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2.5 text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+          <span className="inline-flex h-6 shrink-0 items-center rounded-[6px] border border-rule bg-white px-2.5 text-[11px] font-medium text-ink-2 tabular-nums">
             {invoices.length} invoice
           </span>
         </div>
 
         {/* Preline Divided KPI Stat Card */}
-        <Card className="grid grid-cols-2 divide-x divide-[#e6e6e6] overflow-hidden">
+        <Card className="grid grid-cols-2 divide-x divide-rule overflow-hidden">
           <div className="p-4">
-            <div className="inline-flex items-center gap-1.5 text-[12px] text-[#6b6b6b]">
-              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[#92400e]" />
+            <div className="inline-flex items-center gap-1.5 text-[12px] text-muted">
+              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-warning" />
               Belum Dibayar Dapur
             </div>
-            <div className="mt-1 truncate text-[20px] font-bold tracking-tight tabular-nums text-[#0a0a0a]">
+            <div className="mt-1 truncate text-[20px] font-bold tracking-tight tabular-nums text-ink">
               {formatRp(unpaidTotal)}
             </div>
-            <div className="mt-0.5 text-[11px] text-[#6b6b6b] tabular-nums">{unpaid.length} tagihan terbuka</div>
+            <div className="mt-0.5 text-[11px] text-muted tabular-nums">{unpaid.length} tagihan terbuka</div>
           </div>
           <div className="p-4">
-            <div className="inline-flex items-center gap-1.5 text-[12px] text-[#6b6b6b]">
-              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-[#2e7d32]" />
+            <div className="inline-flex items-center gap-1.5 text-[12px] text-muted">
+              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-success" />
               Sudah Lunas
             </div>
-            <div className="mt-1 truncate text-[20px] font-bold tracking-tight tabular-nums text-[#2e7d32]">
+            <div className="mt-1 truncate text-[20px] font-bold tracking-tight tabular-nums text-success">
               {formatRp(paidTotal)}
             </div>
-            <div className="mt-0.5 text-[11px] text-[#6b6b6b] tabular-nums">{paid.length} tagihan selesai</div>
+            <div className="mt-0.5 text-[11px] text-muted tabular-nums">{paid.length} tagihan selesai</div>
           </div>
         </Card>
 
@@ -118,8 +118,8 @@ export function Tab3KitchenInvoices() {
               onClick={() => setInvFilter(f.v)}
               className={`min-h-[34px] rounded-[6px] px-3 text-[12px] font-medium transition-colors ${
                 invFilter === f.v
-                  ? 'bg-[#141414] text-white'
-                  : 'border border-[#d4d4d4] bg-white text-[#3d3d3d] hover:bg-[#f8f9fa]'
+                  ? 'bg-accent text-white'
+                  : 'border border-control bg-white text-ink-2 hover:bg-paper-2'
               }`}
             >
               {f.l}
@@ -141,7 +141,7 @@ export function Tab3KitchenInvoices() {
         <Toast toast={toast} onClose={() => setToast(null)} />
 
         {filteredInvoices.length === 0 && (
-          <Card className="p-6 text-center text-[13px] text-[#6b6b6b]">Tidak ada invoice pada filter ini.</Card>
+          <Card className="p-6 text-center text-[13px] text-muted">Tidak ada invoice pada filter ini.</Card>
         )}
 
         <div className="space-y-4">
@@ -150,17 +150,17 @@ export function Tab3KitchenInvoices() {
             return (
               <div key={bucket.key} className="space-y-2.5">
                 {groupBy !== 'none' && (
-                  <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#e6e6e6] bg-[#e9edf2] px-3 py-2">
+                  <div className="flex items-center justify-between gap-2 rounded-[6px] border border-rule bg-group px-3 py-2">
                     <div className="flex min-w-0 items-center gap-1.5">
                       {bucket.sublabel && (
-                        <span className="shrink-0 rounded-[4px] border border-[#d4d4d4] bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#3d3d3d]">
+                        <span className="shrink-0 rounded-[4px] border border-control bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-ink-2">
                           {bucket.sublabel}
                         </span>
                       )}
-                      <span className="truncate text-[13px] font-bold text-[#0a0a0a]">{bucket.label}</span>
+                      <span className="truncate text-[13px] font-bold text-ink">{bucket.label}</span>
                     </div>
-                    <div className="shrink-0 text-right text-[11px] font-medium text-[#3d3d3d] tabular-nums">
-                      {bucket.items.length} invoice · <span className="font-bold text-[#0a0a0a]">{formatRp(bucketTotal)}</span>
+                    <div className="shrink-0 text-right text-[11px] font-medium text-ink-2 tabular-nums">
+                      {bucket.items.length} invoice · <span className="font-bold text-ink">{formatRp(bucketTotal)}</span>
                     </div>
                   </div>
                 )}
@@ -184,22 +184,22 @@ export function Tab3KitchenInvoices() {
                           type="button"
                           aria-expanded={isExpanded}
                           onClick={() => toggleCard(inv.id)}
-                          className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-[#f8f9fa]"
+                          className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-paper-2"
                         >
                           <div className="min-w-0">
-                            <h2 className="truncate text-[14px] font-medium text-[#0a0a0a]">{title}</h2>
-                            <p className="truncate font-mono text-[11px] text-[#6b6b6b] tabular-nums">
+                            <h2 className="truncate text-[14px] font-medium text-ink">{title}</h2>
+                            <p className="truncate font-mono text-[11px] text-muted tabular-nums">
                               {inv.invoice_date} · {inv.invoice_number} · {summary.line_count} brg (
                               {formatKgNum(summary.total_accepted_kg)} kg)
                             </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            <span className="text-[13px] font-bold tabular-nums text-[#0a0a0a]">
+                            <span className="text-[13px] font-bold tabular-nums text-ink">
                               {formatRp(inv.total_invoice_amount)}
                             </span>
                             <Badge tone={invoiceTone(inv.payment_status)}>{INVOICE_LABEL[inv.payment_status]}</Badge>
                             <ChevronDownIcon
-                              className={`h-4 w-4 shrink-0 text-[#6b6b6b] transition-transform ${
+                              className={`h-4 w-4 shrink-0 text-muted transition-transform motion-reduce:transition-none ${
                                 isExpanded ? 'rotate-180' : ''
                               }`}
                             />
@@ -208,20 +208,20 @@ export function Tab3KitchenInvoices() {
 
                         {isExpanded && (
                           <>
-                            <ul className="divide-y divide-[#f0f0f0] border-t border-[#e6e6e6] px-4">
+                            <ul className="divide-y divide-rule-2 border-t border-rule px-4">
                               {lines.map((l) => (
                                 <li key={l.id} className="space-y-0.5 py-2.5 text-[13px]">
                                   <div className="flex items-baseline justify-between gap-2">
-                                    <span className="min-w-0 truncate font-medium text-[#0a0a0a]">{l.item_name}</span>
-                                    <span className="shrink-0 font-bold tabular-nums text-[#0a0a0a]">
+                                    <span className="min-w-0 truncate font-medium text-ink">{l.item_name}</span>
+                                    <span className="shrink-0 font-bold tabular-nums text-ink">
                                       {formatRp(l.line_total)}
                                     </span>
                                   </div>
-                                  <div className="text-[12px] tabular-nums text-[#6b6b6b]">
+                                  <div className="text-[12px] tabular-nums text-muted">
                                     {formatKgNum(l.qty_accepted_kg)} kg × {formatRp(l.unit_price)}
                                   </div>
                                   {l.weighed && l.qty_shrinkage_kg > 0 && (
-                                    <div className="text-[11px] text-[#c4242a]">
+                                    <div className="text-[11px] text-error">
                                       Order {formatKgNum(l.qty_ordered_kg)} kg, selisih -
                                       {formatKgNum(l.qty_shrinkage_kg)} kg tidak ditagih
                                       {l.reason ? ` · ${l.reason}` : ''}
@@ -233,27 +233,27 @@ export function Tab3KitchenInvoices() {
 
                             <div className="hs-card-footer space-y-2.5">
                               <div className="flex items-end justify-between gap-2">
-                                <span className="text-[12px] text-[#6b6b6b]">
+                                <span className="text-[12px] text-muted">
                                   Total Tagihan Dapur
-                                  <span className="block tabular-nums text-[#6b6b6b]">
+                                  <span className="block tabular-nums text-muted">
                                     {summary.line_count} barang · {formatKgNum(summary.total_accepted_kg)} kg
                                   </span>
                                 </span>
-                                <span className="text-[20px] font-bold tracking-tight tabular-nums text-[#0a0a0a]">
+                                <span className="text-[20px] font-bold tracking-tight tabular-nums text-ink">
                                   {formatRp(inv.total_invoice_amount)}
                                 </span>
                               </div>
 
-                              <div className="rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] px-3 py-2 text-[12px]">
+                              <div className="rounded-[6px] border border-rule bg-paper-2 px-3 py-2 text-[12px]">
                                 <div className="flex items-center justify-between gap-2">
-                                  <span className="text-[#6b6b6b]">Supplier</span>
-                                  <span className="truncate font-medium text-[#0a0a0a]">
+                                  <span className="text-muted">Supplier</span>
+                                  <span className="truncate font-medium text-ink">
                                     {account.supplier_name ?? 'Supplier MBG'}
                                   </span>
                                 </div>
-                                <div className="mt-1 flex items-center justify-between gap-2 border-t border-[#eeeeee] pt-1">
-                                  <span className="text-[#6b6b6b]">Rekening</span>
-                                  <span className="truncate font-mono text-[11px] font-medium text-[#0a0a0a]">
+                                <div className="mt-1 flex items-center justify-between gap-2 border-t border-paper-3 pt-1">
+                                  <span className="text-muted">Rekening</span>
+                                  <span className="truncate font-mono text-[11px] font-medium text-ink">
                                     {account.payment_bank_name} · {account.payment_account_number} (
                                     {account.payment_account_holder})
                                   </span>
@@ -339,15 +339,15 @@ export function Tab3KitchenInvoices() {
 
       {/* On-screen print preview */}
       {printDoc && (
-        <div className="no-print fixed inset-0 z-50 flex items-end justify-center bg-[#0a0a0a]/40 sm:items-center sm:p-4">
+        <div className="no-print fixed inset-0 z-50 flex items-end justify-center bg-scrim sm:items-center sm:p-4">
           <div
             role="dialog"
             aria-modal="true"
             aria-label="Pratinjau dokumen"
-            className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[12px] border border-[#e6e6e6] bg-white p-4 sm:rounded-[10px]"
+            className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[12px] border border-rule bg-white p-4 sm:rounded-[10px]"
           >
-            <div className="mb-3 flex items-center justify-between gap-2 border-b border-[#e6e6e6] pb-3">
-              <span className="text-[15px] font-medium text-[#0a0a0a]">Pratinjau Invoice</span>
+            <div className="mb-3 flex items-center justify-between gap-2 border-b border-rule pb-3">
+              <span className="text-[15px] font-medium text-ink">Pratinjau Invoice</span>
               <div className="flex gap-2">
                 <button type="button" onClick={() => window.print()} className="btn-primary min-h-[34px] text-[12px]">
                   Cetak / PDF

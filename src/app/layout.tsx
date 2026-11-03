@@ -45,7 +45,7 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="min-h-[100dvh] bg-[#f2f4f7] text-[#0a0a0a] font-sans antialiased">
+      <body className="min-h-[100dvh] bg-paper text-ink font-sans antialiased">
         {children}
       </body>
     </html>

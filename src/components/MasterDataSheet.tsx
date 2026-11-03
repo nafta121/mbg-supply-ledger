@@ -62,15 +62,15 @@ function MasterForm<T extends { id?: string }>({
   };
 
   return (
-    <form onSubmit={submit} className="space-y-2.5 rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] p-3">
+    <form onSubmit={submit} className="space-y-2.5 rounded-[6px] border border-rule bg-paper-2 p-3">
       {fields.map((f) => {
         const id = `${idPrefix}-${f.key}`;
         const raw = value[f.key];
         return (
           <div key={f.key}>
-            <label htmlFor={id} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+            <label htmlFor={id} className="mb-1 block text-[12px] font-medium text-muted">
               {f.label}
-              {f.required && <span className="text-[#c4242a]"> *</span>}
+              {f.required && <span className="text-error"> *</span>}
             </label>
             <input
               id={id}
@@ -86,7 +86,7 @@ function MasterForm<T extends { id?: string }>({
       })}
       {extra}
       {error && (
-        <p role="alert" className="text-[13px] font-medium text-[#c4242a]">
+        <p role="alert" className="text-[13px] font-medium text-error">
           {error}
         </p>
       )}
@@ -174,9 +174,9 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   };
 
   const rowBtn =
-    'min-h-[34px] shrink-0 rounded-[6px] border border-[#d4d4d4] bg-white px-2.5 text-[12px] font-medium text-[#3d3d3d] hover:bg-[#f8f8f8]';
+    'min-h-[34px] shrink-0 rounded-[6px] border border-control bg-white px-2.5 text-[12px] font-medium text-ink-2 hover:bg-paper-2';
   const delBtn =
-    'min-h-[34px] shrink-0 rounded-[6px] border border-[#f5c2c0] bg-white px-2.5 text-[12px] font-medium text-[#c4242a] hover:bg-[#ffedea]';
+    'min-h-[34px] shrink-0 rounded-[6px] border border-error-border bg-white px-2.5 text-[12px] font-medium text-error hover:bg-error-bg';
 
   return (
     <BottomSheet
@@ -193,14 +193,14 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
         {/* Identitas Supplier & Rekening Pembayaran Invoice Dapur */}
         <form
           onSubmit={submitBankAccount}
-          className="space-y-2.5 rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] p-3"
+          className="space-y-2.5 rounded-[6px] border border-rule bg-paper-2 p-3"
         >
-          <div className="text-[13px] font-medium text-[#0a0a0a]">
+          <div className="text-[13px] font-medium text-ink">
             Identitas Supplier &amp; Rekening Pembayaran Invoice
           </div>
           <div>
-            <label htmlFor="md-supplier-name" className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-              Nama Supplier / Perusahaan Kita <span className="text-[#c4242a]">*</span>
+            <label htmlFor="md-supplier-name" className="mb-1 block text-[12px] font-medium text-muted">
+              Nama Supplier / Perusahaan Kita <span className="text-error">*</span>
             </label>
             <input
               id="md-supplier-name"
@@ -213,8 +213,8 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
           </div>
           <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div>
-              <label htmlFor="md-bank-name" className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                Nama Bank <span className="text-[#c4242a]">*</span>
+              <label htmlFor="md-bank-name" className="mb-1 block text-[12px] font-medium text-muted">
+                Nama Bank <span className="text-error">*</span>
               </label>
               <input
                 id="md-bank-name"
@@ -226,8 +226,8 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               />
             </div>
             <div>
-              <label htmlFor="md-bank-number" className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-                Nomor Rekening <span className="text-[#c4242a]">*</span>
+              <label htmlFor="md-bank-number" className="mb-1 block text-[12px] font-medium text-muted">
+                Nomor Rekening <span className="text-error">*</span>
               </label>
               <input
                 id="md-bank-number"
@@ -240,8 +240,8 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
             </div>
           </div>
           <div>
-            <label htmlFor="md-bank-holder" className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
-              Atas Nama Penerima <span className="text-[#c4242a]">*</span>
+            <label htmlFor="md-bank-holder" className="mb-1 block text-[12px] font-medium text-muted">
+              Atas Nama Penerima <span className="text-error">*</span>
             </label>
             <input
               id="md-bank-holder"
@@ -253,7 +253,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
             />
           </div>
           {bankError && (
-            <p role="alert" className="text-[12px] font-medium text-[#c4242a]">
+            <p role="alert" className="text-[12px] font-medium text-error">
               {bankError}
             </p>
           )}
@@ -297,7 +297,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
           </button>
         )}
 
-        <ul className="divide-y divide-[#f0f0f0] rounded-[6px] border border-[#e6e6e6] bg-white">
+        <ul className="divide-y divide-rule-2 rounded-[6px] border border-rule bg-white">
           {tab === 'kitchens' &&
             kitchens.map((k) =>
               editing === k.id ? (
@@ -319,10 +319,10 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               ) : (
                 <li key={k.id} className="flex items-center justify-between gap-2 px-3 py-2.5">
                   <div className="min-w-0">
-                    <div className="break-words text-[14px] font-medium leading-snug text-[#0a0a0a]">
+                    <div className="break-words text-[14px] font-medium leading-snug text-ink">
                       {k.name}
                     </div>
-                    <div className="break-words text-[12px] text-[#6b6b6b]">
+                    <div className="break-words text-[12px] text-muted">
                       <span className="font-mono">{k.kitchen_code}</span> · PIC {k.pic_name} · {k.pic_phone}
                     </div>
                   </div>
@@ -372,10 +372,10 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               ) : (
                 <li key={it.id} className="flex items-center justify-between gap-2 px-3 py-2.5">
                   <div className="min-w-0">
-                    <div className="break-words text-[14px] font-medium leading-snug text-[#0a0a0a]">
+                    <div className="break-words text-[14px] font-medium leading-snug text-ink">
                       {it.name}
                     </div>
-                    <div className="break-words text-[12px] text-[#6b6b6b] tabular-nums">
+                    <div className="break-words text-[12px] text-muted tabular-nums">
                       {it.category} · {formatRp(it.default_kitchen_price_per_kg)}/kg · margin{' '}
                       {formatRp(it.default_margin_per_kg)}/kg
                     </div>
@@ -412,10 +412,10 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
 function UnitLockedField({ id }: { id: string }) {
   return (
     <div>
-      <label htmlFor={id} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+      <label htmlFor={id} className="mb-1 block text-[12px] font-medium text-muted">
         Satuan
       </label>
-      <input id={id} type="text" value="kg (terkunci)" readOnly disabled className="field-input bg-[#eeeeee] text-[#6b6b6b]" />
+      <input id={id} type="text" value="kg (terkunci)" readOnly disabled className="field-input bg-paper-3 text-muted" />
     </div>
   );
 }

@@ -41,9 +41,9 @@ export function SortGroupControls({
   itemCount = 0,
 }: SortGroupControlsProps) {
   return (
-    <div className="grid grid-cols-2 gap-2 rounded-[8px] border border-[#e6e6e6] bg-white p-2.5">
+    <div className="grid grid-cols-2 gap-2 rounded-[8px] border border-rule bg-white p-2.5">
       <div>
-        <label htmlFor={`${idPrefix}-sort`} className="mb-1 block text-[11px] font-medium text-[#6b6b6b]">
+        <label htmlFor={`${idPrefix}-sort`} className="mb-1 block text-[11px] font-medium text-muted">
           Urutkan (Sort)
         </label>
         <select
@@ -59,7 +59,7 @@ export function SortGroupControls({
         </select>
       </div>
       <div>
-        <label htmlFor={`${idPrefix}-group`} className="mb-1 block text-[11px] font-medium text-[#6b6b6b]">
+        <label htmlFor={`${idPrefix}-group`} className="mb-1 block text-[11px] font-medium text-muted">
           Kelompokkan (Group)
         </label>
         <select
@@ -74,14 +74,14 @@ export function SortGroupControls({
         </select>
       </div>
       {onToggleExpandAll && itemCount > 0 && (
-        <div className="col-span-2 flex items-center justify-between border-t border-[#f0f0f0] pt-2">
-          <span className="text-[11px] text-[#6b6b6b] tabular-nums">
+        <div className="col-span-2 flex items-center justify-between border-t border-rule-2 pt-2">
+          <span className="text-[11px] text-muted tabular-nums">
             Rincian kartu ({itemCount})
           </span>
           <button
             type="button"
             onClick={onToggleExpandAll}
-            className="inline-flex min-h-[28px] items-center gap-1 rounded-[6px] border border-[#d4d4d4] bg-[#f8f9fa] px-2.5 text-[11px] font-medium text-[#0a0a0a] transition-colors hover:bg-[#eeeeee]"
+            className="inline-flex min-h-[28px] items-center gap-1 rounded-[6px] border border-control bg-paper-2 px-2.5 text-[11px] font-medium text-ink transition-colors hover:bg-paper-3"
           >
             {allExpanded ? 'Tutup Semua' : 'Buka Semua'}
           </button>
@@ -245,10 +245,10 @@ export function OrderLinesSection({
           const idp = `${idPrefix}-${l.key}`;
 
           return (
-            <div key={l.key} className="space-y-2.5 rounded-[8px] border border-[#e6e6e6] bg-[#f8f9fa] p-3">
+            <div key={l.key} className="space-y-2.5 rounded-[8px] border border-rule bg-paper-2 p-3">
               <div className="flex items-end gap-2">
                 <div className="min-w-0 flex-1">
-                  <label htmlFor={`${idp}-item`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                  <label htmlFor={`${idp}-item`} className="mb-1 block text-[12px] font-medium text-muted">
                     Barang {idx + 1}
                   </label>
                   <select
@@ -275,7 +275,7 @@ export function OrderLinesSection({
                     type="button"
                     onClick={() => onRemoveLine(l.key)}
                     aria-label={`Hapus baris barang ${idx + 1}`}
-                    className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white text-base text-[#6b6b6b] hover:border-[#f5c2c0] hover:bg-[#ffedea] hover:text-[#831c1e]"
+                    className="flex h-[40px] w-[40px] shrink-0 items-center justify-center rounded-[6px] border border-control bg-white text-base text-muted hover:border-error-border hover:bg-error-bg hover:text-error-ink"
                   >
                     ×
                   </button>
@@ -284,7 +284,7 @@ export function OrderLinesSection({
 
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label htmlFor={`${idp}-kg`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                  <label htmlFor={`${idp}-kg`} className="mb-1 block text-[12px] font-medium text-muted">
                     {kgLabel}
                   </label>
                   <input
@@ -299,7 +299,7 @@ export function OrderLinesSection({
                   />
                 </div>
                 <div>
-                  <label htmlFor={`${idp}-price`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                  <label htmlFor={`${idp}-price`} className="mb-1 block text-[12px] font-medium text-muted">
                     Harga / kg (Rp)
                   </label>
                   <input
@@ -313,7 +313,7 @@ export function OrderLinesSection({
                   />
                 </div>
                 <div>
-                  <label htmlFor={`${idp}-margin`} className="mb-1 block text-[12px] font-medium text-[#6b6b6b]">
+                  <label htmlFor={`${idp}-margin`} className="mb-1 block text-[12px] font-medium text-muted">
                     Margin / kg
                   </label>
                   <input
@@ -329,11 +329,11 @@ export function OrderLinesSection({
               </div>
 
               {lineTotal > 0 && (
-                <div className="flex items-baseline justify-between border-t border-[#e6e6e6] pt-2 text-[12px] tabular-nums">
-                  <span className="text-[#6b6b6b]">
+                <div className="flex items-baseline justify-between border-t border-rule pt-2 text-[12px] tabular-nums">
+                  <span className="text-muted">
                     {formatKg(kg)} × {formatRp(price)}
                   </span>
-                  <span className="font-bold text-[#0a0a0a]">{formatRp(lineTotal)}</span>
+                  <span className="font-bold text-ink">{formatRp(lineTotal)}</span>
                 </div>
               )}
             </div>
@@ -345,22 +345,22 @@ export function OrderLinesSection({
         </button>
       </div>
 
-      <div className="grid grid-cols-3 divide-x divide-[#e6e6e6] rounded-[8px] border border-[#e6e6e6] bg-[#f8f9fa]">
+      <div className="grid grid-cols-3 divide-x divide-rule rounded-[8px] border border-rule bg-paper-2">
         <div className="px-3 py-2.5">
-          <div className="text-[11px] text-[#6b6b6b]">Total Berat</div>
-          <div className="mt-0.5 truncate text-[14px] font-medium tabular-nums text-[#0a0a0a]">
-            {formatKgNum(summary.total_kg)} <span className="text-[12px] text-[#6b6b6b]">kg</span>
+          <div className="text-[11px] text-muted">Total Berat</div>
+          <div className="mt-0.5 truncate text-[14px] font-medium tabular-nums text-ink">
+            {formatKgNum(summary.total_kg)} <span className="text-[12px] text-muted">kg</span>
           </div>
         </div>
         <div className="px-3 py-2.5">
-          <div className="text-[11px] text-[#6b6b6b]">{invoiceTotalLabel}</div>
-          <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#0a0a0a]">
+          <div className="text-[11px] text-muted">{invoiceTotalLabel}</div>
+          <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-ink">
             {formatRp(summary.estimated_invoice)}
           </div>
         </div>
         <div className="px-3 py-2.5">
-          <div className="text-[11px] text-[#6b6b6b]">Bagi Hasil</div>
-          <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-[#1d5fbf]">
+          <div className="text-[11px] text-muted">Bagi Hasil</div>
+          <div className="mt-0.5 truncate text-[14px] font-bold tabular-nums text-signal">
             {formatRp(summary.estimated_margin)}
           </div>
         </div>
@@ -513,7 +513,7 @@ export function OrderInvoiceEditSheet({ deliveryId, mode, onClose, onSaved }: Or
       title={mode === 'invoice' ? `Edit Invoice · ${docCode}` : `Edit Order · ${docCode}`}
       onClose={onClose}
     >
-      <form onSubmit={handleSave} className="space-y-3.5 text-[13px] text-[#0a0a0a]">
+      <form onSubmit={handleSave} className="space-y-3.5 text-[13px] text-ink">
         <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
           <div>
             <label htmlFor="edit-order-date" className="field-label">
@@ -569,7 +569,7 @@ export function OrderInvoiceEditSheet({ deliveryId, mode, onClose, onSaved }: Or
         />
 
         {error && (
-          <p role="alert" className="rounded-[6px] border border-[#f5c2c0] bg-[#ffedea] px-3 py-2 text-[12px] font-medium text-[#831c1e]">
+          <p role="alert" className="rounded-[6px] border border-error-border bg-error-bg px-3 py-2 text-[12px] font-medium text-error-ink">
             {error}
           </p>
         )}

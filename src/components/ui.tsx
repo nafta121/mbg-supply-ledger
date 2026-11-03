@@ -4,17 +4,17 @@ import React, { useEffect, useRef } from 'react';
 import type { Tone } from '../lib/ui-format';
 
 const TONE_BADGE: Record<Tone, string> = {
-  green: 'border border-[#b7ebd0] bg-[#dcfae5] text-[#04250e]',
-  amber: 'border border-[#fde68a] bg-[#fffbeb] text-[#92400e]',
-  red: 'border border-[#f5c2c0] bg-[#ffedea] text-[#831c1e]',
-  slate: 'border border-[#e6e6e6] bg-[#eeeeee] text-[#3d3d3d]',
+  green: 'border border-success-border bg-success-bg text-success-ink',
+  amber: 'border border-warning-border bg-warning-bg text-warning',
+  red: 'border border-error-border bg-error-bg text-error-ink',
+  slate: 'border border-rule bg-paper-3 text-ink-2',
 };
 
 const TONE_DOT: Record<Tone, string> = {
-  green: 'bg-[#2e7d32]',
-  amber: 'bg-[#92400e]',
-  red: 'bg-[#c4242a]',
-  slate: 'bg-[#6b6b6b]',
+  green: 'bg-success',
+  amber: 'bg-warning',
+  red: 'bg-error',
+  slate: 'bg-muted',
 };
 
 export function Badge({ tone, children }: { tone: Tone; children: React.ReactNode }) {
@@ -55,7 +55,7 @@ export function SegmentedControl<T extends string>({
     <div
       role="group"
       aria-label={label}
-      className="grid gap-1 rounded-[8px] border border-[#e6e6e6] bg-[#eeeeee] p-1"
+      className="grid gap-1 rounded-[8px] border border-rule bg-paper-3 p-1"
       style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
     >
       {options.map((opt) => {
@@ -68,8 +68,8 @@ export function SegmentedControl<T extends string>({
             onClick={() => onChange(opt.value)}
             className={`min-h-[34px] truncate rounded-[6px] border px-2 text-[13px] font-medium transition-colors ${
               active
-                ? 'border-[#e6e6e6] bg-white text-[#0a0a0a]'
-                : 'border-transparent text-[#6b6b6b] hover:text-[#0a0a0a]'
+                ? 'border-rule bg-white text-ink'
+                : 'border-transparent text-muted hover:text-ink'
             }`}
           >
             {opt.label}
@@ -99,14 +99,14 @@ export function Toast({ toast, onClose }: { toast: ToastState; onClose: () => vo
       role={isError ? 'alert' : 'status'}
       className={`flex items-center justify-between gap-2.5 rounded-[8px] border px-3.5 py-2.5 text-[13px] font-medium ${
         isError
-          ? 'border-[#f5c2c0] bg-[#ffedea] text-[#831c1e]'
-          : 'border-[#b7ebd0] bg-[#dcfae5] text-[#04250e]'
+          ? 'border-error-border bg-error-bg text-error-ink'
+          : 'border-success-border bg-success-bg text-success-ink'
       }`}
     >
       <div className="flex min-w-0 items-center gap-2">
         <span
           aria-hidden="true"
-          className={`h-2 w-2 shrink-0 rounded-full ${isError ? 'bg-[#c4242a]' : 'bg-[#2e7d32]'}`}
+          className={`h-2 w-2 shrink-0 rounded-full ${isError ? 'bg-error' : 'bg-success'}`}
         />
         <span className="min-w-0">{toast.text}</span>
       </div>
@@ -125,7 +125,7 @@ export function Toast({ toast, onClose }: { toast: ToastState; onClose: () => vo
 export function NoAccess({ text = 'Halaman ini khusus Admin.' }: { text?: string }) {
   return (
     <Card className="p-5 text-center">
-      <p className="text-[14px] font-medium text-[#6b6b6b]">{text}</p>
+      <p className="text-[14px] font-medium text-muted">{text}</p>
     </Card>
   );
 }
@@ -157,22 +157,22 @@ export function BottomSheet({
         type="button"
         aria-label="Tutup"
         onClick={onClose}
-        className="absolute inset-0 bg-[#0a0a0a]/40"
+        className="absolute inset-0 bg-scrim"
       />
       <div
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="relative max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[12px] border border-[#e6e6e6] bg-white sm:rounded-[10px]"
+        className="relative max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[12px] border border-rule bg-white sm:rounded-[10px]"
       >
-        <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-[#d4d4d4] sm:hidden" />
-        <div className="flex items-center justify-between border-b border-[#e6e6e6] bg-[#f8f9fa] px-4 py-3">
-          <h2 className="text-[15px] font-medium text-[#0a0a0a]">{title}</h2>
+        <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-control sm:hidden" />
+        <div className="flex items-center justify-between border-b border-rule bg-paper-2 px-4 py-3">
+          <h2 className="text-[15px] font-medium text-ink">{title}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Tutup"
-            className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white text-base text-[#6b6b6b] hover:bg-[#f2f4f7] hover:text-[#0a0a0a]"
+            className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-control bg-white text-base text-muted hover:bg-paper hover:text-ink"
           >
             ×
           </button>
@@ -195,10 +195,10 @@ export function StatRow({
   tone?: 'red' | 'green';
 }) {
   const color =
-    tone === 'red' ? 'text-[#c4242a]' : tone === 'green' ? 'text-[#2e7d32]' : 'text-[#0a0a0a]';
+    tone === 'red' ? 'text-error' : tone === 'green' ? 'text-success' : 'text-ink';
   return (
     <div className={`flex items-baseline justify-between gap-3 py-0.5 ${strong ? 'font-bold' : ''}`}>
-      <span className={`min-w-0 truncate text-[13px] ${tone ? color : 'text-[#6b6b6b]'}`}>{label}</span>
+      <span className={`min-w-0 truncate text-[13px] ${tone ? color : 'text-muted'}`}>{label}</span>
       <span className={`shrink-0 tabular-nums ${strong ? 'text-[15px] font-bold' : 'text-[14px] font-medium'} ${color}`}>
         {value}
       </span>

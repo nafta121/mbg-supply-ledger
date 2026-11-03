@@ -1,44 +1,26 @@
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: polish
+ * paper: oklch(96.3% 0.005 258) · accent: oklch(19.1% 0 0) · display: Geist · body: Geist
+ * nav: kept · signature: expandable kitchen order and invoice ledger cards · states: default, hover, focus-visible, active, disabled, loading, empty, error
+ * axes: light/grotesk-sans/neutral · posture: settled · contrast: pass · v2.0.0 */
+/* Hallmark · pre-emit critique: P9 H8 E9 S9 R9 V8 · weakest: V, lifted 220+ hex literals into semantic tokens and unified print/app typography */
+@import url("./tokens.css");
+@import url("./base.css");
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --ground: #f2f4f7;
-  --surface: #ffffff;
-  --raised: #eeeeee;
-  --border: #e6e6e6;
-  --rule: #f0f0f0;
-  --control: #d4d4d4;
-  --text: #0a0a0a;
-  --muted: #6b6b6b;
-  --accent: #141414;
-  --positive: #2e7d32;
-  --negative: #c4242a;
-  --warning: #92400e;
-  --chart-1: #141414;
-  --chart-2: #8a8a8a;
-  --chart-3: #1d5fbf;
-  --pill-positive-bg: #dcfae5;
-  --pill-positive-ink: #04250e;
-  --pill-negative-bg: #ffedea;
-  --pill-negative-ink: #831c1e;
-  --pill-warning-bg: #fffbeb;
-  --pill-warning-ink: #92400e;
-  --pill-neutral-bg: #eeeeee;
-  --pill-neutral-ink: #3d3d3d;
-  --radius-card: 8px;
-  --radius-control: 6px;
-}
-
 @layer base {
   html {
+    overflow-x: clip;
     font-feature-settings: 'cv02', 'cv03', 'cv04', 'cv11';
     -webkit-tap-highlight-color: transparent;
   }
 
   body {
-    background-color: var(--ground);
-    color: var(--text);
+    overflow-x: clip;
+    background-color: var(--color-paper);
+    color: var(--color-ink);
     @apply font-sans antialiased;
   }
 
@@ -57,7 +39,16 @@
   select:focus-visible,
   summary:focus-visible,
   a:focus-visible {
-    @apply outline-none ring-2 ring-[#141414] ring-offset-2 ring-offset-white;
+    @apply outline-none ring-2 ring-focus ring-offset-2 ring-offset-surface;
+  }
+
+  button:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
   }
 
   /* Hide number spinners */
@@ -73,35 +64,35 @@
 
 @layer components {
   .card {
-    @apply rounded-[8px] border border-[#e6e6e6] bg-white;
+    @apply rounded-[8px] border border-rule bg-surface;
   }
 
   .hs-card-header {
-    @apply flex items-center justify-between gap-2 border-b border-[#e6e6e6] px-4 py-3;
+    @apply flex items-center justify-between gap-2 border-b border-rule px-4 py-3;
   }
 
   .hs-card-footer {
-    @apply border-t border-[#e6e6e6] bg-[#f8f9fa] px-4 py-3;
+    @apply border-t border-rule bg-paper-2 px-4 py-3;
   }
 
   .field-label {
-    @apply mb-1.5 block text-[13px] font-medium text-[#0a0a0a];
+    @apply mb-1.5 block text-[13px] font-medium text-ink;
   }
 
   .field-input {
-    @apply min-h-[40px] w-full rounded-[6px] border border-[#d4d4d4] bg-white px-3 py-2 text-[14px] text-[#0a0a0a] placeholder-[#6b6b6b] transition-colors focus:border-[#141414];
+    @apply min-h-[40px] w-full rounded-[6px] border border-control bg-surface px-3 py-2 text-[14px] text-ink placeholder-muted transition-colors focus:border-accent;
   }
 
   .btn-primary {
-    @apply inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-[6px] bg-[#141414] px-4 text-[14px] font-medium text-white transition-colors hover:bg-[#262626] disabled:cursor-not-allowed disabled:bg-[#e6e6e6] disabled:text-[#6b6b6b];
+    @apply inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-[6px] bg-accent px-4 text-[14px] font-medium text-accent-ink transition-colors hover:bg-accent-hover active:translate-y-px disabled:cursor-not-allowed disabled:bg-rule disabled:text-muted;
   }
 
   .btn-secondary {
-    @apply inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-[6px] border border-[#d4d4d4] bg-white px-3 text-[14px] font-medium text-[#0a0a0a] transition-colors hover:bg-[#f8f9fa] disabled:cursor-not-allowed disabled:opacity-50;
+    @apply inline-flex min-h-[40px] items-center justify-center gap-1.5 rounded-[6px] border border-control bg-surface px-3 text-[14px] font-medium text-ink transition-colors hover:bg-paper-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .btn-chip {
-    @apply inline-flex min-h-[34px] items-center justify-center rounded-[6px] border border-[#d4d4d4] bg-white px-2.5 text-[12px] font-medium text-[#3d3d3d] transition-colors hover:bg-[#f8f9fa];
+    @apply inline-flex min-h-[34px] items-center justify-center rounded-[6px] border border-control bg-surface px-2.5 text-[12px] font-medium text-ink-2 transition-colors hover:bg-paper-2 active:translate-y-px;
   }
 }
 
@@ -113,8 +104,8 @@
 
 @media print {
   body {
-    background: #ffffff !important;
-    color: #0a0a0a !important;
+    background: var(--color-surface) !important;
+    color: var(--color-ink) !important;
   }
   .no-print {
     display: none !important;

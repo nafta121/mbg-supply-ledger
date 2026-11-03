@@ -1,0 +1,28 @@
+[
+ {
+  "mode": "redesign",
+  "depth": "polish",
+  "scope": "app",
+  "shape": "app screen",
+  "theme": "brand",
+  "axes": "light/grotesk-sans/neutral",
+  "hero": "none",
+  "nav": "kept",
+  "footer": "none",
+  "imagery": "none",
+  "photos": [],
+  "entry": "src/app/globals.css",
+  "fingerprint": "mbg-supply-ledger-polish-app",
+  "sections": [
+   "orders",
+   "invoices",
+   "ledger",
+   "master-data",
+   "print"
+  ],
+  "signature": "expandable kitchen order and invoice ledger cards",
+  "waived": [],
+  "prompt": "go ahead",
+  "date": "2026-11-03"
+ }
+]

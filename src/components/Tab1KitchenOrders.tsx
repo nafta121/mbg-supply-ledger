@@ -199,10 +199,10 @@ export function Tab1KitchenOrders() {
     <section aria-label="Order Dapur" className="space-y-3.5">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <h1 className="text-[20px] font-bold tracking-tight text-[#0a0a0a]">Order Dapur</h1>
-          <p className="text-[12px] text-[#6b6b6b]">Input pesanan bahan baku dapur dan estimasi bagi hasil</p>
+          <h1 className="text-[20px] font-bold tracking-tight text-ink">Order Dapur</h1>
+          <p className="text-[12px] text-muted">Input pesanan bahan baku dapur dan estimasi bagi hasil</p>
         </div>
-        <span className="inline-flex h-6 shrink-0 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2.5 font-mono text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+        <span className="inline-flex h-6 shrink-0 items-center rounded-[6px] border border-rule bg-white px-2.5 font-mono text-[11px] font-medium text-ink-2 tabular-nums">
           {todayYmd}
         </span>
       </div>
@@ -211,9 +211,9 @@ export function Tab1KitchenOrders() {
 
       <div ref={formRef} className="scroll-mt-16">
         <Card as="section" className="overflow-hidden">
-          <div className="hs-card-header bg-[#f8f9fa]">
-            <h2 className="text-[15px] font-medium text-[#0a0a0a]">Buat Order Dapur Baru</h2>
-            <span className="inline-flex h-6 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2 text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+          <div className="hs-card-header bg-paper-2">
+            <h2 className="text-[15px] font-medium text-ink">Buat Order Dapur Baru</h2>
+            <span className="inline-flex h-6 items-center rounded-[6px] border border-rule bg-white px-2 text-[11px] font-medium text-ink-2 tabular-nums">
               {summary.item_count} jenis
             </span>
           </div>
@@ -240,20 +240,20 @@ export function Tab1KitchenOrders() {
             <div className="space-y-1.5">
               <span className="field-label">Dapur Tujuan</span>
               {kitchen ? (
-                <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#e6e6e6] bg-[#f8f9fa] px-3 py-2.5">
+                <div className="flex items-center justify-between gap-2 rounded-[6px] border border-rule bg-paper-2 px-3 py-2.5">
                   <div className="min-w-0 space-y-0.5">
-                    <div className="flex items-center gap-1.5 truncate text-[14px] font-medium text-[#0a0a0a]">
-                      <span className="rounded-[4px] border border-[#e6e6e6] bg-white px-1.5 py-0.5 font-mono text-[11px] text-[#3d3d3d]">
+                    <div className="flex items-center gap-1.5 truncate text-[14px] font-medium text-ink">
+                      <span className="rounded-[4px] border border-rule bg-white px-1.5 py-0.5 font-mono text-[11px] text-ink-2">
                         {kitchen.kitchen_code}
                       </span>
                       <span className="truncate">{shortKitchenName(kitchen.name)}</span>
                     </div>
-                    <div className="truncate text-[12px] text-[#6b6b6b]">PIC: {kitchen.pic_name}</div>
+                    <div className="truncate text-[12px] text-muted">PIC: {kitchen.pic_name}</div>
                   </div>
                   <button
                     type="button"
                     onClick={() => setKitchenId(null)}
-                    className="min-h-[32px] shrink-0 rounded-[6px] border border-[#d4d4d4] bg-white px-2.5 text-[12px] font-medium text-[#0a0a0a] hover:bg-[#f2f4f7]"
+                    className="min-h-[32px] shrink-0 rounded-[6px] border border-control bg-white px-2.5 text-[12px] font-medium text-ink hover:bg-paper"
                   >
                     Ganti
                   </button>
@@ -264,7 +264,7 @@ export function Tab1KitchenOrders() {
                     Cari dapur
                   </label>
                   <div className="relative">
-                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-[#6b6b6b]">
+                    <div className="pointer-events-none absolute inset-y-0 left-0 flex items-center pl-3 text-muted">
                       <svg viewBox="0 0 24 24" fill="none" className="h-4 w-4" aria-hidden="true">
                         <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.75" />
                         <path d="m20 20-3.5-3.5" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
@@ -283,7 +283,7 @@ export function Tab1KitchenOrders() {
                         type="button"
                         aria-label="Bersihkan pencarian dapur"
                         onClick={() => setKitchenQuery('')}
-                        className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-base text-[#6b6b6b] hover:text-[#0a0a0a]"
+                        className="absolute inset-y-0 right-0 flex items-center pr-2.5 text-base text-muted hover:text-ink"
                       >
                         ×
                       </button>
@@ -291,10 +291,10 @@ export function Tab1KitchenOrders() {
                   </div>
                   <ul
                     aria-label="Daftar dapur"
-                    className="max-h-48 divide-y divide-[#f0f0f0] overflow-y-auto rounded-[6px] border border-[#e6e6e6] bg-white"
+                    className="max-h-48 divide-y divide-rule-2 overflow-y-auto rounded-[6px] border border-rule bg-white"
                   >
                     {kitchenMatches.length === 0 && (
-                      <li className="px-3 py-2.5 text-[12px] text-[#6b6b6b]">Dapur tidak ditemukan.</li>
+                      <li className="px-3 py-2.5 text-[12px] text-muted">Dapur tidak ditemukan.</li>
                     )}
                     {kitchenMatches.map((k) => {
                       const hasOpen = !!findOpenOrder(data, k.id, targetDate);
@@ -306,10 +306,10 @@ export function Tab1KitchenOrders() {
                               setKitchenId(k.id);
                               setFormError(null);
                             }}
-                            className="flex min-h-[42px] w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-[#f8f9fa]"
+                            className="flex min-h-[42px] w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-paper-2"
                           >
-                            <span className="flex min-w-0 items-center gap-2 truncate text-[14px] text-[#0a0a0a]">
-                              <span className="shrink-0 rounded-[4px] border border-[#e6e6e6] bg-[#f8f9fa] px-1.5 py-0.5 font-mono text-[11px] text-[#6b6b6b]">
+                            <span className="flex min-w-0 items-center gap-2 truncate text-[14px] text-ink">
+                              <span className="shrink-0 rounded-[4px] border border-rule bg-paper-2 px-1.5 py-0.5 font-mono text-[11px] text-muted">
                                 {k.kitchen_code}
                               </span>
                               <span className="truncate">{shortKitchenName(k.name)}</span>
@@ -323,7 +323,7 @@ export function Tab1KitchenOrders() {
                 </>
               )}
               {openOrder && (
-                <p className="rounded-[6px] border border-[#fde68a] bg-[#fffbeb] px-3 py-2 text-[12px] text-[#92400e]">
+                <p className="rounded-[6px] border border-warning-border bg-warning-bg px-3 py-2 text-[12px] text-warning">
                   Dapur ini sudah memiliki order pada tanggal {targetDate} ({openOrder.delivery_number}). Barang baru
                   akan digabung ke invoice yang sama.
                 </p>
@@ -348,7 +348,7 @@ export function Tab1KitchenOrders() {
             />
 
             {formError && (
-              <p role="alert" className="rounded-[6px] border border-[#f5c2c0] bg-[#ffedea] px-3 py-2 text-[13px] font-medium text-[#831c1e]">
+              <p role="alert" className="rounded-[6px] border border-error-border bg-error-bg px-3 py-2 text-[13px] font-medium text-error-ink">
                 {formError}
               </p>
             )}
@@ -362,8 +362,8 @@ export function Tab1KitchenOrders() {
 
       {/* Daftar Order Dapur */}
       <div className="flex items-center justify-between gap-2 pt-2">
-        <h2 className="text-[16px] font-medium text-[#0a0a0a]">Daftar Order Dapur</h2>
-        <span className="inline-flex h-6 items-center rounded-[6px] border border-[#e6e6e6] bg-white px-2 text-[11px] font-medium text-[#3d3d3d] tabular-nums">
+        <h2 className="text-[16px] font-medium text-ink">Daftar Order Dapur</h2>
+        <span className="inline-flex h-6 items-center rounded-[6px] border border-rule bg-white px-2 text-[11px] font-medium text-ink-2 tabular-nums">
           {allOrders.length} order
         </span>
       </div>
@@ -389,7 +389,7 @@ export function Tab1KitchenOrders() {
       />
 
       {shownOrders.length === 0 && (
-        <Card className="p-6 text-center text-[13px] text-[#6b6b6b]">
+        <Card className="p-6 text-center text-[13px] text-muted">
           {filter === 'active' ? 'Belum ada order aktif.' : 'Belum ada order yang lunas.'}
         </Card>
       )}
@@ -400,17 +400,17 @@ export function Tab1KitchenOrders() {
           return (
             <div key={bucket.key} className="space-y-2.5">
               {groupBy !== 'none' && (
-                <div className="flex items-center justify-between gap-2 rounded-[6px] border border-[#e6e6e6] bg-[#e9edf2] px-3 py-2">
+                <div className="flex items-center justify-between gap-2 rounded-[6px] border border-rule bg-group px-3 py-2">
                   <div className="flex min-w-0 items-center gap-1.5">
                     {bucket.sublabel && (
-                      <span className="shrink-0 rounded-[4px] border border-[#d4d4d4] bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-[#3d3d3d]">
+                      <span className="shrink-0 rounded-[4px] border border-control bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-ink-2">
                         {bucket.sublabel}
                       </span>
                     )}
-                    <span className="truncate text-[13px] font-bold text-[#0a0a0a]">{bucket.label}</span>
+                    <span className="truncate text-[13px] font-bold text-ink">{bucket.label}</span>
                   </div>
-                  <div className="shrink-0 text-right text-[11px] font-medium text-[#3d3d3d] tabular-nums">
-                    {bucket.items.length} order · <span className="font-bold text-[#0a0a0a]">{formatRp(bucketTotal)}</span>
+                  <div className="shrink-0 text-right text-[11px] font-medium text-ink-2 tabular-nums">
+                    {bucket.items.length} order · <span className="font-bold text-ink">{formatRp(bucketTotal)}</span>
                   </div>
                 </div>
               )}
@@ -431,27 +431,27 @@ export function Tab1KitchenOrders() {
                         type="button"
                         aria-expanded={isExpanded}
                         onClick={() => toggleCard(delivery.id)}
-                        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-[#f8f9fa]"
+                        className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-paper-2"
                       >
                         <div className="min-w-0">
-                          <h3 className="truncate text-[14px] font-medium text-[#0a0a0a]">{title}</h3>
-                          <p className="truncate font-mono text-[11px] text-[#6b6b6b] tabular-nums">
+                          <h3 className="truncate text-[14px] font-medium text-ink">{title}</h3>
+                          <p className="truncate font-mono text-[11px] text-muted tabular-nums">
                             {delivery.delivery_date} · {delivery.delivery_number} · {ol.length} brg (
                             {formatKgNum(totalKg)} kg)
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
                           <div className="text-right">
-                            <div className="text-[13px] font-bold tabular-nums text-[#0a0a0a]">
+                            <div className="text-[13px] font-bold tabular-nums text-ink">
                               {formatRp(invoice?.total_invoice_amount ?? 0)}
                             </div>
-                            <div className="text-[11px] font-medium tabular-nums text-[#1d5fbf]">
+                            <div className="text-[11px] font-medium tabular-nums text-signal">
                               Margin {formatRp(marginTotal)}
                             </div>
                           </div>
                           <Badge tone={locked ? 'green' : 'amber'}>{locked ? 'Lunas' : 'Belum Bayar'}</Badge>
                           <ChevronDownIcon
-                            className={`h-4 w-4 shrink-0 text-[#6b6b6b] transition-transform ${
+                            className={`h-4 w-4 shrink-0 text-muted transition-transform motion-reduce:transition-none ${
                               isExpanded ? 'rotate-180' : ''
                             }`}
                           />
@@ -460,25 +460,25 @@ export function Tab1KitchenOrders() {
 
                       {isExpanded && (
                         <>
-                          <ul className="divide-y divide-[#f0f0f0] border-t border-[#e6e6e6] px-4">
+                          <ul className="divide-y divide-rule-2 border-t border-rule px-4">
                             {ol.map((l) => {
                               const name = itemById.get(l.item_id)?.name ?? 'Barang';
                               return (
                                 <li key={l.id} className="flex items-center justify-between gap-2 py-2.5">
                                   <div className="min-w-0">
-                                    <div className="truncate text-[14px] font-medium text-[#0a0a0a]">
+                                    <div className="truncate text-[14px] font-medium text-ink">
                                       {name}{' '}
-                                      <span className="font-normal text-[#6b6b6b] tabular-nums">
+                                      <span className="font-normal text-muted tabular-nums">
                                         · {formatKgNum(l.qty_dispatched_kg)} kg
                                       </span>
                                     </div>
-                                    <div className="truncate text-[12px] tabular-nums text-[#6b6b6b]">
+                                    <div className="truncate text-[12px] tabular-nums text-muted">
                                       {formatRp(l.kitchen_unit_price_snapshot)}/kg · margin{' '}
                                       {formatRp(l.margin_per_kg_snapshot)}/kg
                                     </div>
                                   </div>
                                   <div className="flex shrink-0 items-center gap-2">
-                                    <span className="text-[13px] font-bold tabular-nums text-[#0a0a0a]">
+                                    <span className="text-[13px] font-bold tabular-nums text-ink">
                                       {formatRp(l.line_invoice_amount)}
                                     </span>
                                     {!locked && !hasPaidOut && (
@@ -486,7 +486,7 @@ export function Tab1KitchenOrders() {
                                         type="button"
                                         onClick={() => handleRemoveLine(l.id, name)}
                                         aria-label={`Hapus ${name} dari order ${title}`}
-                                        className="flex h-7 w-7 items-center justify-center rounded-[4px] border border-transparent text-base text-[#6b6b6b] hover:border-[#f5c2c0] hover:bg-[#ffedea] hover:text-[#831c1e]"
+                                        className="flex h-7 w-7 items-center justify-center rounded-[4px] border border-transparent text-base text-muted hover:border-error-border hover:bg-error-bg hover:text-error-ink"
                                       >
                                         ×
                                       </button>
@@ -498,14 +498,14 @@ export function Tab1KitchenOrders() {
                           </ul>
                           <footer className="hs-card-footer space-y-2">
                             <div className="flex items-baseline justify-between gap-2 text-[13px]">
-                              <span className="text-[#6b6b6b]">Tagihan Dapur</span>
-                              <span className="text-[15px] font-bold tabular-nums text-[#0a0a0a]">
+                              <span className="text-muted">Tagihan Dapur</span>
+                              <span className="text-[15px] font-bold tabular-nums text-ink">
                                 {formatRp(invoice?.total_invoice_amount ?? 0)}
                               </span>
                             </div>
                             <div className="flex items-baseline justify-between gap-2 text-[12px]">
-                              <span className="text-[#6b6b6b]">Bagi hasil (Tim + Koperasi)</span>
-                              <span className="font-bold tabular-nums text-[#1d5fbf]">{formatRp(marginTotal)}</span>
+                              <span className="text-muted">Bagi hasil (Tim + Koperasi)</span>
+                              <span className="font-bold tabular-nums text-signal">{formatRp(marginTotal)}</span>
                             </div>
                             {!hasPaidOut && (
                               <div className={`grid gap-2 pt-1 ${locked ? 'grid-cols-1' : 'grid-cols-3'}`}>
@@ -528,7 +528,7 @@ export function Tab1KitchenOrders() {
                                     <button
                                       type="button"
                                       onClick={() => handleDeleteOrder(delivery.id, title)}
-                                      className="btn-secondary min-h-[36px] border-[#f5c2c0] text-[12px] !text-[#c4242a] hover:!bg-[#ffedea]"
+                                      className="btn-secondary min-h-[36px] border-error-border text-[12px] !text-error hover:!bg-error-bg"
                                     >
                                       Hapus Order
                                     </button>
