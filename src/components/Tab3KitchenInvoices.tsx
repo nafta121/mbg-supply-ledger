@@ -35,6 +35,8 @@ export function Tab3KitchenInvoices() {
   const paid = useMemo(() => invoices.filter((i) => i.payment_status === 'PAID'), [invoices]);
   const unpaidTotal = useMemo(() => sumIdr(unpaid.map((i) => i.total_invoice_amount)), [unpaid]);
   const paidTotal = useMemo(() => sumIdr(paid.map((i) => i.total_invoice_amount)), [paid]);
+  const grandTotal = useMemo(() => sumIdr([unpaidTotal, paidTotal]), [unpaidTotal, paidTotal]);
+  const paidPct = grandTotal > 0 ? Math.round((paidTotal / grandTotal) * 100) : 0;
 
   const filteredInvoices = invFilter === 'paid' ? paid : invFilter === 'unpaid' ? unpaid : invoices;
   const allExpanded = filteredInvoices.length > 0 && filteredInvoices.every((i) => expandedIds.has(i.id));
@@ -79,64 +81,81 @@ export function Tab3KitchenInvoices() {
           </span>
         </div>
 
-        {/* Preline Divided KPI Stat Card */}
-        <Card className="grid grid-cols-2 divide-x divide-rule overflow-hidden">
-          <div className="p-4">
-            <div className="inline-flex items-center gap-1.5 text-[12px] text-muted">
-              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-warning" />
-              Belum Dibayar Dapur
+        {/* Hairline-divided KPI Ledger Strip + Collection Progress */}
+        <Card className="overflow-hidden">
+          <div className="grid grid-cols-3 divide-x divide-rule">
+            <div className="p-3.5">
+              <div className="inline-flex items-center gap-1.5 text-[11px] text-muted">
+                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-warning" />
+                Belum Dibayar
+              </div>
+              <div className="mt-1 truncate text-[17px] font-bold tracking-tight tabular-nums text-ink">
+                {formatRp(unpaidTotal)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted tabular-nums">{unpaid.length} tagihan terbuka</div>
             </div>
-            <div className="mt-1 truncate text-[20px] font-bold tracking-tight tabular-nums text-ink">
-              {formatRp(unpaidTotal)}
+            <div className="p-3.5">
+              <div className="inline-flex items-center gap-1.5 text-[11px] text-muted">
+                <span aria-hidden="true" className="h-2 w-2 rounded-full bg-success" />
+                Sudah Lunas
+              </div>
+              <div className="mt-1 truncate text-[17px] font-bold tracking-tight tabular-nums text-success">
+                {formatRp(paidTotal)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted tabular-nums">{paid.length} tagihan selesai</div>
             </div>
-            <div className="mt-0.5 text-[11px] text-muted tabular-nums">{unpaid.length} tagihan terbuka</div>
+            <div className="p-3.5">
+              <div className="text-[11px] text-muted">Total Tagihan</div>
+              <div className="mt-1 truncate text-[17px] font-bold tracking-tight tabular-nums text-ink">
+                {formatRp(grandTotal)}
+              </div>
+              <div className="mt-0.5 text-[11px] text-muted tabular-nums">{paidPct}% terbayar</div>
+            </div>
           </div>
-          <div className="p-4">
-            <div className="inline-flex items-center gap-1.5 text-[12px] text-muted">
-              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-success" />
-              Sudah Lunas
+          <div className="border-t border-rule bg-paper-2 px-3.5 py-2">
+            <div aria-hidden="true" className="flex h-1.5 w-full overflow-hidden rounded-[4px] bg-paper-3">
+              <div style={{ width: `${paidPct}%` }} className="h-full bg-success" />
             </div>
-            <div className="mt-1 truncate text-[20px] font-bold tracking-tight tabular-nums text-success">
-              {formatRp(paidTotal)}
-            </div>
-            <div className="mt-0.5 text-[11px] text-muted tabular-nums">{paid.length} tagihan selesai</div>
           </div>
         </Card>
 
-        <div role="group" aria-label="Filter status" className="flex gap-1.5">
-          {(
-            [
-              { v: 'unpaid', l: `Belum Bayar (${unpaid.length})` },
-              { v: 'paid', l: `Lunas (${paid.length})` },
-              { v: 'all', l: `Semua (${invoices.length})` },
-            ] as const
-          ).map((f) => (
-            <button
-              key={f.v}
-              type="button"
-              aria-pressed={invFilter === f.v}
-              onClick={() => setInvFilter(f.v)}
-              className={`min-h-[34px] rounded-[6px] px-3 text-[12px] font-medium transition-colors ${
-                invFilter === f.v
-                  ? 'bg-accent text-white'
-                  : 'border border-control bg-white text-ink-2 hover:bg-paper-2'
-              }`}
-            >
-              {f.l}
-            </button>
-          ))}
-        </div>
+        {/* Unified Invoice Filter & Sort/Group Toolbar */}
+        <div className="ledger-toolbar space-y-2.5 p-3">
+          <div role="group" aria-label="Filter status" className="flex flex-wrap gap-1.5">
+            {(
+              [
+                { v: 'unpaid', l: `Belum Bayar (${unpaid.length})` },
+                { v: 'paid', l: `Lunas (${paid.length})` },
+                { v: 'all', l: `Semua (${invoices.length})` },
+              ] as const
+            ).map((f) => (
+              <button
+                key={f.v}
+                type="button"
+                aria-pressed={invFilter === f.v}
+                onClick={() => setInvFilter(f.v)}
+                className={`min-h-[34px] rounded-[6px] px-3 text-[12px] font-medium transition-colors ${
+                  invFilter === f.v
+                    ? 'bg-accent text-white'
+                    : 'border border-control bg-white text-ink-2 hover:bg-paper-2'
+                }`}
+              >
+                {f.l}
+              </button>
+            ))}
+          </div>
 
-        <SortGroupControls
-          sortBy={sortBy}
-          onSortChange={setSortBy}
-          groupBy={groupBy}
-          onGroupChange={setGroupBy}
-          idPrefix="invoice"
-          allExpanded={allExpanded}
-          onToggleExpandAll={toggleExpandAll}
-          itemCount={filteredInvoices.length}
-        />
+          <SortGroupControls
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            groupBy={groupBy}
+            onGroupChange={setGroupBy}
+            idPrefix="invoice"
+            allExpanded={allExpanded}
+            onToggleExpandAll={toggleExpandAll}
+            itemCount={filteredInvoices.length}
+          />
+        </div>
 
         <Toast toast={toast} onClose={() => setToast(null)} />
 

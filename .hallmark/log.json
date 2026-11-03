@@ -1,6 +1,30 @@
 [
  {
   "mode": "redesign",
+  "depth": "full",
+  "scope": "app",
+  "shape": "app screen",
+  "theme": "brand",
+  "axes": "light/grotesk-sans/neutral",
+  "hero": "none",
+  "nav": "responsive workbench bar + mobile tablist",
+  "footer": "none",
+  "imagery": "none",
+  "photos": [],
+  "entry": "src/app/globals.css",
+  "fingerprint": "mbg-supply-ledger-app-full",
+  "sections": [
+   "orders",
+   "invoices",
+   "ledger"
+  ],
+  "signature": "expandable kitchen order, weighing and invoice ledger queue",
+  "waived": [],
+  "prompt": "MBG Supply Chain & Profit-Sharing Ledger full app redesign",
+  "date": "2026-11-03"
+ },
+ {
+  "mode": "redesign",
   "depth": "polish",
   "scope": "app",
   "shape": "app screen",

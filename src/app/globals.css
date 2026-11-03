@@ -1,8 +1,8 @@
-/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: polish
+/* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: full
  * paper: oklch(96.3% 0.005 258) · accent: oklch(19.1% 0 0) · display: Geist · body: Geist
- * nav: kept · signature: expandable kitchen order and invoice ledger cards · states: default, hover, focus-visible, active, disabled, loading, empty, error
+ * nav: responsive workbench bar + mobile tablist · signature: expandable kitchen order, weighing and invoice ledger queue · states: default, hover, focus-visible, active, disabled, loading, empty, error
  * axes: light/grotesk-sans/neutral · posture: settled · contrast: pass · v2.0.0 */
-/* Hallmark · pre-emit critique: P9 H8 E9 S9 R9 V8 · weakest: V, lifted 220+ hex literals into semantic tokens and unified print/app typography */
+/* Hallmark · pre-emit critique: P9 H9 E9 S9 R9 V9 · weakest: H, recomposed app screens so hairline KPI strips and unified ledger toolbars lead above the expandable queue */
 @import url("./tokens.css");
 @import url("./base.css");
 
@@ -65,6 +65,14 @@
 @layer components {
   .card {
     @apply rounded-[8px] border border-rule bg-surface;
+  }
+
+  .kpi-strip {
+    @apply grid divide-x divide-rule overflow-hidden rounded-[8px] border border-rule bg-surface;
+  }
+
+  .ledger-toolbar {
+    @apply overflow-hidden rounded-[8px] border border-rule bg-surface;
   }
 
   .hs-card-header {

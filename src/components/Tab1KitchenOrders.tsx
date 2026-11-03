@@ -54,7 +54,7 @@ export function Tab1KitchenOrders() {
   const [groupBy, setGroupBy] = useState<GroupMode>('none');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
-  const formRef = useRef<HTMLDivElement>(null);
+  const formRef = useRef<HTMLDetailsElement>(null);
 
   const kitchenById = useMemo(() => new Map(kitchens.map((k) => [k.id, k])), [kitchens]);
   const itemById = useMemo(() => new Map(items.map((it) => [it.id, it])), [items]);
@@ -71,6 +71,22 @@ export function Tab1KitchenOrders() {
   );
   const activeOrders = useMemo(() => allOrders.filter((o) => o.invoice?.payment_status !== 'PAID'), [allOrders]);
   const paidOrders = useMemo(() => allOrders.filter((o) => o.invoice?.payment_status === 'PAID'), [allOrders]);
+  const activeTotal = useMemo(
+    () => sumIdr(activeOrders.map((o) => o.invoice?.total_invoice_amount ?? 0)),
+    [activeOrders]
+  );
+  const paidTotal = useMemo(
+    () => sumIdr(paidOrders.map((o) => o.invoice?.total_invoice_amount ?? 0)),
+    [paidOrders]
+  );
+  const activeKg = useMemo(
+    () =>
+      activeOrders.reduce(
+        (acc, o) => acc + o.lines.reduce((s, l) => s + (l.qty_delivered_kg ?? l.qty_ordered_kg), 0),
+        0
+      ),
+    [activeOrders]
+  );
   const shownOrders = filter === 'active' ? activeOrders : paidOrders;
   const allExpanded = shownOrders.length > 0 && shownOrders.every((o) => expandedIds.has(o.delivery.id));
   const toggleCard = (id: string) =>
@@ -157,6 +173,7 @@ export function Tab1KitchenOrders() {
     if (dateYmd) setOrderDate(dateYmd);
     setLines([emptyDraftLine()]);
     setFormError(null);
+    if (formRef.current) formRef.current.open = true;
     formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -209,16 +226,50 @@ export function Tab1KitchenOrders() {
 
       <Toast toast={toast} onClose={() => setToast(null)} />
 
-      <div ref={formRef} className="scroll-mt-16">
-        <Card as="section" className="overflow-hidden">
-          <div className="hs-card-header bg-paper-2">
+      {/* Hairline-divided Operational Order & Timbang KPI Strip */}
+      <div className="kpi-strip grid-cols-3">
+        <div className="p-3">
+          <div className="text-[11px] text-muted">Order Aktif</div>
+          <div className="mt-0.5 truncate text-[16px] font-bold tracking-tight tabular-nums text-ink">
+            {formatRp(activeTotal)}
+          </div>
+          <div className="mt-0.5 text-[11px] text-muted tabular-nums">{activeOrders.length} order berjalan</div>
+        </div>
+        <div className="p-3">
+          <div className="text-[11px] text-muted">Berat Aktif</div>
+          <div className="mt-0.5 truncate text-[16px] font-bold tracking-tight tabular-nums text-ink">
+            {formatKgNum(activeKg)} kg
+          </div>
+          <div className="mt-0.5 text-[11px] text-muted tabular-nums">Total volume</div>
+        </div>
+        <div className="p-3">
+          <div className="text-[11px] text-muted">Order Lunas</div>
+          <div className="mt-0.5 truncate text-[16px] font-bold tracking-tight tabular-nums text-success">
+            {formatRp(paidTotal)}
+          </div>
+          <div className="mt-0.5 text-[11px] text-muted tabular-nums">{paidOrders.length} selesai</div>
+        </div>
+      </div>
+
+      <details open ref={formRef} className="card group scroll-mt-16 overflow-hidden">
+        <summary className="hs-card-header cursor-pointer list-none bg-paper-2 transition-colors hover:bg-paper-3">
+          <div className="flex min-w-0 items-center gap-2">
             <h2 className="text-[15px] font-medium text-ink">Buat Order Dapur Baru</h2>
+            {kitchen && (
+              <span className="truncate rounded-[4px] border border-rule bg-white px-1.5 py-0.5 font-mono text-[11px] text-ink-2">
+                {kitchen.kitchen_code}
+              </span>
+            )}
+          </div>
+          <span className="flex shrink-0 items-center gap-2">
             <span className="inline-flex h-6 items-center rounded-[6px] border border-rule bg-white px-2 text-[11px] font-medium text-ink-2 tabular-nums">
               {summary.item_count} jenis
             </span>
-          </div>
+            <ChevronDownIcon className="h-4 w-4 text-muted transition-transform motion-reduce:transition-none group-open:rotate-180" />
+          </span>
+        </summary>
 
-          <div className="space-y-4 p-4">
+        <div className="space-y-4 p-4">
             {/* Tanggal Order */}
             <div className="space-y-1.5">
               <label htmlFor="order-date-input" className="field-label">
@@ -357,36 +408,39 @@ export function Tab1KitchenOrders() {
               Simpan Order Dapur
             </button>
           </div>
-        </Card>
-      </div>
+      </details>
 
-      {/* Daftar Order Dapur */}
-      <div className="flex items-center justify-between gap-2 pt-2">
-        <h2 className="text-[16px] font-medium text-ink">Daftar Order Dapur</h2>
-        <span className="inline-flex h-6 items-center rounded-[6px] border border-rule bg-white px-2 text-[11px] font-medium text-ink-2 tabular-nums">
-          {allOrders.length} order
-        </span>
-      </div>
-      <SegmentedControl
-        label="Filter order"
-        value={filter}
-        onChange={setFilter}
-        options={[
-          { value: 'active', label: `Aktif (${activeOrders.length})` },
-          { value: 'paid', label: `Lunas (${paidOrders.length})` },
-        ]}
-      />
+      {/* Unified Daftar Order Dapur Ledger Toolbar */}
+      <div className="ledger-toolbar">
+        <div className="hs-card-header bg-paper-2">
+          <h2 className="text-[15px] font-medium text-ink">Daftar Order Dapur</h2>
+          <span className="inline-flex h-6 items-center rounded-[6px] border border-rule bg-white px-2 text-[11px] font-medium text-ink-2 tabular-nums">
+            {allOrders.length} order
+          </span>
+        </div>
+        <div className="space-y-2.5 p-3">
+          <SegmentedControl
+            label="Filter order"
+            value={filter}
+            onChange={setFilter}
+            options={[
+              { value: 'active', label: `Aktif (${activeOrders.length})` },
+              { value: 'paid', label: `Lunas (${paidOrders.length})` },
+            ]}
+          />
 
-      <SortGroupControls
-        sortBy={sortBy}
-        onSortChange={setSortBy}
-        groupBy={groupBy}
-        onGroupChange={setGroupBy}
-        idPrefix="order"
-        allExpanded={allExpanded}
-        onToggleExpandAll={toggleExpandAll}
-        itemCount={shownOrders.length}
-      />
+          <SortGroupControls
+            sortBy={sortBy}
+            onSortChange={setSortBy}
+            groupBy={groupBy}
+            onGroupChange={setGroupBy}
+            idPrefix="order"
+            allExpanded={allExpanded}
+            onToggleExpandAll={toggleExpandAll}
+            itemCount={shownOrders.length}
+          />
+        </div>
+      </div>
 
       {shownOrders.length === 0 && (
         <Card className="p-6 text-center text-[13px] text-muted">

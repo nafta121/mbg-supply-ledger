@@ -152,8 +152,8 @@ export function AppShell() {
       </a>
 
       <div
-        className={`mx-auto flex min-h-[100dvh] max-w-lg flex-col border-x border-rule bg-paper ${
-          showNav ? 'pb-20' : 'pb-6'
+        className={`mx-auto flex min-h-[100dvh] max-w-2xl flex-col border-x border-rule bg-paper ${
+          showNav ? 'pb-20 sm:pb-8' : 'pb-6'
         }`}
       >
         {/* Preline Application Navbar (56px, flat 1px border, structured left/right groups with divider) */}
@@ -302,6 +302,43 @@ export function AppShell() {
           </form>
         </BottomSheet>
 
+        {showNav && (
+          <nav
+            aria-label="Navigasi utama"
+            className="no-print fixed bottom-0 left-0 right-0 z-30 sm:sticky sm:top-[56px] sm:bottom-auto sm:order-none"
+          >
+            <div className="mx-auto max-w-2xl border-t border-rule bg-white px-2 pb-[env(safe-area-inset-bottom)] sm:border-b sm:border-t-0 sm:bg-paper-2 sm:px-4 sm:pb-0">
+              <div
+                className="grid sm:gap-2"
+                style={{ gridTemplateColumns: `repeat(${visibleTabs.length}, minmax(0, 1fr))` }}
+              >
+                {visibleTabs.map((tab) => {
+                  const isActive = currentTab === tab.id;
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      aria-current={isActive ? 'page' : undefined}
+                      onClick={() => setActiveTab(tab.id)}
+                      className={`relative flex min-h-[54px] flex-col items-center justify-center gap-1 px-1 transition-colors sm:min-h-[42px] sm:flex-row sm:gap-2 ${
+                        isActive ? 'text-ink' : 'text-muted hover:bg-paper-2 hover:text-ink'
+                      }`}
+                    >
+                      {isActive && (
+                        <span className="absolute inset-x-6 top-0 h-[2px] bg-signal sm:inset-x-3 sm:bottom-0 sm:top-auto" />
+                      )}
+                      {tab.renderIcon(isActive ? 'h-4 w-4 text-signal' : 'h-4 w-4')}
+                      <span className={`max-w-full truncate text-[12px] sm:text-[13px] ${isActive ? 'font-medium' : 'font-normal'}`}>
+                        {tab.label}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </nav>
+        )}
+
         <main id="main-content" className="flex-1 space-y-3.5 px-4 py-4">
           {syncError && (
             <div
@@ -339,40 +376,6 @@ export function AppShell() {
             </>
           )}
         </main>
-
-        {showNav && (
-          <nav aria-label="Navigasi utama" className="no-print fixed bottom-0 left-0 right-0 z-30">
-            <div className="mx-auto max-w-lg border-t border-rule bg-white px-2 pb-[env(safe-area-inset-bottom)]">
-              <div
-                className="grid"
-                style={{ gridTemplateColumns: `repeat(${visibleTabs.length}, minmax(0, 1fr))` }}
-              >
-                {visibleTabs.map((tab) => {
-                  const isActive = currentTab === tab.id;
-                  return (
-                    <button
-                      key={tab.id}
-                      type="button"
-                      aria-current={isActive ? 'page' : undefined}
-                      onClick={() => setActiveTab(tab.id)}
-                      className={`relative flex min-h-[54px] flex-col items-center justify-center gap-1 px-1 transition-colors ${
-                        isActive ? 'text-ink' : 'text-muted hover:bg-paper-2 hover:text-ink'
-                      }`}
-                    >
-                      {isActive && (
-                        <span className="absolute inset-x-6 top-0 h-[2px] bg-signal" />
-                      )}
-                      {tab.renderIcon(isActive ? 'h-4 w-4 text-signal' : 'h-4 w-4')}
-                      <span className={`max-w-full truncate text-[12px] ${isActive ? 'font-medium' : 'font-normal'}`}>
-                        {tab.label}
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          </nav>
-        )}
       </div>
     </div>
   );
