@@ -100,11 +100,16 @@ export function AppShell() {
     if (targetRole !== 'OWNER_ADMIN') {
       if (typeof window !== 'undefined') {
         window.sessionStorage.removeItem('mbg_pin_verified_OWNER_ADMIN');
+        window.sessionStorage.removeItem('mbg_admin_pin');
       }
       setActiveRole(targetRole);
       return;
     }
-    if (typeof window !== 'undefined' && window.sessionStorage.getItem('mbg_pin_verified_OWNER_ADMIN') === '1') {
+    if (
+      typeof window !== 'undefined' &&
+      window.sessionStorage.getItem('mbg_pin_verified_OWNER_ADMIN') === '1' &&
+      Boolean(window.sessionStorage.getItem('mbg_admin_pin'))
+    ) {
       setActiveRole('OWNER_ADMIN');
       return;
     }
@@ -116,19 +121,16 @@ export function AppShell() {
   const handleVerifyRolePin = async (e: React.FormEvent) => {
     e.preventDefault();
     const typedPin = pinInput.trim();
-    let verified = false;
-    if (isSupabaseConfigured && isSupabaseLive) {
-      verified = await verifyRolePinRpc(getSupabaseClient(), 'OWNER_ADMIN', typedPin);
-    } else {
-      const expectedPin = splitConfig.admin_pin || '1122';
-      verified = typedPin === expectedPin;
-    }
+    const verified = isSupabaseConfigured && isSupabaseLive
+      ? await verifyRolePinRpc(getSupabaseClient(), 'OWNER_ADMIN', typedPin)
+      : false;
     if (!verified) {
       setPinError('PIN Admin salah. Periksa kembali PIN 4 digit Anda.');
       return;
     }
     if (typeof window !== 'undefined') {
       window.sessionStorage.setItem('mbg_pin_verified_OWNER_ADMIN', '1');
+      window.sessionStorage.setItem('mbg_admin_pin', typedPin);
     }
     setAdminPinOpen(false);
     setPinInput('');

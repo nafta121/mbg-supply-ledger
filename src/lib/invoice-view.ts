@@ -5,7 +5,7 @@
  * re-priced. Tagihan per baris = qty_accepted_kg × Harga Dapur / kg (Invariant 2).
  */
 import type { KitchenInvoice, LedgerPayoutStatus, PaymentAccountInfo, ProfitSplitConfig } from '../types/mbg';
-import { gramsToKg, idrToSen, kgToGrams, senToIdr } from './financial-engine';
+import { DEFAULT_PAYMENT_INFO, gramsToKg, idrToSen, kgToGrams, senToIdr } from './financial-engine';
 import { describeShrinkReason } from './courier-view';
 import { linesForDelivery, type MbgData, orderProgress } from './order-engine';
 import { formatKgNum, formatRp, INVOICE_LABEL, shortKitchenName } from './ui-format';
@@ -79,17 +79,17 @@ export function resolvePaymentAccount(
   const pick = (invVal?: string, cfgVal?: string, fallback = '') =>
     (isPaid ? invVal || cfgVal : cfgVal || invVal) || fallback;
   return {
-    supplier_name: pick(invoice?.supplier_name, cfg?.supplier_name, 'Supplier MBG'),
-    payment_bank_name: pick(invoice?.payment_bank_name, cfg?.payment_bank_name, 'BRI'),
+    supplier_name: pick(invoice?.supplier_name, cfg?.supplier_name, DEFAULT_PAYMENT_INFO.supplier_name),
+    payment_bank_name: pick(invoice?.payment_bank_name, cfg?.payment_bank_name, DEFAULT_PAYMENT_INFO.payment_bank_name),
     payment_account_number: pick(
       invoice?.payment_account_number,
       cfg?.payment_account_number,
-      '0000-0000-0000-000'
+      DEFAULT_PAYMENT_INFO.payment_account_number
     ),
     payment_account_holder: pick(
       invoice?.payment_account_holder,
       cfg?.payment_account_holder,
-      'Bendahara Supplier MBG'
+      DEFAULT_PAYMENT_INFO.payment_account_holder
     ),
   };
 }

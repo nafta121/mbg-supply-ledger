@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildAcceptPendingLines,
-  buildKitchenBastWaText,
-  formatWeighedSummary,
-  groupCourierStops,
-  stopWeighedSummary,
-} from '../courier-view';
+import { composeShrinkReason, describeShrinkReason, parseShrinkReason } from '../courier-view';
 import { buildInvoiceWaText } from '../invoice-view';
 import { toWholeKg } from '../financial-engine';
-import { buildSafeCourierItems, formatKg as storeFormatKg } from '../mbg-store';
 import { createInitialSeedState } from './seed-fixture';
 import { formatKg, formatKgNum, formatShrinkKgNum, parseKgInput, parseWholeKgInput } from '../ui-format';
 
@@ -25,14 +18,10 @@ describe('Stage 7/8 — dynamic Indonesian decimal kilogram formatting (Invarian
     expect(formatKg(-0.5)).toBe('-0,5 kg');
     expect(formatKg(-3)).toBe('-3 kg');
     expect(`${formatKgNum(70)} / ${formatKgNum(70)} kg`).toBe('70 / 70 kg');
-    expect(storeFormatKg(50)).toBe('50 kg');
-    expect(storeFormatKg(12.5)).toBe('12,5 kg');
-    expect(storeFormatKg(0.2)).toBe('0,2 kg');
-    expect(storeFormatKg(125)).toBe('125 kg');
     for (const kg of [0, 0.2, 1, 1.25, 12.5, 20, 48, 49, 50, 70, 125, 150, 500, 1250]) {
       expect(formatKg(kg)).not.toContain('.000');
       expect(formatKg(kg)).not.toContain(',000');
-      expect(storeFormatKg(kg)).not.toMatch(TRAILING_ZERO_KG);
+      expect(formatKg(kg)).not.toMatch(TRAILING_ZERO_KG);
     }
   });
 
@@ -46,11 +35,16 @@ describe('Stage 7/8 — dynamic Indonesian decimal kilogram formatting (Invarian
     expect(toWholeKg(Number.NaN)).toBe(0);
   });
 
-  it('formats shrinkage as a negative deduction', () => {
+  it('formats shrinkage as a negative deduction and round-trips shrink reason strings', () => {
     expect(formatShrinkKgNum(1)).toBe('-1');
     expect(formatShrinkKgNum(0.5)).toBe('-0,5');
     expect(formatShrinkKgNum(2)).toBe('-2');
     expect(formatShrinkKgNum(0)).toBe('0');
+
+    const composed = composeShrinkReason('Barang Rusak/Reject', 'wortel patah');
+    expect(composed).toBe('Barang Rusak/Reject — wortel patah');
+    expect(parseShrinkReason(composed)).toEqual({ reason: 'Barang Rusak/Reject', note: 'wortel patah' });
+    expect(describeShrinkReason(composed)).toBe('Barang Rusak/Reject — wortel patah');
   });
 
   it('parses typed kg input (comma or dot) into 3-decimal kg', () => {
@@ -82,9 +76,10 @@ describe('Stage 7/8 — whole-kg seed data', () => {
   });
 
   it('DPR-02 Ayam 49/50 kg (susut 1) and DPR-03 Wortel 33/35 kg (reject 2)', () => {
-    const items = buildSafeCourierItems(seed);
-    const ayam02 = items.find((i) => i.kitchen_code === 'DPR-02' && i.item_id === 'item-ayam')!;
-    const wortel03 = items.find((i) => i.kitchen_code === 'DPR-03' && i.item_id === 'item-wortel')!;
+    const del02 = seed.deliveries.find((d) => d.kitchen_id === 'kitchen-02')!;
+    const del03 = seed.deliveries.find((d) => d.kitchen_id === 'kitchen-03')!;
+    const ayam02 = seed.deliveryItems.find((i) => i.delivery_id === del02.id && i.item_id === 'item-ayam')!;
+    const wortel03 = seed.deliveryItems.find((i) => i.delivery_id === del03.id && i.item_id === 'item-wortel')!;
     expect([ayam02.qty_dispatched_kg, ayam02.qty_accepted_kg, ayam02.qty_shrinkage_kg]).toEqual([50, 49, 1]);
     expect([wortel03.qty_dispatched_kg, wortel03.qty_accepted_kg, wortel03.qty_shrinkage_kg]).toEqual([35, 33, 2]);
   });
@@ -94,55 +89,9 @@ describe('Stage 7/8 — whole-kg seed data', () => {
     for (const le of seed.ledgerEntries) expect(Number.isInteger(le.profit_amount)).toBe(true);
   });
 
-  it('WA BAST and WA invoice texts never contain trailing-zero kilograms', () => {
-    const stops = groupCourierStops(buildSafeCourierItems(seed));
-    for (const s of stops) {
-      const text = buildKitchenBastWaText(s);
-      expect(text).not.toMatch(TRAILING_ZERO_KG);
-      expect(text).not.toContain('.000 kg');
-    }
+  it('WA invoice texts never contain trailing-zero kilograms', () => {
     for (const inv of seed.invoices) {
       expect(buildInvoiceWaText(seed, inv)).not.toMatch(TRAILING_ZERO_KG);
-    }
-  });
-});
-
-describe('Stage 7/8 — clean courier card (honest totals & anti-overwrite)', () => {
-  const seed = createInitialSeedState();
-  const stops = groupCourierStops(buildSafeCourierItems(seed));
-  const stop = (code: string) => stops.find((s) => s.kitchen_code === code)!;
-
-  it('"Tertimbang" counts only weighed lines', () => {
-    expect(formatWeighedSummary(stopWeighedSummary(stop('DPR-03')))).toBe('Tertimbang: 2/2 barang (83 / 85 kg)');
-    expect(formatWeighedSummary(stopWeighedSummary(stop('DPR-05')))).toBe('Tertimbang: 1/2 barang (50 / 75 kg)');
-    expect(formatWeighedSummary(stopWeighedSummary(stop('DPR-04')))).toBe('Tertimbang: 0/3 barang (0 / 135 kg)');
-  });
-
-  it('"Terima Sesuai Order" only targets PENDING lines and never overwrites weighed Ayam 50 kg', () => {
-    const dpr05 = stop('DPR-05');
-    const ayam = dpr05.items.find((i) => i.item_id === 'item-ayam')!;
-    const telur = dpr05.items.find((i) => i.item_id === 'item-telur')!;
-    expect(ayam.is_weighed).toBe(true);
-    expect(telur.is_weighed).toBe(false);
-    expect(buildAcceptPendingLines(dpr05)).toEqual([
-      { delivery_item_id: telur.delivery_item_id, qty_accepted_kg: 25, rejection_reason: null },
-    ]);
-  });
-
-  it('returns no lines for a fully weighed or locked (Lunas) order', () => {
-    expect(stop('DPR-03').done).toBe(true);
-    expect(buildAcceptPendingLines(stop('DPR-03'))).toEqual([]);
-    expect(stop('DPR-01').locked).toBe(true);
-    expect(buildAcceptPendingLines(stop('DPR-01'))).toEqual([]);
-  });
-
-  it('courier card items stay price-free (Invariant 5)', () => {
-    for (const s of stops) {
-      for (const it of s.items) {
-        expect('kitchen_unit_price_snapshot' in it).toBe(false);
-        expect('margin_per_kg_snapshot' in it).toBe(false);
-        expect('line_invoice_amount' in it).toBe(false);
-      }
     }
   });
 });

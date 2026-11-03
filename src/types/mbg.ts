@@ -121,8 +121,6 @@ export interface ProfitSplitConfig {
   config_name: string;
   team_share_pct: number; // NUMERIC(5,2)
   cooperative_share_pct: number; // NUMERIC(5,2)
-  admin_pin?: string;
-  coop_pin?: string;
   supplier_name?: string;
   payment_bank_name?: string;
   payment_account_number?: string;
@@ -179,18 +177,4 @@ export interface SafeDeliveryItemBastView {
   qty_accepted_kg: number;
   qty_shrinkage_kg: number;
   rejection_reason: string | null;
-}
-
-// Courier projection of `v_safe_delivery_items_bast` (migration 0004).
-// Adds only non-financial context for the kitchen-order courier card:
-// kitchen code/PIC, per-line weighed flag, and whether the order is locked (invoice paid).
-// Still contains NO price, invoice amount, or margin fields (Invariant 5).
-export interface SafeCourierBastItem extends SafeDeliveryItemBastView {
-  kitchen_code: string;
-  kitchen_pic_name: string;
-  kitchen_pic_phone: string;
-  /** Line already weighed at the kitchen (BAST saved). */
-  is_weighed: boolean;
-  /** Order is closed (kitchen invoice already Lunas) — weights can no longer change. */
-  is_locked: boolean;
 }

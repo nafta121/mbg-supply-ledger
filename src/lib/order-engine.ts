@@ -11,7 +11,6 @@
  * - Invariant 2: kitchens are billed only for `qty_accepted_kg`.
  * - Invariant 3: kitchen price & margin are snapshotted per order line.
  * - Invariant 4: ledger stays LOCKED_UNPAID until the invoice is PAID.
- * - Invariant 5: `buildSafeCourierItems` is the price-free courier projection.
  */
 import type {
   BeneficiaryType,
@@ -24,10 +23,10 @@ import type {
   ProfitLedgerEntry,
   ProfitPayoutBatch,
   ProfitSplitConfig,
-  SafeCourierBastItem,
 } from '../types/mbg';
 import {
   calculateProfitSplitEntry,
+  DEFAULT_PAYMENT_INFO,
   gramsToKg,
   idrToSen,
   kgToGrams,
@@ -35,7 +34,6 @@ import {
   pctToBasisPoints,
   reconcileKitchenOrderLine,
   roundKg,
-  sanitizeDeliveryForFieldTeam,
   senToIdr,
 } from './financial-engine';
 
@@ -423,10 +421,10 @@ export function createKitchenOrder<T extends MbgData>(
       payment_proof_url: null,
       paid_at: null,
       verified_by: null,
-      supplier_name: data.splitConfig.supplier_name ?? 'Supplier MBG',
-      payment_bank_name: data.splitConfig.payment_bank_name ?? 'BRI',
-      payment_account_number: data.splitConfig.payment_account_number ?? '0000-0000-0000-000',
-      payment_account_holder: data.splitConfig.payment_account_holder ?? 'Bendahara Supplier MBG',
+      supplier_name: data.splitConfig.supplier_name ?? DEFAULT_PAYMENT_INFO.supplier_name,
+      payment_bank_name: data.splitConfig.payment_bank_name ?? DEFAULT_PAYMENT_INFO.payment_bank_name,
+      payment_account_number: data.splitConfig.payment_account_number ?? DEFAULT_PAYMENT_INFO.payment_account_number,
+      payment_account_holder: data.splitConfig.payment_account_holder ?? DEFAULT_PAYMENT_INFO.payment_account_holder,
       created_at: ctx.nowIso,
       updated_at: ctx.nowIso,
     };
@@ -762,44 +760,4 @@ export function executePayout<T extends MbgData>(
       ),
     },
   };
-}
-
-// ---------- Courier projection (Invariant 5) ----------
-
-/**
- * Mirrors `v_safe_delivery_items_bast` (migration 0004): sanitized via
- * `sanitizeDeliveryForFieldTeam`, then enriched with non-financial context only.
- * Output never contains price, invoice amount, or margin fields.
- */
-export function buildSafeCourierItems(
-  data: Pick<MbgData, 'deliveryItems' | 'deliveries' | 'kitchens' | 'items' | 'invoices'>
-): SafeCourierBastItem[] {
-  return data.deliveryItems.map((di) => {
-    const del = data.deliveries.find((d) => d.id === di.delivery_id);
-    const kitchen = data.kitchens.find((k) => k.id === del?.kitchen_id);
-    const item = data.items.find((i) => i.id === di.item_id);
-    const safe = sanitizeDeliveryForFieldTeam({
-      id: di.id,
-      delivery_item_id: di.id,
-      delivery_id: di.delivery_id,
-      delivery_number: del?.delivery_number ?? 'SJ-UNKNOWN',
-      delivery_date: del?.delivery_date ?? '',
-      kitchen_id: kitchen?.id ?? 'unknown',
-      kitchen_name: kitchen?.name ?? 'Dapur MBG',
-      item_id: item?.id ?? di.item_id,
-      item_name: item?.name ?? 'Bahan Baku MBG',
-      qty_dispatched_kg: di.qty_dispatched_kg,
-      qty_accepted_kg: di.qty_accepted_kg,
-      qty_shrinkage_kg: di.qty_shrinkage_kg,
-      rejection_reason: di.rejection_reason,
-    });
-    return {
-      ...safe,
-      kitchen_code: kitchen?.kitchen_code ?? '-',
-      kitchen_pic_name: kitchen?.pic_name ?? '-',
-      kitchen_pic_phone: kitchen?.pic_phone ?? '',
-      is_weighed: di.weighed_at !== null,
-      is_locked: isPaid(invoiceForDelivery(data, di.delivery_id)),
-    };
-  });
 }

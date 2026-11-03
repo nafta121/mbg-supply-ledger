@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { BUSINESS_DATE, type MbgState } from '../mbg-store';
-import { createInitialSeedState } from './seed-fixture';
+import { createInitialSeedState, toSupabaseRows } from './seed-fixture';
 import {
   applyBastWeights,
   createKitchenOrder,
@@ -10,7 +10,7 @@ import {
   summarizeOrderDraft,
   updateProfitSplit,
 } from '../order-engine';
-import { fromSupabaseRows, toSupabaseRows } from '../supabase-sync';
+import { fromSupabaseRows } from '../supabase-sync';
 import { formatKg, parseKgInput, parseRpInput, sumIdr } from '../ui-format';
 
 function makeCtx(): EngineCtx {

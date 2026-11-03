@@ -9,7 +9,7 @@ import type {
   ProfitSplitConfig,
   UserRole,
 } from '../types/mbg';
-import { idrToSen, senToIdr } from './financial-engine';
+import { DEFAULT_PAYMENT_INFO, idrToSen, senToIdr } from './financial-engine';
 import {
   applyBastWeights,
   createKitchenOrder,
@@ -43,9 +43,8 @@ import {
   upsertKitchenOrderRpc,
   upsertProductInSupabase,
 } from './supabase-sync';
-import { formatIdr, formatKg, getJakartaTodayYmd } from './ui-format';
+import { getJakartaTodayYmd } from './ui-format';
 
-export { buildSafeCourierItems } from './order-engine';
 export type {
   CreateOrderInput,
   OrderLineInput,
@@ -54,7 +53,6 @@ export type {
   UpdateOrderLineInput,
 } from './order-engine';
 export type { PaymentAccountInfo } from '../types/mbg';
-export { formatIdr, formatKg } from './ui-format';
 
 /** Business date of the operational day ("hari ini" for Order Dapur & kurir). */
 export const BUSINESS_DATE = '2026-10-16';
@@ -214,12 +212,7 @@ export function createEmptyCloudState(): MbgState {
     config_name: 'Skema Bagi Hasil Standar Tim 60% : Koperasi 40%',
     team_share_pct: 60.0,
     cooperative_share_pct: 40.0,
-    admin_pin: '1122',
-    coop_pin: '3344',
-    supplier_name: 'Supplier MBG',
-    payment_bank_name: 'BRI',
-    payment_account_number: '0000-0000-0000-000',
-    payment_account_holder: 'Bendahara Supplier MBG',
+    ...DEFAULT_PAYMENT_INFO,
     is_active: true,
     effective_from: BUSINESS_DATE,
     created_at: nowIso,

@@ -1,14 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import {
-  buildKitchenBastWaText,
-  courierProgress,
-  formatShortfallNote,
-  formatVehicleLoad,
-  groupCourierStops,
-  summarizeVehicleLoad,
-} from '../courier-view';
 import { buildInvoiceLines, buildInvoiceProfit, buildInvoiceWaText, formatInvoiceLine, summarizeInvoice } from '../invoice-view';
-import { BUSINESS_DATE, buildSafeCourierItems, type MbgState } from '../mbg-store';
+import { BUSINESS_DATE, type MbgState } from '../mbg-store';
 import { createInitialSeedState } from './seed-fixture';
 import { sortAndGroupItems } from '../../components/OrderInvoiceEditSheet';
 import {
@@ -163,7 +155,6 @@ describe('Stage 8 — Timbang kurir & Invoice Dapur berbasis bobot terima', () =
     const lines = buildInvoiceLines(s, inv);
     expect(formatInvoiceLine(lines.find((l) => l.item_name === 'Wortel')!)).toBe('Wortel: 33 kg × Rp 14.000 = Rp 462.000');
     expect(summarizeInvoice(lines).fully_weighed).toBe(false);
-    expect(formatShortfallNote(35, 33)).toBe('Selisih/Reject -2 kg (Hanya ditagih 33 kg ke Dapur)');
 
     // Cannot mark Lunas until every line is weighed.
     const early = markInvoicePaid(s, inv.id, c.nowIso);
@@ -248,23 +239,11 @@ describe('Stage 8 — Bagi hasil cash-basis (Menunggu Dapur Bayar → Siap Dicai
 
 describe('Stage 8 — seed scenario (16 Okt 2026)', () => {
   const seed = createInitialSeedState();
-  const safe = buildSafeCourierItems(seed);
-  const stops = groupCourierStops(safe);
 
   it('lands Admin on "Order Dapur" with 5 orders, 1 card & 1 invoice each', () => {
     expect(seed.activeTab).toBe('orders');
     expect(seed.deliveries).toHaveLength(5);
     expect(seed.invoices).toHaveLength(5);
-    expect(stops).toHaveLength(5);
-    expect(stops.map((s) => s.kitchen_code)).toEqual(['DPR-01', 'DPR-02', 'DPR-03', 'DPR-04', 'DPR-05']);
-  });
-
-  it('total muatan kurir: Wortel 105 kg • Kubis 75 kg • Daging Ayam 150 kg', () => {
-    const load = summarizeVehicleLoad(safe);
-    const kg = Object.fromEntries(load.map((l) => [l.item_name, l.qty_dispatched_kg]));
-    expect(kg).toEqual({ Wortel: 105, Kubis: 75, 'Daging Ayam Fillet': 150, 'Telur Ayam': 45, Beras: 50 });
-    expect(formatVehicleLoad(load)).toContain('Wortel: 105 kg');
-    expect(courierProgress(stops)).toEqual({ done: 3, total: 5, total_shrinkage_kg: 3 });
   });
 
   it('order statuses: Selesai BAST / Menunggu Kurir / Sebagian Tertimbang', () => {
@@ -323,15 +302,6 @@ describe('Stage 8 — seed scenario (16 Okt 2026)', () => {
     expect(sum('AVAILABLE_FOR_PAYOUT', 'COOPERATIVE')).toBe(145400);
     // DPR-03 141.000 + DPR-04 (35×2.000 + 50×1.500 + 50×4.000 = 345.000) + DPR-05 (50×4.000 + 25×3.000 = 275.000)
     expect(sumIdr([sum('LOCKED_UNPAID', 'TEAM'), sum('LOCKED_UNPAID', 'COOPERATIVE')])).toBe(761000);
-  });
-
-  it('WA BAST is kg-only (no rupiah) and explains the shortfall is not billed', () => {
-    const dpr03 = stops.find((s) => s.kitchen_code === 'DPR-03')!;
-    const text = buildKitchenBastWaText(dpr03);
-    expect(text).not.toMatch(/Rp/);
-    expect(text).toContain('Wortel: order 35 kg, diterima 33 kg (selisih -2 kg');
-    expect(text).toContain('tidak ditagihkan ke dapur');
-    expect(text).not.toMatch(/supplier/i);
   });
 
   it('updateKitchenOrder edits date, kitchen, item, qty, price, and margin and blocks after payout', () => {

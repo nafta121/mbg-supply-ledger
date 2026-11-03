@@ -50,6 +50,10 @@ export default {
       if (request.method === 'POST') {
         try {
           const payload = (await request.json()) as HyperdriveActionPayload;
+          const headerPin = request.headers.get('x-admin-pin')?.trim();
+          if (headerPin && !payload.adminPin) {
+            payload.adminPin = headerPin;
+          }
           const result = await executeHyperdriveAction(payload, env);
           return jsonResponse(result, 200);
         } catch (e) {

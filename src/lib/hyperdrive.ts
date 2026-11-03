@@ -79,13 +79,13 @@ export function isHyperdriveConfigured(env?: HyperdriveEnv): boolean {
 
 /**
  * Creates a request-scoped `postgres.js` client configured for Cloudflare Hyperdrive:
- * - `max: 5` (Cloudflare Workers concurrent subrequest limit)
+ * - `max: 1` (single socket per request to stay well within Cloudflare Workers connection limits)
  * - `fetch_types: false` (avoids an extra round-trip on connection initialization)
  * - `prepare: true` (enables Hyperdrive prepared statement caching)
  */
 export function createHyperdriveSql(connectionString: string): Sql {
   return postgres(connectionString, {
-    max: 5,
+    max: 1,
     fetch_types: false,
     prepare: true,
     idle_timeout: 5,
@@ -111,7 +111,7 @@ export async function withHyperdriveSql<T>(
 }
 
 /**
- * Queries all relational tables over Cloudflare Hyperdrive and maps them to `MbgData`.
+ * Queries all relational tables in a single SQL round-trip over 1 Hyperdrive socket and maps them to `MbgData`.
  * Never selects `admin_pin` or `coop_pin` from `public.app_settings`.
  */
 export async function queryMbgDataViaHyperdrive(
@@ -120,49 +120,39 @@ export async function queryMbgDataViaHyperdrive(
 ): Promise<MbgData> {
   return withHyperdriveSql(
     async (sql) => {
-      const [
-        kitchens,
-        products,
-        orders,
-        orderItems,
-        invoices,
-        ledgerEntries,
-        appSettings,
-        payoutBatches,
-      ] = await Promise.all([
-        sql<KitchenRow[]>`SELECT * FROM public.kitchens ORDER BY code ASC`,
-        sql<ProductRow[]>`SELECT * FROM public.products ORDER BY code ASC`,
-        sql<KitchenOrderRow[]>`SELECT * FROM public.kitchen_orders ORDER BY created_at DESC LIMIT 2000`,
-        sql<KitchenOrderItemRow[]>`SELECT * FROM public.kitchen_order_items ORDER BY created_at DESC LIMIT 5000`,
-        sql<KitchenInvoiceRow[]>`SELECT * FROM public.kitchen_invoices ORDER BY created_at DESC LIMIT 2000`,
-        sql<ProfitLedgerRow[]>`SELECT * FROM public.profit_ledger_entries ORDER BY created_at DESC LIMIT 5000`,
-        sql<AppSettingsRow[]>`
-          SELECT id, team_share_pct, coop_share_pct, supplier_name,
-                 payment_bank_name, payment_account_number, payment_account_holder, updated_at
-          FROM public.app_settings
-          WHERE id = 'default'
-        `.catch(
-          () =>
-            sql<AppSettingsRow[]>`
-              SELECT id, team_share_pct, coop_share_pct,
-                     payment_bank_name, payment_account_number, payment_account_holder, updated_at
-              FROM public.app_settings
-              WHERE id = 'default'
-            `
-        ),
-        sql<ProfitPayoutBatchRow[]>`SELECT * FROM public.profit_payout_batches ORDER BY disbursed_at DESC LIMIT 1000`,
-      ]);
-
+      const rows = await sql<
+        Array<{
+          kitchens: KitchenRow[];
+          products: ProductRow[];
+          orders: KitchenOrderRow[];
+          orderItems: KitchenOrderItemRow[];
+          invoices: KitchenInvoiceRow[];
+          ledgerEntries: ProfitLedgerRow[];
+          appSettings: AppSettingsRow[];
+          payoutBatches: ProfitPayoutBatchRow[];
+        }>
+      >`
+        SELECT
+          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchens ORDER BY code ASC) t), '[]'::json) AS kitchens,
+          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.products ORDER BY code ASC) t), '[]'::json) AS products,
+          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_orders ORDER BY created_at DESC LIMIT 2000) t), '[]'::json) AS orders,
+          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_order_items ORDER BY created_at DESC LIMIT 5000) t), '[]'::json) AS "orderItems",
+          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_invoices ORDER BY created_at DESC LIMIT 2000) t), '[]'::json) AS invoices,
+          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_ledger_entries ORDER BY created_at DESC LIMIT 5000) t), '[]'::json) AS "ledgerEntries",
+          COALESCE((SELECT json_agg(to_jsonb(s) - 'admin_pin' - 'coop_pin') FROM public.app_settings s WHERE s.id = 'default'), '[]'::json) AS "appSettings",
+          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_payout_batches ORDER BY disbursed_at DESC LIMIT 1000) t), '[]'::json) AS "payoutBatches"
+      `;
+      const row = rows[0];
       return fromSupabaseRows({
-        kitchens: Array.from(kitchens),
-        products: Array.from(products),
-        orders: Array.from(orders),
-        orderItems: Array.from(orderItems),
-        invoices: Array.from(invoices),
-        ledgerEntries: Array.from(ledgerEntries),
+        kitchens: row?.kitchens ?? [],
+        products: row?.products ?? [],
+        orders: row?.orders ?? [],
+        orderItems: row?.orderItems ?? [],
+        invoices: row?.invoices ?? [],
+        ledgerEntries: row?.ledgerEntries ?? [],
         splitConfigs: [],
-        appSettings: Array.from(appSettings),
-        payoutBatches: Array.from(payoutBatches),
+        appSettings: row?.appSettings ?? [],
+        payoutBatches: row?.payoutBatches ?? [],
       });
     },
     env,
@@ -170,7 +160,7 @@ export async function queryMbgDataViaHyperdrive(
   );
 }
 
-export type HyperdriveActionPayload =
+export type HyperdriveActionCore =
   | { action: 'upsert_order'; input: CreateOrderInput & { notes?: string | null }; orderDate: string }
   | { action: 'update_order'; input: UpdateOrderInput }
   | { action: 'mark_invoice_paid'; invoiceId: string }
@@ -194,8 +184,11 @@ export type HyperdriveActionPayload =
   | { action: 'delete_product'; productId: string }
   | { action: 'verify_role_pin'; role: string; pin: string };
 
+export type HyperdriveActionPayload = HyperdriveActionCore & { adminPin?: string };
+
 /**
  * Executes an RPC or table mutation directly over Cloudflare Hyperdrive.
+ * All mutating actions require a valid `adminPin` verified via `rpc_verify_role_pin('OWNER_ADMIN', pin)`.
  */
 export async function executeHyperdriveAction(
   payload: HyperdriveActionPayload,
@@ -204,6 +197,19 @@ export async function executeHyperdriveAction(
 ): Promise<Record<string, unknown>> {
   return withHyperdriveSql(
     async (sql) => {
+      if (payload.action !== 'verify_role_pin') {
+        const pin = String(payload.adminPin ?? '').trim();
+        if (!pin) {
+          return { ok: false, error: 'PIN Admin wajib diisi untuk mengubah data.' };
+        }
+        const pinRows = await sql<Array<{ res: { ok?: boolean } }>>`
+          SELECT public.rpc_verify_role_pin('OWNER_ADMIN', ${pin}::text) AS res
+        `;
+        if (!pinRows[0]?.res?.ok) {
+          return { ok: false, error: 'PIN Admin tidak valid atau sesi telah berakhir.' };
+        }
+      }
+
       switch (payload.action) {
         case 'upsert_order': {
           const itemsJson = payload.input.lines.map((l) => ({
@@ -294,12 +300,47 @@ export async function executeHyperdriveAction(
         }
 
         case 'delete_order_item': {
-          await sql`DELETE FROM public.kitchen_order_items WHERE id = ${payload.itemId}`;
+          const deleted = await sql<Array<{ id: string }>>`
+            DELETE FROM public.kitchen_order_items oi
+            WHERE oi.id = ${payload.itemId}
+              AND NOT EXISTS (
+                SELECT 1 FROM public.kitchen_orders o
+                WHERE o.id = oi.order_id AND o.status = 'BAST_LOCKED'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM public.kitchen_invoices i
+                WHERE i.order_id = oi.order_id AND i.status = 'PAID'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM public.profit_ledger_entries p
+                WHERE p.order_id = oi.order_id AND (p.team_paid_out OR p.coop_paid_out)
+              )
+            RETURNING oi.id
+          `;
+          if (deleted.length === 0) {
+            return { ok: false, error: 'Baris order sudah dikunci (Invoice Lunas / Bagi Hasil Cair) dan tidak bisa dihapus.' };
+          }
           return { ok: true };
         }
 
         case 'delete_order': {
-          await sql`DELETE FROM public.kitchen_orders WHERE id = ${payload.orderId} AND status <> 'BAST_LOCKED'`;
+          const deleted = await sql<Array<{ id: string }>>`
+            DELETE FROM public.kitchen_orders o
+            WHERE o.id = ${payload.orderId}
+              AND o.status <> 'BAST_LOCKED'
+              AND NOT EXISTS (
+                SELECT 1 FROM public.kitchen_invoices i
+                WHERE i.order_id = o.id AND i.status = 'PAID'
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM public.profit_ledger_entries p
+                WHERE p.order_id = o.id AND (p.team_paid_out OR p.coop_paid_out)
+              )
+            RETURNING o.id
+          `;
+          if (deleted.length === 0) {
+            return { ok: false, error: 'Order sudah dikunci (Invoice Lunas / Bagi Hasil Cair) dan tidak bisa dihapus.' };
+          }
           return { ok: true };
         }
 

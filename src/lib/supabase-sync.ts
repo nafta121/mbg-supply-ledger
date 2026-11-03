@@ -21,10 +21,10 @@ import type {
   ProfitLedgerEntry,
   ProfitPayoutBatch,
   ProfitSplitConfig,
-  SafeCourierBastItem,
 } from '../types/mbg';
-import { composeShrinkReason, parseShrinkReason, type ShrinkReason } from './courier-view';
+import { composeShrinkReason, type ShrinkReason } from './courier-view';
 import {
+  DEFAULT_PAYMENT_INFO,
   gramsToKg,
   idrToSen,
   kgToGrams,
@@ -153,8 +153,6 @@ export interface AppSettingsRow {
   id: string;
   team_share_pct: number | string;
   coop_share_pct: number | string;
-  admin_pin?: string | null;
-  coop_pin?: string | null;
   supplier_name?: string | null;
   payment_bank_name?: string | null;
   payment_account_number?: string | null;
@@ -174,34 +172,7 @@ export interface ProfitPayoutBatchRow {
   created_at?: string | null;
 }
 
-export interface CourierKitchenOrderViewRow {
-  order_id: string;
-  order_code: string;
-  order_date?: string;
-  order_status?: string;
-  kitchen_id: string;
-  kitchen_code: string;
-  kitchen_name: string;
-  pic_name?: string;
-  pic_phone?: string;
-  kitchen_pic_name?: string;
-  kitchen_pic_phone?: string;
-  item_id?: string;
-  order_item_id?: string;
-  product_id?: string;
-  product_name_snapshot?: string;
-  product_name?: string;
-  base_unit?: 'kg';
-  qty_ordered_kg: number | string;
-  qty_accepted_kg: number | string | null;
-  qty_shrinkage_kg?: number | string;
-  is_weighed: boolean;
-  shrinkage_reason: string | null;
-  shrinkage_note: string | null;
-  is_locked?: boolean;
-}
-
-// ---------- Pure conversion helpers (MbgData <-> Supabase DB rows) ----------
+// ---------- Pure conversion helpers (Supabase DB rows -> MbgData) ----------
 
 const num = (v: number | string | null | undefined): number => {
   if (typeof v === 'number') return Number.isFinite(v) ? v : 0;
@@ -211,212 +182,6 @@ const num = (v: number | string | null | undefined): number => {
   }
   return 0;
 };
-
-export function toSupabaseRows(data: MbgData): {
-  kitchens: KitchenRow[];
-  products: ProductRow[];
-  orders: KitchenOrderRow[];
-  orderItems: KitchenOrderItemRow[];
-  invoices: KitchenInvoiceRow[];
-  ledgerEntries: ProfitLedgerRow[];
-  splitConfig: ProfitSplitConfigRow;
-  appSettings: AppSettingsRow;
-  payoutBatches: ProfitPayoutBatchRow[];
-} {
-  const itemById = new Map(data.items.map((i) => [i.id, i]));
-  const deliveryById = new Map(data.deliveries.map((d) => [d.id, d]));
-  const invoiceById = new Map(data.invoices.map((i) => [i.id, i]));
-
-  const kitchens: KitchenRow[] = data.kitchens.map((k) => ({
-    id: k.id,
-    code: k.kitchen_code,
-    name: k.name,
-    address: k.address || '-',
-    pic_name: k.pic_name,
-    pic_phone: k.pic_phone,
-    default_markup_per_kg: k.default_markup_per_kg,
-    is_active: k.is_active,
-    created_at: k.created_at,
-  }));
-
-  const products: ProductRow[] = data.items.map((i) => ({
-    id: i.id,
-    code: i.sku,
-    name: i.name,
-    category: i.category,
-    default_kitchen_price_rp: i.default_kitchen_price_per_kg,
-    default_margin_per_kg_rp: i.default_margin_per_kg,
-    is_active: i.is_active,
-    created_at: i.created_at,
-  }));
-
-  const orders: KitchenOrderRow[] = data.deliveries.map((d) => ({
-    id: d.id,
-    order_code: d.delivery_number,
-    kitchen_id: d.kitchen_id,
-    order_date: d.delivery_date,
-    status: d.status,
-    bast_signed_by_name: d.bast_signed_by_name,
-    bast_verified_at: d.bast_verified_at,
-    notes: d.notes,
-    created_at: d.created_at,
-    updated_at: d.updated_at,
-  }));
-
-  const orderItems: KitchenOrderItemRow[] = data.deliveryItems.map((di) => {
-    const prod = itemById.get(di.item_id);
-    const parsedReason = parseShrinkReason(di.rejection_reason);
-    const isWeighed = di.weighed_at !== null;
-    return {
-      id: di.id,
-      order_id: di.delivery_id,
-      product_id: di.item_id,
-      product_name_snapshot: prod?.name ?? di.item_id,
-      qty_ordered_kg: roundKg(di.qty_dispatched_kg),
-      qty_accepted_kg: isWeighed ? roundKg(di.qty_accepted_kg) : null,
-      kitchen_unit_price_rp: di.kitchen_unit_price_snapshot,
-      margin_per_kg_rp: di.margin_per_kg_snapshot,
-      is_weighed: isWeighed,
-      weighed_at: di.weighed_at,
-      shrinkage_reason: parsedReason.reason,
-      shrinkage_note: parsedReason.note || null,
-      created_at: di.created_at,
-      updated_at: di.updated_at,
-    };
-  });
-
-  const supplierName = data.splitConfig.supplier_name ?? 'Supplier MBG';
-  const bankName = data.splitConfig.payment_bank_name ?? 'BRI';
-  const accountNumber = data.splitConfig.payment_account_number ?? '0000-0000-0000-000';
-  const accountHolder = data.splitConfig.payment_account_holder ?? 'Bendahara Supplier MBG';
-
-  const invoices: KitchenInvoiceRow[] = data.invoices.map((inv) => ({
-    id: inv.id,
-    invoice_code: inv.invoice_number,
-    order_id: inv.delivery_id,
-    kitchen_id: inv.kitchen_id,
-    invoice_date: inv.invoice_date,
-    due_date: inv.due_date,
-    total_amount_rp: inv.total_invoice_amount,
-    amount_paid_rp: inv.amount_paid,
-    status: inv.payment_status === 'PAID' ? 'PAID' : 'UNPAID',
-    paid_at: inv.paid_at,
-    supplier_name: inv.supplier_name ?? supplierName,
-    payment_bank_name: inv.payment_bank_name ?? bankName,
-    payment_account_number: inv.payment_account_number ?? accountNumber,
-    payment_account_holder: inv.payment_account_holder ?? accountHolder,
-    created_at: inv.created_at,
-    updated_at: inv.updated_at,
-  }));
-
-  const byDeliveryItem = new Map<string, { team?: ProfitLedgerEntry; coop?: ProfitLedgerEntry }>();
-  for (const le of data.ledgerEntries) {
-    const pair = byDeliveryItem.get(le.delivery_item_id) ?? {};
-    if (le.beneficiary_type === 'TEAM') pair.team = le;
-    else pair.coop = le;
-    byDeliveryItem.set(le.delivery_item_id, pair);
-  }
-
-  const ledgerEntries: ProfitLedgerRow[] = [];
-  for (const [deliveryItemId, pair] of byDeliveryItem.entries()) {
-    const sample = pair.team ?? pair.coop;
-    if (!sample) continue;
-    const inv = invoiceById.get(sample.invoice_id);
-    const deliv = inv ? deliveryById.get(inv.delivery_id) : undefined;
-    const kitchenId = inv?.kitchen_id ?? deliv?.kitchen_id ?? data.kitchens[0]?.id ?? 'kitchen-01';
-    const orderId = inv?.delivery_id ?? deliv?.id ?? null;
-    const teamAmt = pair.team?.profit_amount ?? 0;
-    const coopAmt = pair.coop?.profit_amount ?? 0;
-    const gross = senToIdr(idrToSen(teamAmt) + idrToSen(coopAmt));
-    const teamPaid = pair.team?.payout_status === 'PAID_OUT';
-    const coopPaid = pair.coop?.payout_status === 'PAID_OUT';
-    let combinedStatus: 'LOCKED_UNPAID' | 'AVAILABLE_FOR_PAYOUT' | 'PAID_OUT' = 'LOCKED_UNPAID';
-    if (teamPaid && coopPaid) {
-      combinedStatus = 'PAID_OUT';
-    } else if (
-      pair.team?.payout_status === 'AVAILABLE_FOR_PAYOUT' ||
-      pair.coop?.payout_status === 'AVAILABLE_FOR_PAYOUT' ||
-      teamPaid ||
-      coopPaid
-    ) {
-      combinedStatus = 'AVAILABLE_FOR_PAYOUT';
-    }
-
-    ledgerEntries.push({
-      id: `ple-${deliveryItemId}`,
-      invoice_id: sample.invoice_id,
-      order_id: orderId,
-      order_item_id: deliveryItemId,
-      kitchen_id: kitchenId,
-      gross_margin_rp: gross,
-      team_share_pct: pair.team?.share_pct_snapshot ?? data.splitConfig.team_share_pct,
-      coop_share_pct: pair.coop?.share_pct_snapshot ?? data.splitConfig.cooperative_share_pct,
-      team_amount_rp: teamAmt,
-      coop_amount_rp: coopAmt,
-      status: combinedStatus,
-      team_paid_out: teamPaid,
-      coop_paid_out: coopPaid,
-      team_payout_batch_id: pair.team?.payout_batch_id ?? null,
-      coop_payout_batch_id: pair.coop?.payout_batch_id ?? null,
-      team_paid_out_at: pair.team?.paid_out_at ?? null,
-      coop_paid_out_at: pair.coop?.paid_out_at ?? null,
-      unlocked_at: pair.team?.unlocked_at ?? pair.coop?.unlocked_at ?? null,
-      paid_out_at: pair.team?.paid_out_at ?? pair.coop?.paid_out_at ?? null,
-      created_at: sample.created_at,
-      updated_at: sample.updated_at,
-    });
-  }
-
-  const splitConfig: ProfitSplitConfigRow = {
-    id: data.splitConfig.id,
-    config_name: data.splitConfig.config_name,
-    team_share_pct: data.splitConfig.team_share_pct,
-    cooperative_share_pct: data.splitConfig.cooperative_share_pct,
-    supplier_name: supplierName,
-    payment_bank_name: bankName,
-    payment_account_number: accountNumber,
-    payment_account_holder: accountHolder,
-    is_active: data.splitConfig.is_active,
-    effective_from: data.splitConfig.effective_from,
-    created_at: data.splitConfig.created_at,
-  };
-
-  const appSettings: AppSettingsRow = {
-    id: 'default',
-    team_share_pct: data.splitConfig.team_share_pct,
-    coop_share_pct: data.splitConfig.cooperative_share_pct,
-    admin_pin: data.splitConfig.admin_pin || '1122',
-    coop_pin: data.splitConfig.coop_pin || '3344',
-    supplier_name: supplierName,
-    payment_bank_name: bankName,
-    payment_account_number: accountNumber,
-    payment_account_holder: accountHolder,
-  };
-
-  const payoutBatches: ProfitPayoutBatchRow[] = data.payoutBatches.map((pb) => ({
-    id: pb.id,
-    payout_reference: pb.payout_reference,
-    beneficiary_type: pb.beneficiary_type,
-    total_payout_amount: pb.total_payout_amount,
-    transfer_proof_url: pb.transfer_proof_url,
-    notes: pb.notes,
-    disbursed_by: pb.disbursed_by,
-    disbursed_at: pb.disbursed_at,
-    created_at: pb.created_at,
-  }));
-
-  return {
-    kitchens,
-    products,
-    orders,
-    orderItems,
-    invoices,
-    ledgerEntries,
-    splitConfig,
-    appSettings,
-    payoutBatches,
-  };
-}
 
 export function fromSupabaseRows(rows: {
   kitchens: KitchenRow[];
@@ -503,13 +268,12 @@ export function fromSupabaseRows(rows: {
   const scRow = rows.splitConfigs[0];
   const teamPctVal = appSetting ? num(appSetting.team_share_pct) : scRow ? num(scRow.team_share_pct) : 60.0;
   const coopPctVal = appSetting ? num(appSetting.coop_share_pct) : scRow ? num(scRow.cooperative_share_pct) : 40.0;
-  const cfgAdminPin = appSetting?.admin_pin || '1122';
-  const cfgCoopPin = appSetting?.coop_pin || '3344';
-  const cfgSupplierName = appSetting?.supplier_name || scRow?.supplier_name || 'Supplier MBG';
-  const cfgBankName = appSetting?.payment_bank_name || scRow?.payment_bank_name || 'BRI';
-  const cfgAccountNumber = appSetting?.payment_account_number || scRow?.payment_account_number || '0000-0000-0000-000';
+  const cfgSupplierName = appSetting?.supplier_name || scRow?.supplier_name || DEFAULT_PAYMENT_INFO.supplier_name;
+  const cfgBankName = appSetting?.payment_bank_name || scRow?.payment_bank_name || DEFAULT_PAYMENT_INFO.payment_bank_name;
+  const cfgAccountNumber =
+    appSetting?.payment_account_number || scRow?.payment_account_number || DEFAULT_PAYMENT_INFO.payment_account_number;
   const cfgAccountHolder =
-    appSetting?.payment_account_holder || scRow?.payment_account_holder || 'Bendahara Supplier MBG';
+    appSetting?.payment_account_holder || scRow?.payment_account_holder || DEFAULT_PAYMENT_INFO.payment_account_holder;
 
   const invoices: KitchenInvoice[] = rows.invoices.map((inv) => {
     const total = num(inv.total_amount_rp);
@@ -543,8 +307,6 @@ export function fromSupabaseRows(rows: {
     config_name: scRow?.config_name ?? `Skema Bagi Hasil Standar Tim ${teamPctVal}% : Koperasi ${coopPctVal}%`,
     team_share_pct: teamPctVal,
     cooperative_share_pct: coopPctVal,
-    admin_pin: cfgAdminPin,
-    coop_pin: cfgCoopPin,
     supplier_name: cfgSupplierName,
     payment_bank_name: cfgBankName,
     payment_account_number: cfgAccountNumber,
@@ -634,51 +396,26 @@ export function fromSupabaseRows(rows: {
   };
 }
 
-/** Converts rows from `v_courier_kitchen_orders` into `SafeCourierBastItem[]` (Invariant 5 — zero prices). */
-export function fromCourierViewRows(rows: CourierKitchenOrderViewRow[]): SafeCourierBastItem[] {
-  return rows.map((r) => {
-    const orderedKg = roundKg(r.qty_ordered_kg);
-    const acceptedKg = r.is_weighed && r.qty_accepted_kg !== null ? roundKg(r.qty_accepted_kg) : orderedKg;
-    const shrinkKg = Math.max(0, gramsToKg(kgToGrams(orderedKg) - kgToGrams(acceptedKg)));
-    const rejectionReason = r.shrinkage_reason
-      ? composeShrinkReason((r.shrinkage_reason as ShrinkReason) ?? 'Susut', r.shrinkage_note ?? '')
-      : null;
-
-    const itemId = r.order_item_id ?? r.item_id ?? '';
-    const productName = r.product_name_snapshot ?? r.product_name ?? '';
-    const picName = r.pic_name ?? r.kitchen_pic_name ?? '';
-    const picPhone = r.pic_phone ?? r.kitchen_pic_phone ?? '';
-
-    return {
-      delivery_item_id: itemId,
-      delivery_id: r.order_id,
-      delivery_number: r.order_code,
-      delivery_date: r.order_date ?? DEFAULT_DATE,
-      kitchen_id: r.kitchen_id,
-      kitchen_name: r.kitchen_name,
-      item_id: r.product_id ?? productName,
-      item_name: productName,
-      base_unit: 'kg',
-      qty_dispatched_kg: orderedKg,
-      qty_accepted_kg: acceptedKg,
-      qty_shrinkage_kg: shrinkKg,
-      rejection_reason: rejectionReason,
-      kitchen_code: r.kitchen_code,
-      kitchen_pic_name: picName,
-      kitchen_pic_phone: picPhone,
-      is_weighed: r.is_weighed,
-      is_locked: Boolean(r.is_locked),
-    };
-  });
-}
-
 // ---------- Direct Cloud Fetching & RPC Operations (Cloudflare Hyperdrive + Supabase JS Fallback) ----------
 
 type HyperdriveEndpointState = 'unknown' | 'active' | 'unavailable';
 let hyperdriveEndpointState: HyperdriveEndpointState = 'unknown';
+let verifiedAdminPin: string | null = null;
 
 export function setHyperdriveEndpointStateForTest(state: HyperdriveEndpointState): void {
   hyperdriveEndpointState = state;
+}
+
+export function setVerifiedAdminPinForTest(pin: string | null): void {
+  verifiedAdminPin = pin;
+}
+
+function getActiveAdminPin(): string | undefined {
+  if (typeof window !== 'undefined') {
+    const stored = window.sessionStorage.getItem('mbg_admin_pin');
+    if (stored) return stored;
+  }
+  return verifiedAdminPin ?? undefined;
 }
 
 function shouldTryHyperdrive(requireConfirmedActive = false): boolean {
@@ -693,10 +430,13 @@ async function postHyperdriveAction(
 ): Promise<{ handled: false } | { handled: true; data: Record<string, unknown> }> {
   if (!shouldTryHyperdrive(true)) return { handled: false };
   try {
+    const adminPin = body.action === 'verify_role_pin' ? undefined : getActiveAdminPin();
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (adminPin) headers['x-admin-pin'] = adminPin;
     const res = await fetch('/api/hyperdrive', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
+      headers,
+      body: JSON.stringify(adminPin ? { ...body, adminPin } : body),
     });
     if (res.status === 503) {
       hyperdriveEndpointState = 'unavailable';
@@ -939,6 +679,18 @@ export async function deleteKitchenOrderFromSupabase(
     return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menghapus order.') };
   }
   try {
+    const [{ data: paidInv }, { data: paidOut }] = await Promise.all([
+      supabase.from('kitchen_invoices').select('id').eq('order_id', orderId).eq('status', 'PAID').limit(1),
+      supabase
+        .from('profit_ledger_entries')
+        .select('id')
+        .eq('order_id', orderId)
+        .or('team_paid_out.eq.true,coop_paid_out.eq.true')
+        .limit(1),
+    ]);
+    if ((paidInv && paidInv.length > 0) || (paidOut && paidOut.length > 0)) {
+      return { ok: false, error: 'Order sudah dikunci (Invoice Lunas / Bagi Hasil Cair) dan tidak bisa dihapus.' };
+    }
     const { error } = await supabase
       .from('kitchen_orders')
       .delete()
@@ -1041,12 +793,16 @@ export async function verifyRolePinRpc(
 ): Promise<boolean> {
   const hd = await postHyperdriveAction({ action: 'verify_role_pin', role, pin });
   if (hd.handled) {
-    return Boolean(hd.data.ok);
+    const ok = Boolean(hd.data.ok);
+    if (ok && role === 'OWNER_ADMIN') verifiedAdminPin = pin;
+    return ok;
   }
   try {
     const { data, error } = await supabase.rpc('rpc_verify_role_pin', { p_role: role, p_pin: pin });
     if (error || !data || typeof data !== 'object') return false;
-    return Boolean((data as { ok?: boolean }).ok);
+    const ok = Boolean((data as { ok?: boolean }).ok);
+    if (ok && role === 'OWNER_ADMIN') verifiedAdminPin = pin;
+    return ok;
   } catch {
     return false;
   }

@@ -289,3 +289,10 @@ export function sanitizeDeliveryForFieldTeam(
     rejection_reason: record.rejection_reason ?? null,
   };
 }
+
+export const DEFAULT_PAYMENT_INFO = {
+  supplier_name: 'Supplier MBG',
+  payment_bank_name: 'BRI',
+  payment_account_number: '0000-0000-0000-000',
+  payment_account_holder: 'Bendahara Supplier MBG',
+} as const;

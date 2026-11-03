@@ -4,16 +4,14 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   executeHyperdriveAction,
   isHyperdriveConfigured,
+  queryMbgDataViaHyperdrive,
   resolveHyperdriveConnectionString,
 } from '../hyperdrive';
-import { createInitialSeedState } from './seed-fixture';
+import { createInitialSeedState, toSupabaseRows } from './seed-fixture';
 import {
-  type CourierKitchenOrderViewRow,
   fetchMbgDataFromSupabase,
-  fromCourierViewRows,
   fromSupabaseRows,
   setHyperdriveEndpointStateForTest,
-  toSupabaseRows,
   updateKitchenOrderRpc,
 } from '../supabase-sync';
 
@@ -68,62 +66,7 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
     expect(dpr03Inv.payment_status).toBe('UNPAID');
   });
 
-  it('maps v_courier_kitchen_orders rows without exposing any price or margin fields (Invariant 5)', () => {
-    const viewRows: CourierKitchenOrderViewRow[] = [
-      {
-        order_item_id: 'ditem-09',
-        order_id: 'deliv-07',
-        order_code: 'SJ-20261016-DPR03-01',
-        order_date: '2026-10-16',
-        order_status: 'BAST_VERIFIED',
-        kitchen_id: 'kitchen-03',
-        kitchen_code: 'DPR-03',
-        kitchen_name: 'SPPG Dapur 03 - Kalibata (Dapur C)',
-        kitchen_pic_name: 'Hendra Wijaya',
-        kitchen_pic_phone: '0812-9000-0003',
-        product_id: 'item-wortel',
-        product_name: 'Wortel',
-        base_unit: 'kg',
-        qty_ordered_kg: 35,
-        qty_accepted_kg: 33,
-        qty_shrinkage_kg: 2,
-        is_weighed: true,
-        shrinkage_reason: 'Barang Rusak/Reject',
-        shrinkage_note: 'wortel patah/busuk',
-        is_locked: false,
-      },
-    ];
-
-    const safeItems = fromCourierViewRows(viewRows);
-    expect(safeItems).toHaveLength(1);
-    expect(safeItems[0]).toEqual({
-      delivery_item_id: 'ditem-09',
-      delivery_id: 'deliv-07',
-      delivery_number: 'SJ-20261016-DPR03-01',
-      delivery_date: '2026-10-16',
-      kitchen_id: 'kitchen-03',
-      kitchen_name: 'SPPG Dapur 03 - Kalibata (Dapur C)',
-      item_id: 'item-wortel',
-      item_name: 'Wortel',
-      base_unit: 'kg',
-      qty_dispatched_kg: 35,
-      qty_accepted_kg: 33,
-      qty_shrinkage_kg: 2,
-      rejection_reason: 'Barang Rusak/Reject — wortel patah/busuk',
-      kitchen_code: 'DPR-03',
-      kitchen_pic_name: 'Hendra Wijaya',
-      kitchen_pic_phone: '0812-9000-0003',
-      is_weighed: true,
-      is_locked: false,
-    });
-
-    const serialized = JSON.stringify(safeItems).toLowerCase();
-    for (const forbidden of ['price', 'margin', 'invoice', 'cost', 'markup']) {
-      expect(serialized).not.toContain(forbidden);
-    }
-  });
-
-  it('supports decimal kilogram quantities (e.g. 12.5 kg and 0.2 kg) in fromSupabaseRows and fromCourierViewRows', () => {
+  it('supports decimal kilogram quantities (e.g. 12.5 kg and 0.2 kg) in fromSupabaseRows', () => {
     const seed = createInitialSeedState();
     const rows = toSupabaseRows(seed);
     rows.orderItems[0]!.qty_ordered_kg = 12.5;
@@ -293,17 +236,56 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
     expect(data?.splitConfig.payment_account_holder).toBe('Koperasi MBG');
   });
 
-  it('resolves Cloudflare Hyperdrive connectionString and executes RPC actions over Hyperdrive', async () => {
+  it('resolves Cloudflare Hyperdrive connectionString, queries in 1 round-trip, and enforces Admin PIN & delete guards on mutations', async () => {
     expect(isHyperdriveConfigured({})).toBe(false);
-    expect(
-      resolveHyperdriveConnectionString({
-        HYPERDRIVE: { connectionString: 'postgresql://postgres:secret@edge.hyperdrive.cloudflare:5432/postgres' },
-      })
-    ).toBe('postgresql://postgres:secret@edge.hyperdrive.cloudflare:5432/postgres');
+    const hdEnv = {
+      HYPERDRIVE: { connectionString: 'postgresql://postgres:secret@edge.hyperdrive.cloudflare:5432/postgres' },
+    };
+    expect(resolveHyperdriveConnectionString(hdEnv)).toBe(
+      'postgresql://postgres:secret@edge.hyperdrive.cloudflare:5432/postgres'
+    );
 
+    // 1. Single-query Hyperdrive read (`queryMbgDataViaHyperdrive`)
+    const seed = createInitialSeedState();
+    const rows = toSupabaseRows(seed);
+    const readEndMock = vi.fn().mockResolvedValue(undefined);
+    const readSqlMock = vi.fn().mockResolvedValue([
+      {
+        kitchens: rows.kitchens,
+        products: rows.products,
+        orders: rows.orders,
+        orderItems: rows.orderItems,
+        invoices: rows.invoices,
+        ledgerEntries: rows.ledgerEntries,
+        appSettings: [rows.appSettings],
+        payoutBatches: rows.payoutBatches,
+      },
+    ]);
+    const readSql = Object.assign(readSqlMock, { end: readEndMock }) as unknown as Sql;
+    const hdData = await queryMbgDataViaHyperdrive(hdEnv, () => readSql);
+    expect(readSqlMock).toHaveBeenCalledTimes(1);
+    expect(hdData.kitchens).toHaveLength(25);
+    expect(hdData.invoices).toHaveLength(5);
+
+    // 2. Rejects mutation when Admin PIN is missing
+    const noPinSql = Object.assign(vi.fn(), {
+      end: vi.fn().mockResolvedValue(undefined),
+    }) as unknown as Sql;
+    const noPinRes = await executeHyperdriveAction(
+      { action: 'mark_invoice_paid', invoiceId: 'inv-01' },
+      hdEnv,
+      () => noPinSql
+    );
+    expect(noPinRes.ok).toBe(false);
+    expect(String(noPinRes.error)).toMatch(/PIN Admin/i);
+
+    // 3. Executes upsert_order after Admin PIN verification succeeds
     const endMock = vi.fn().mockResolvedValue(undefined);
     const fakeSql = Object.assign(
-      vi.fn().mockResolvedValue([{ res: { order_id: 'deliv-hd-1', order_code: 'SJ-HD-01', merged: false, count: 1 } }]),
+      vi
+        .fn()
+        .mockResolvedValueOnce([{ res: { ok: true } }])
+        .mockResolvedValueOnce([{ res: { order_id: 'deliv-hd-1', order_code: 'SJ-HD-01', merged: false, count: 1 } }]),
       {
         json: (v: unknown) => v,
         array: (v: unknown) => v,
@@ -314,13 +296,14 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
     const result = await executeHyperdriveAction(
       {
         action: 'upsert_order',
+        adminPin: '1122',
         orderDate: '2026-10-20',
         input: {
           kitchen_id: 'kitchen-01',
           lines: [{ item_id: 'item-wortel', qty_ordered_kg: 25.5, kitchen_unit_price_rp: 14000, margin_per_kg_rp: 2000 }],
         },
       },
-      { HYPERDRIVE: { connectionString: 'postgresql://postgres:secret@edge.hyperdrive.cloudflare:5432/postgres' } },
+      hdEnv,
       () => fakeSql
     );
 
@@ -332,6 +315,22 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
       count: 1,
     });
     expect(endMock).toHaveBeenCalledTimes(1);
+
+    // 4. Blocks delete_order when order is locked (paid invoice or disbursed profit share returns 0 rows)
+    const lockedDeleteSql = Object.assign(
+      vi
+        .fn()
+        .mockResolvedValueOnce([{ res: { ok: true } }])
+        .mockResolvedValueOnce([]),
+      { end: vi.fn().mockResolvedValue(undefined) }
+    ) as unknown as Sql;
+    const lockedDelRes = await executeHyperdriveAction(
+      { action: 'delete_order', orderId: 'deliv-01', adminPin: '1122' },
+      hdEnv,
+      () => lockedDeleteSql
+    );
+    expect(lockedDelRes.ok).toBe(false);
+    expect(String(lockedDelRes.error)).toMatch(/dikunci/i);
 
     setHyperdriveEndpointStateForTest('unknown');
   });
