@@ -80,11 +80,7 @@ export function Tab1KitchenOrders() {
     [paidOrders]
   );
   const activeKg = useMemo(
-    () =>
-      activeOrders.reduce(
-        (acc, o) => acc + o.lines.reduce((s, l) => s + (l.qty_delivered_kg ?? l.qty_ordered_kg), 0),
-        0
-      ),
+    () => activeOrders.reduce((acc, o) => acc + o.lines.reduce((s, l) => s + l.qty_dispatched_kg, 0), 0),
     [activeOrders]
   );
   const shownOrders = filter === 'active' ? activeOrders : paidOrders;
