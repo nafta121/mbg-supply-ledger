@@ -197,39 +197,105 @@ export type HyperdriveActionPayload = HyperdriveActionCore & {
   adminPin?: string;
   includeSnapshot?: boolean;
   clientIp?: string;
+  clientMutationId?: string;
 };
 
 const ADMIN_PIN_CACHE_TTL_MS = 5 * 60 * 1000;
-let cachedAdminPin: { pin: string; expiresAt: number } | null = null;
+let cachedAdminPin: { digest: Uint8Array; expiresAt: number } | null = null;
 
 const MAX_PIN_FAILURES = 5;
 const PIN_LOCKOUT_MS = 10 * 60 * 1000;
 const MAX_TRACKED_PIN_CLIENTS = 256;
 const PIN_LOCKOUT_ERROR = 'Terlalu banyak percobaan PIN salah. Coba lagi dalam 10 menit.';
 
+const MUTATION_IDEMPOTENCY_TTL_MS = 10 * 60 * 1000;
+const MAX_TRACKED_MUTATION_IDS = 256;
+
 interface PinFailureEntry {
   count: number;
   resetAt: number;
 }
 
+interface CompletedMutationEntry {
+  result: Record<string, unknown>;
+  expiresAt: number;
+}
+
 const pinFailuresByClient = new Map<string, PinFailureEntry>();
+const completedMutations = new Map<string, CompletedMutationEntry>();
 
 export function resetHyperdrivePinGuardForTest(): void {
   cachedAdminPin = null;
   pinFailuresByClient.clear();
+  completedMutations.clear();
 }
 
-function isAdminPinCached(pin: string): boolean {
-  if (!cachedAdminPin || cachedAdminPin.pin !== pin) return false;
+async function sha256Bytes(input: string): Promise<Uint8Array> {
+  const bytes = new TextEncoder().encode(input);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', bytes);
+  return new Uint8Array(hashBuffer);
+}
+
+export function timingSafeEqualBytes(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  const subtle = globalThis.crypto?.subtle as
+    | (SubtleCrypto & { timingSafeEqual?: (x: BufferSource, y: BufferSource) => boolean })
+    | undefined;
+  if (subtle && typeof subtle.timingSafeEqual === 'function') {
+    return subtle.timingSafeEqual(a as BufferSource, b as BufferSource);
+  }
+  let diff = 0;
+  for (let i = 0; i < a.byteLength; i++) {
+    diff |= (a[i] ?? 0) ^ (b[i] ?? 0);
+  }
+  return diff === 0;
+}
+
+export async function computeSnapshotEtag(data: unknown): Promise<string> {
+  const digest = await sha256Bytes(JSON.stringify(data));
+  let hex = '';
+  for (let i = 0; i < 16 && i < digest.length; i++) {
+    hex += (digest[i] ?? 0).toString(16).padStart(2, '0');
+  }
+  return `W/"${hex}"`;
+}
+
+async function isAdminPinCached(pin: string): Promise<boolean> {
+  if (!cachedAdminPin) return false;
   if (Date.now() > cachedAdminPin.expiresAt) {
     cachedAdminPin = null;
     return false;
   }
-  return true;
+  const candidateDigest = await sha256Bytes(pin);
+  return timingSafeEqualBytes(cachedAdminPin.digest, candidateDigest);
 }
 
-function cacheVerifiedAdminPin(pin: string): void {
-  cachedAdminPin = { pin, expiresAt: Date.now() + ADMIN_PIN_CACHE_TTL_MS };
+async function cacheVerifiedAdminPin(pin: string): Promise<void> {
+  const digest = await sha256Bytes(pin);
+  cachedAdminPin = { digest, expiresAt: Date.now() + ADMIN_PIN_CACHE_TTL_MS };
+}
+
+function getCachedMutationResult(mutationKey: string): Record<string, unknown> | null {
+  const entry = completedMutations.get(mutationKey);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    completedMutations.delete(mutationKey);
+    return null;
+  }
+  return entry.result;
+}
+
+function recordCompletedMutation(mutationKey: string, result: Record<string, unknown>): void {
+  if (!completedMutations.has(mutationKey) && completedMutations.size >= MAX_TRACKED_MUTATION_IDS) {
+    const oldestKey = completedMutations.keys().next().value;
+    if (oldestKey !== undefined) {
+      completedMutations.delete(oldestKey);
+    }
+  }
+  completedMutations.set(mutationKey, {
+    result,
+    expiresAt: Date.now() + MUTATION_IDEMPOTENCY_TTL_MS,
+  });
 }
 
 function isClientPinLocked(clientKey: string): boolean {
@@ -278,7 +344,7 @@ export async function executeHyperdriveAction(
         if (isClientPinLocked(clientKey)) {
           return { ok: false, error: PIN_LOCKOUT_ERROR };
         }
-        if (!useEdgePinCache || !isAdminPinCached(pin)) {
+        if (!useEdgePinCache || !(await isAdminPinCached(pin))) {
           const pinRows = await sql<Array<{ res: { ok?: boolean } }>>`
             SELECT public.rpc_verify_role_pin('OWNER_ADMIN', ${pin}::text) AS res
           `;
@@ -287,14 +353,30 @@ export async function executeHyperdriveAction(
             return { ok: false, error: 'PIN Admin tidak valid atau sesi telah berakhir.' };
           }
           pinFailuresByClient.delete(clientKey);
-          if (useEdgePinCache) cacheVerifiedAdminPin(pin);
+          if (useEdgePinCache) await cacheVerifiedAdminPin(pin);
+        }
+      }
+
+      const rawMutationId = typeof payload.clientMutationId === 'string' ? payload.clientMutationId.trim() : '';
+      const mutationKey =
+        payload.action !== 'verify_role_pin' && rawMutationId ? `${payload.action}:${rawMutationId}` : '';
+      if (mutationKey) {
+        const cachedMutation = getCachedMutationResult(mutationKey);
+        if (cachedMutation) {
+          return { ...cachedMutation, deduplicated: true };
         }
       }
 
       const attachSnapshot = async (res: Record<string, unknown>): Promise<Record<string, unknown>> => {
-        if (!res.ok || !payload.includeSnapshot) return res;
-        const snapshot = await fetchMbgSnapshotFromSql(sql);
-        return { ...res, snapshot };
+        let finalRes = res;
+        if (res.ok && payload.includeSnapshot) {
+          const snapshot = await fetchMbgSnapshotFromSql(sql);
+          finalRes = { ...res, snapshot };
+        }
+        if (finalRes.ok && mutationKey) {
+          recordCompletedMutation(mutationKey, finalRes);
+        }
+        return finalRes;
       };
 
       switch (payload.action) {
@@ -543,7 +625,7 @@ export async function executeHyperdriveAction(
           }
           pinFailuresByClient.delete(clientKey);
           if (payload.role === 'OWNER_ADMIN' && useEdgePinCache) {
-            cacheVerifiedAdminPin(String(payload.pin ?? '').trim());
+            await cacheVerifiedAdminPin(String(payload.pin ?? '').trim());
           }
           return { ok: true };
         }

@@ -437,17 +437,154 @@ type HyperdriveEndpointState = 'unknown' | 'active' | 'unavailable';
 let hyperdriveEndpointState: HyperdriveEndpointState = 'unknown';
 let verifiedAdminPin: string | null = null;
 let latestHyperdriveSnapshot: MbgData | null = null;
+let latestSnapshotEtag: string | null = null;
 
 const SWR_STORAGE_KEY = 'mbg_swr_snapshot_v1';
+const SWR_ETAG_KEY = 'mbg_swr_etag_v1';
+const OFFLINE_OUTBOX_KEY = 'mbg_offline_outbox_v1';
+const MAX_OFFLINE_OUTBOX_ITEMS = 64;
+
+export interface OfflineOutboxItem {
+  clientMutationId: string;
+  action: string;
+  body: Record<string, unknown>;
+  queuedAt: string;
+}
 
 export function setHyperdriveEndpointStateForTest(state: HyperdriveEndpointState): void {
   hyperdriveEndpointState = state;
+  if (state === 'unknown') {
+    latestSnapshotEtag = null;
+  }
 }
 
 export function consumeLatestHyperdriveSnapshot(): MbgData | null {
   const snap = latestHyperdriveSnapshot;
   latestHyperdriveSnapshot = null;
   return snap;
+}
+
+function getStoredEtag(): string | null {
+  if (latestSnapshotEtag) return latestSnapshotEtag;
+  if (typeof window === 'undefined') return null;
+  try {
+    return window.sessionStorage.getItem(SWR_ETAG_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function setStoredEtag(etag: string | null | undefined): void {
+  const clean = typeof etag === 'string' ? etag.trim() : '';
+  if (!clean) return;
+  latestSnapshotEtag = clean;
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(SWR_ETAG_KEY, clean);
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+function createClientMutationId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `mut-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+export function readOfflineOutbox(): OfflineOutboxItem[] {
+  if (typeof window === 'undefined') return [];
+  try {
+    const raw = window.localStorage.getItem(OFFLINE_OUTBOX_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as unknown;
+    return Array.isArray(parsed) ? (parsed as OfflineOutboxItem[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeOfflineOutbox(items: OfflineOutboxItem[]): void {
+  if (typeof window === 'undefined') return;
+  try {
+    if (items.length === 0) {
+      window.localStorage.removeItem(OFFLINE_OUTBOX_KEY);
+    } else {
+      window.localStorage.setItem(
+        OFFLINE_OUTBOX_KEY,
+        JSON.stringify(items.slice(-MAX_OFFLINE_OUTBOX_ITEMS))
+      );
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function enqueueOfflineMutation(body: Record<string, unknown>): OfflineOutboxItem {
+  const clientMutationId =
+    typeof body.clientMutationId === 'string' && body.clientMutationId.trim()
+      ? body.clientMutationId.trim()
+      : createClientMutationId();
+  const sanitizedBody: Record<string, unknown> = { ...body, clientMutationId };
+  delete sanitizedBody.adminPin;
+  const item: OfflineOutboxItem = {
+    clientMutationId,
+    action: String(body.action ?? 'mutation'),
+    body: sanitizedBody,
+    queuedAt: new Date().toISOString(),
+  };
+  const current = readOfflineOutbox().filter((x) => x.clientMutationId !== clientMutationId);
+  current.push(item);
+  writeOfflineOutbox(current);
+  return item;
+}
+
+export async function flushOfflineOutbox(): Promise<{ flushed: number; remaining: number }> {
+  const queue = readOfflineOutbox();
+  if (queue.length === 0) return { flushed: 0, remaining: 0 };
+  const adminPin = getActiveAdminPin();
+  if (!adminPin) return { flushed: 0, remaining: queue.length };
+
+  const remaining: OfflineOutboxItem[] = [];
+  let flushed = 0;
+
+  for (const item of queue) {
+    try {
+      const res = await fetch('/api/hyperdrive', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-admin-pin': adminPin,
+        },
+        body: JSON.stringify({
+          ...item.body,
+          clientMutationId: item.clientMutationId,
+          includeSnapshot: true,
+          adminPin,
+        }),
+      });
+      if (res.ok) {
+        const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+        if (json.ok) {
+          flushed++;
+          const nextEtag = res.headers.get('etag') ?? (typeof json.etag === 'string' ? json.etag : null);
+          setStoredEtag(nextEtag);
+          if (json.snapshot && typeof json.snapshot === 'object') {
+            latestHyperdriveSnapshot = json.snapshot as MbgData;
+            writeSwrSnapshot(latestHyperdriveSnapshot);
+          }
+          continue;
+        }
+      }
+      remaining.push(item);
+    } catch {
+      remaining.push(item);
+    }
+  }
+
+  writeOfflineOutbox(remaining);
+  return { flushed, remaining: remaining.length };
 }
 
 export function readSwrSnapshot(): MbgData | null {
@@ -503,14 +640,24 @@ async function postHyperdriveAction(
   body: Record<string, unknown>
 ): Promise<{ handled: false } | { handled: true; data: Record<string, unknown> }> {
   if (!shouldTryHyperdrive(true)) return { handled: false };
+  const isVerifyPin = body.action === 'verify_role_pin';
+  const clientMutationId = isVerifyPin
+    ? undefined
+    : typeof body.clientMutationId === 'string' && body.clientMutationId.trim()
+      ? body.clientMutationId.trim()
+      : createClientMutationId();
   try {
-    const isVerifyPin = body.action === 'verify_role_pin';
     const adminPin = isVerifyPin ? undefined : getActiveAdminPin();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (adminPin) headers['x-admin-pin'] = adminPin;
     const payload: Record<string, unknown> = isVerifyPin
       ? body
-      : { ...body, includeSnapshot: true, ...(adminPin ? { adminPin } : {}) };
+      : {
+          ...body,
+          clientMutationId,
+          includeSnapshot: true,
+          ...(adminPin ? { adminPin } : {}),
+        };
     const res = await fetch('/api/hyperdrive', {
       method: 'POST',
       headers,
@@ -521,12 +668,17 @@ async function postHyperdriveAction(
       return { handled: false };
     }
     const json = (await res.json()) as Record<string, unknown>;
+    const nextEtag = res.headers.get('etag') ?? (typeof json.etag === 'string' ? json.etag : null);
+    setStoredEtag(nextEtag);
     if (json.ok && json.snapshot && typeof json.snapshot === 'object') {
       latestHyperdriveSnapshot = json.snapshot as MbgData;
       writeSwrSnapshot(latestHyperdriveSnapshot);
     }
     return { handled: true, data: json };
   } catch {
+    if (!isVerifyPin && typeof navigator !== 'undefined' && navigator.onLine === false) {
+      enqueueOfflineMutation({ ...body, clientMutationId });
+    }
     return { handled: false };
   }
 }
@@ -877,13 +1029,27 @@ export async function verifyRolePinRpc(
 export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promise<MbgData | null> {
   if (shouldTryHyperdrive(false)) {
     try {
-      const res = await fetch('/api/hyperdrive', { method: 'GET', cache: 'no-store' });
+      const cachedSnap = readSwrSnapshot();
+      const knownEtag = cachedSnap ? getStoredEtag() : null;
+      const headers: Record<string, string> = {};
+      if (knownEtag) {
+        headers['If-None-Match'] = knownEtag;
+      }
+      const res = await fetch('/api/hyperdrive', {
+        method: 'GET',
+        cache: 'no-store',
+        ...(knownEtag ? { headers } : {}),
+      });
       if (res.status === 503) {
         hyperdriveEndpointState = 'unavailable';
+      } else if (res.status === 304 && cachedSnap) {
+        hyperdriveEndpointState = 'active';
+        return cachedSnap;
       } else if (res.ok) {
-        const json = (await res.json()) as { ok?: boolean; data?: MbgData };
+        const json = (await res.json()) as { ok?: boolean; etag?: string; data?: MbgData };
         if (json.ok && json.data) {
           hyperdriveEndpointState = 'active';
+          setStoredEtag(res.headers.get('etag') ?? json.etag);
           writeSwrSnapshot(json.data);
           return json.data;
         }
@@ -991,6 +1157,19 @@ export function subscribeToMbgRealtime(
   onStatusChange?: (connected: boolean) => void
 ): () => void {
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let edgeWs: WebSocket | null = null;
+  let edgeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let edgePingInterval: ReturnType<typeof setInterval> | null = null;
+  let disposed = false;
+  let supabaseConnected = false;
+  let edgeConnected = false;
+
+  const notifyStatus = () => {
+    if (onStatusChange) {
+      onStatusChange(supabaseConnected || edgeConnected);
+    }
+  };
+
   const debouncedChange = () => {
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
@@ -998,6 +1177,92 @@ export function subscribeToMbgRealtime(
       onRemoteChange();
     }, 250);
   };
+
+  const handleOnline = () => {
+    void flushOfflineOutbox().then(({ flushed }) => {
+      if (flushed > 0) debouncedChange();
+    });
+  };
+
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('online', handleOnline);
+  }
+
+  const connectEdgeWebSocket = () => {
+    if (
+      disposed ||
+      typeof window === 'undefined' ||
+      typeof WebSocket === 'undefined' ||
+      !window.location?.host
+    ) {
+      return;
+    }
+    try {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const ws = new WebSocket(`${protocol}//${window.location.host}/api/ws`);
+      edgeWs = ws;
+
+      ws.onopen = () => {
+        if (disposed) {
+          ws.close();
+          return;
+        }
+        edgeConnected = true;
+        notifyStatus();
+        handleOnline();
+      };
+
+      ws.onmessage = (event) => {
+        if (typeof event.data !== 'string') return;
+        try {
+          const msg = JSON.parse(event.data) as {
+            type?: string;
+            etag?: string;
+          };
+          if (msg.type === 'mutation' || msg.type === 'document_uploaded') {
+            if (msg.etag && msg.etag !== getStoredEtag()) {
+              debouncedChange();
+            } else if (!msg.etag) {
+              debouncedChange();
+            }
+          }
+        } catch {
+          // Ignore malformed WS message
+        }
+      };
+
+      ws.onclose = () => {
+        edgeConnected = false;
+        notifyStatus();
+        if (!disposed) {
+          edgeReconnectTimer = setTimeout(connectEdgeWebSocket, 4000);
+        }
+      };
+
+      ws.onerror = () => {
+        try {
+          ws.close();
+        } catch {
+          // Ignore close error
+        }
+      };
+    } catch {
+      // WebSocket unavailable in current environment
+    }
+  };
+
+  connectEdgeWebSocket();
+  if (typeof window !== 'undefined') {
+    edgePingInterval = setInterval(() => {
+      if (edgeWs && edgeWs.readyState === WebSocket.OPEN) {
+        try {
+          edgeWs.send('ping');
+        } catch {
+          // Ignore send failure
+        }
+      }
+    }, 45000);
+  }
 
   const channel = supabase
     .channel('mbg-order-driven-realtime')
@@ -1010,13 +1275,26 @@ export function subscribeToMbgRealtime(
     .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, debouncedChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_payout_batches' }, debouncedChange)
     .subscribe((status) => {
-      if (onStatusChange) {
-        onStatusChange(status === 'SUBSCRIBED');
-      }
+      supabaseConnected = status === 'SUBSCRIBED';
+      notifyStatus();
     });
 
   return () => {
+    disposed = true;
     if (debounceTimer) clearTimeout(debounceTimer);
+    if (edgeReconnectTimer) clearTimeout(edgeReconnectTimer);
+    if (edgePingInterval) clearInterval(edgePingInterval);
+    if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+      window.removeEventListener('online', handleOnline);
+    }
+    if (edgeWs) {
+      try {
+        edgeWs.close(1000, 'Unsubscribed');
+      } catch {
+        // Ignore close error
+      }
+      edgeWs = null;
+    }
     void supabase.removeChannel(channel);
   };
 }

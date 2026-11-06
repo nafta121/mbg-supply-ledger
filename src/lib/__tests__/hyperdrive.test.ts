@@ -1,11 +1,14 @@
 import type { Sql } from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import worker, { type DurableObjectStateLike, MbgSyncHub } from '../../worker';
 import {
+  computeSnapshotEtag,
   executeHyperdriveAction,
   isHyperdriveConfigured,
   queryMbgDataViaHyperdrive,
   resetHyperdrivePinGuardForTest,
   resolveHyperdriveConnectionString,
+  timingSafeEqualBytes,
 } from '../hyperdrive';
 import { createInitialSeedState, toSupabaseRows } from './seed-fixture';
 
@@ -149,5 +152,138 @@ describe('Cloudflare Hyperdrive Security & Scale Hardening', () => {
     );
     expect(unlockedRes).toEqual({ ok: true });
     expect(sqlMock).toHaveBeenCalledTimes(5 + 256 + 1);
+  });
+
+  it('deduplicates retried mutations with identical clientMutationId without re-running SQL mutation', async () => {
+    const sqlMock = vi
+      .fn()
+      // 1st call: PIN verification
+      .mockResolvedValueOnce([{ res: { ok: true } }])
+      // 2nd call: mark_invoice_paid RPC
+      .mockResolvedValueOnce([{ ok: true }])
+      // 3rd call: PIN verification on retry (when sqlFactory is provided)
+      .mockResolvedValueOnce([{ res: { ok: true } }]);
+
+    const fakeSql = Object.assign(sqlMock, {
+      end: vi.fn().mockResolvedValue(undefined),
+    }) as unknown as Sql;
+
+    const firstRes = await executeHyperdriveAction(
+      {
+        action: 'mark_invoice_paid',
+        invoiceId: 'inv-01',
+        adminPin: '1122',
+        clientMutationId: 'mut-retry-001',
+      },
+      hdEnv,
+      () => fakeSql
+    );
+    expect(firstRes).toEqual({ ok: true });
+    expect(sqlMock).toHaveBeenCalledTimes(2);
+
+    const retryRes = await executeHyperdriveAction(
+      {
+        action: 'mark_invoice_paid',
+        invoiceId: 'inv-01',
+        adminPin: '1122',
+        clientMutationId: 'mut-retry-001',
+      },
+      hdEnv,
+      () => fakeSql
+    );
+    expect(retryRes).toEqual({ ok: true, deduplicated: true });
+    // Only PIN check ran; mark_invoice_paid SQL was NOT executed a second time
+    expect(sqlMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('computes deterministic SHA-256 weak ETag and performs constant-time byte comparisons', async () => {
+    const etagA = await computeSnapshotEtag({ a: 1, b: [2, 3] });
+    const etagB = await computeSnapshotEtag({ a: 1, b: [2, 3] });
+    const etagC = await computeSnapshotEtag({ a: 1, b: [2, 4] });
+
+    expect(etagA).toMatch(/^W\/"[0-9a-f]{32}"$/);
+    expect(etagA).toBe(etagB);
+    expect(etagA).not.toBe(etagC);
+
+    const buf1 = new Uint8Array([1, 2, 3, 4]);
+    const buf2 = new Uint8Array([1, 2, 3, 4]);
+    const buf3 = new Uint8Array([1, 2, 3, 5]);
+    expect(timingSafeEqualBytes(buf1, buf2)).toBe(true);
+    expect(timingSafeEqualBytes(buf1, buf3)).toBe(false);
+  });
+
+  it('coordinates real-time broadcasts, APK version manifest, and documents in MbgSyncHub Durable Object', async () => {
+    const sentMessages: string[] = [];
+    const fakeWs = {
+      send: vi.fn((msg: string) => sentMessages.push(msg)),
+      close: vi.fn(),
+    } as unknown as WebSocket;
+
+    const fakeState: DurableObjectStateLike = {
+      storage: {
+        sql: {
+          exec: vi.fn(() => ({
+            toArray: () => [
+              {
+                version: 2,
+                last_action: 'mark_invoice_paid',
+                etag: 'W/"abc"',
+                updated_at: '2026-11-06T12:00:00.000Z',
+                version_code: 2,
+                version_name: '1.1.0',
+                download_url: 'https://mbg.letsgrow.web.id/apk/mbg-v1.1.0.apk',
+                sha256: 'deadbeef',
+                release_notes: 'Peningkatan sinkronisasi real-time',
+                mandatory: 1,
+                published_at: '2026-11-06T12:00:00.000Z',
+              },
+            ],
+            [Symbol.iterator]: function* () {
+              // empty iterator
+            },
+          })) as unknown as DurableObjectStateLike["storage"]["sql"]["exec"],
+        },
+      },
+      acceptWebSocket: vi.fn(),
+      getWebSockets: vi.fn(() => [fakeWs]),
+      blockConcurrencyWhile: vi.fn(async (cb) => cb()),
+    };
+
+    const hub = new MbgSyncHub(fakeState, hdEnv);
+
+    // 1. Broadcast mutation to connected WebSocket clients
+    const broadcastRes = await hub.fetch(
+      new Request('https://mbg-sync-hub.internal/broadcast', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'mark_invoice_paid', etag: 'W/"abc"' }),
+      })
+    );
+    const broadcastJson = (await broadcastRes.json()) as { ok: boolean; clients: number };
+    expect(broadcastJson.ok).toBe(true);
+    expect(broadcastJson.clients).toBe(1);
+    expect(sentMessages).toHaveLength(1);
+    expect(JSON.parse(sentMessages[0] ?? '{}')).toMatchObject({
+      type: 'mutation',
+      action: 'mark_invoice_paid',
+      etag: 'W/"abc"',
+    });
+
+    // 2. Query APK manifest via Worker /api/apk/version
+    const apkRes = await worker.fetch(new Request('https://mbg.letsgrow.web.id/api/apk/version'), {
+      ...hdEnv,
+      MBG_SYNC_HUB: {
+        idFromName: () => 'global-id',
+        get: () => hub,
+        getByName: () => hub,
+      },
+    });
+    const apkJson = (await apkRes.json()) as {
+      ok: boolean;
+      apk: { versionCode: number; versionName: string; mandatory: boolean };
+    };
+    expect(apkJson.ok).toBe(true);
+    expect(apkJson.apk.versionCode).toBe(2);
+    expect(apkJson.apk.versionName).toBe('1.1.0');
+    expect(apkJson.apk.mandatory).toBe(true);
   });
 });

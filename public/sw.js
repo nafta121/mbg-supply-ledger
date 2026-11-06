@@ -1,5 +1,5 @@
-const CACHE_NAME = 'mbg-ledger-shell-v2';
-const STATIC_SHELL_ASSETS = new Set(['/manifest.webmanifest', '/icon-192.png', '/icon-512.png']);
+const CACHE_NAME = 'mbg-ledger-shell-v3';
+const STATIC_SHELL_ASSETS = new Set(['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png']);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -25,8 +25,29 @@ self.addEventListener('fetch', (event) => {
   if (req.method !== 'GET') return;
 
   const url = new URL(req.url);
-  // Only cache static PWA shell assets; never cache HTML or Next.js JS chunks forever
-  if (url.origin !== self.location.origin || !STATIC_SHELL_ASSETS.has(url.pathname)) return;
+  if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith('/api/')) return;
+
+  // Network-First with offline shell fallback for HTML page navigations
+  if (req.mode === 'navigate') {
+    event.respondWith(
+      fetch(req)
+        .then((res) => {
+          if (res && res.status === 200 && res.type === 'basic') {
+            const clone = res.clone();
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone)).catch(() => undefined);
+          }
+          return res;
+        })
+        .catch(() => caches.match(req).then((cached) => cached || caches.match('/')))
+    );
+    return;
+  }
+
+  // Cache-First for immutable Next.js hashed assets (/_next/static/*) and PWA shell icons
+  const isImmutableAsset =
+    url.pathname.startsWith('/_next/static/') || STATIC_SHELL_ASSETS.has(url.pathname);
+  if (!isImmutableAsset) return;
 
   event.respondWith(
     caches.match(req).then(

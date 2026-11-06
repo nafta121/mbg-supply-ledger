@@ -7,12 +7,35 @@ compatibility_flags = ["nodejs_compat"]
 [assets]
 directory = "./out"
 binding = "ASSETS"
+html_handling = "auto-trailing-slash"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
 
 [observability]
 enabled = true
 
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[observability.traces]
+enabled = true
+head_sampling_rate = 0.2
+persist = true
+
 [placement]
-mode = "smart"
+mode = "targeted"
+region = "aws:ap-southeast-1"
+
+[[durable_objects.bindings]]
+name = "MBG_SYNC_HUB"
+class_name = "MbgSyncHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["MbgSyncHub"]
 
 # ==============================================================================
 # Cloudflare Hyperdrive Configuration (Supabase PostgreSQL Pooler & Query Cache)
