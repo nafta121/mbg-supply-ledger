@@ -29,6 +29,7 @@ import {
 } from './order-engine';
 import { getSupabaseClient, isSupabaseConfigured } from './supabase';
 import {
+  consumeLatestHyperdriveSnapshot,
   deleteKitchenFromSupabase,
   deleteKitchenOrderFromSupabase,
   deleteOrderItemFromSupabase,
@@ -36,12 +37,14 @@ import {
   executeProfitPayoutRpc,
   fetchMbgDataFromSupabase,
   markInvoicePaidRpc,
+  readSwrSnapshot,
   subscribeToMbgRealtime,
   updateAppSettingsRpc,
   updateKitchenOrderRpc,
   upsertKitchenInSupabase,
   upsertKitchenOrderRpc,
   upsertProductInSupabase,
+  writeSwrSnapshot,
 } from './supabase-sync';
 import { getJakartaTodayYmd } from './ui-format';
 
@@ -266,6 +269,9 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   const commit = useCallback((next: MbgState) => {
     stateRef.current = next;
     setState(next);
+    if (next.kitchens.length > 0 || next.deliveries.length > 0) {
+      writeSwrSnapshot(next);
+    }
   }, []);
 
   const pullFromSupabase = useCallback(
@@ -293,12 +299,33 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     [commit]
   );
 
+  /**
+   * Reconciles local state with the authoritative server snapshot returned inside a single-hop
+   * `POST /api/hyperdrive` response, falling back to `pullFromSupabase()` only when needed.
+   */
+  const reconcileAfterMutation = useCallback(async () => {
+    const inlineSnapshot = consumeLatestHyperdriveSnapshot();
+    if (inlineSnapshot) {
+      lastPullAtRef.current = Date.now();
+      commit({
+        ...stateRef.current,
+        ...inlineSnapshot,
+      });
+      setIsSupabaseLive(true);
+      return;
+    }
+    await pullFromSupabase();
+  }, [commit, pullFromSupabase]);
+
   const handleCloudError = useCallback(
-    (message: string, roleOverride?: UserRole) => {
+    (message: string, rollbackState?: MbgState, roleOverride?: UserRole) => {
+      if (rollbackState) {
+        commit(rollbackState);
+      }
       setSyncError(message);
       void pullFromSupabase(roleOverride);
     },
-    [pullFromSupabase]
+    [commit, pullFromSupabase]
   );
 
   useEffect(() => {
@@ -306,8 +333,26 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false);
       return;
     }
+    // Instant SWR hydration (< 15 ms perceived cold load) while revalidating from Hyperdrive in background
+    const swrCached = readSwrSnapshot();
+    if (swrCached) {
+      stateRef.current = { ...stateRef.current, ...swrCached };
+      setState(stateRef.current);
+      setIsLoading(false);
+    }
+
     const supabase = getSupabaseClient();
     void pullFromSupabase();
+
+    const onVisibilityOrFocus = () => {
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+      if (isSyncingRef.current || Date.now() - lastPullAtRef.current < 15_000) return;
+      void pullFromSupabase();
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('focus', onVisibilityOrFocus);
+      document.addEventListener('visibilitychange', onVisibilityOrFocus);
+    }
 
     const unsubscribe = subscribeToMbgRealtime(
       supabase,
@@ -322,6 +367,10 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     );
 
     return () => {
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('focus', onVisibilityOrFocus);
+        document.removeEventListener('visibilitychange', onVisibilityOrFocus);
+      }
       unsubscribe();
     };
   }, [pullFromSupabase]);
@@ -346,11 +395,13 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    * which invokes `fn_recalculate_order_financials` on the server and returns authoritative totals.
    */
   const createOrder = async (input: CreateOrderInput): Promise<ActionResult> => {
-    const precheck = createKitchenOrder(stateRef.current, input, runtimeCtx());
+    const prevState = stateRef.current;
+    const precheck = createKitchenOrder(prevState, input, runtimeCtx());
     if (!precheck.ok) return { ok: false, error: precheck.error };
 
+    // 0ms Optimistic UI commit
+    commit(precheck.data);
     if (!isSupabaseConfigured) {
-      commit(precheck.data);
       return { ok: true, merged: precheck.merged, count: precheck.count };
     }
 
@@ -361,14 +412,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const orderDate = clean(input.order_date) || getJakartaTodayYmd();
       const rpcRes = await upsertKitchenOrderRpc(supabase, input, orderDate);
       if (!rpcRes.ok) {
-        handleCloudError(`Gagal menyimpan order: ${rpcRes.error}`);
+        handleCloudError(`Gagal menyimpan order: ${rpcRes.error}`, prevState);
         return { ok: false, error: rpcRes.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true, merged: rpcRes.merged, count: rpcRes.count };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menyimpan order ke Supabase.';
-      handleCloudError(`Gagal menyimpan order: ${msg}`);
+      handleCloudError(`Gagal menyimpan order: ${msg}`, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -380,11 +431,13 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    * via `rpc_update_kitchen_order`.
    */
   const updateOrder = async (input: UpdateOrderInput): Promise<ActionResult> => {
-    const precheck = updateKitchenOrder(stateRef.current, input, runtimeCtx());
+    const prevState = stateRef.current;
+    const precheck = updateKitchenOrder(prevState, input, runtimeCtx());
     if (!precheck.ok) return { ok: false, error: precheck.error };
 
+    // 0ms Optimistic UI commit
+    commit(precheck.data);
     if (!isSupabaseConfigured) {
-      commit(precheck.data);
       return { ok: true, count: precheck.count };
     }
 
@@ -394,14 +447,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const supabase = getSupabaseClient();
       const rpcRes = await updateKitchenOrderRpc(supabase, input);
       if (!rpcRes.ok) {
-        handleCloudError(`Gagal memperbarui order/invoice: ${rpcRes.error}`);
+        handleCloudError(`Gagal memperbarui order/invoice: ${rpcRes.error}`, prevState);
         return { ok: false, error: rpcRes.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true, count: rpcRes.count };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal memperbarui order/invoice di Supabase.';
-      handleCloudError(`Gagal memperbarui order/invoice: ${msg}`);
+      handleCloudError(`Gagal memperbarui order/invoice: ${msg}`, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -409,12 +462,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   };
 
   const removeOrderLine = async (id: string): Promise<ActionResult> => {
-    const targetItem = stateRef.current.deliveryItems.find((d) => d.id === id);
-    const precheck = removeOrderLineEngine(stateRef.current, id, runtimeCtx().nowIso);
+    const prevState = stateRef.current;
+    const targetItem = prevState.deliveryItems.find((d) => d.id === id);
+    const precheck = removeOrderLineEngine(prevState, id, runtimeCtx().nowIso);
     if (!precheck.ok) return { ok: false, error: precheck.error };
 
+    // 0ms Optimistic UI commit
+    commit(precheck.data);
     if (!isSupabaseConfigured || !targetItem) {
-      commit(precheck.data);
       return { ok: true };
     }
 
@@ -423,19 +478,19 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     try {
       const supabase = getSupabaseClient();
       const isLastItem =
-        stateRef.current.deliveryItems.filter((d) => d.delivery_id === targetItem.delivery_id).length <= 1;
+        prevState.deliveryItems.filter((d) => d.delivery_id === targetItem.delivery_id).length <= 1;
       const delRes = isLastItem
         ? await deleteKitchenOrderFromSupabase(supabase, targetItem.delivery_id)
         : await deleteOrderItemFromSupabase(supabase, id);
       if (!delRes.ok) {
-        handleCloudError(`Gagal menghapus barang order: ${delRes.error}`);
+        handleCloudError(`Gagal menghapus barang order: ${delRes.error}`, prevState);
         return { ok: false, error: delRes.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menghapus barang order di Supabase.';
-      handleCloudError(`Gagal menghapus barang order: ${msg}`);
+      handleCloudError(`Gagal menghapus barang order: ${msg}`, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -443,11 +498,13 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteOrder = async (id: string): Promise<ActionResult> => {
-    const precheck = deleteKitchenOrder(stateRef.current, id);
+    const prevState = stateRef.current;
+    const precheck = deleteKitchenOrder(prevState, id);
     if (!precheck.ok) return { ok: false, error: precheck.error };
 
+    // 0ms Optimistic UI commit
+    commit(precheck.data);
     if (!isSupabaseConfigured) {
-      commit(precheck.data);
       return { ok: true };
     }
 
@@ -457,14 +514,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const supabase = getSupabaseClient();
       const delRes = await deleteKitchenOrderFromSupabase(supabase, id);
       if (!delRes.ok) {
-        handleCloudError(`Gagal menghapus order: ${delRes.error}`);
+        handleCloudError(`Gagal menghapus order: ${delRes.error}`, prevState);
         return { ok: false, error: delRes.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menghapus order di Supabase.';
-      handleCloudError(`Gagal menghapus order: ${msg}`);
+      handleCloudError(`Gagal menghapus order: ${msg}`, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -476,7 +533,8 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    */
   const markInvoicePaid = async (id: string): Promise<ActionResult> => {
     const nowIso = runtimeCtx().nowIso;
-    let baseState = stateRef.current;
+    const prevState = stateRef.current;
+    let baseState = prevState;
     const inv = baseState.invoices.find((i) => i.id === id);
     if (inv) {
       const unweighed = baseState.deliveryItems
@@ -490,8 +548,9 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     const precheck = markInvoicePaidEngine(baseState, id, nowIso);
     if (!precheck.ok) return { ok: false, error: precheck.error };
 
+    // 0ms Optimistic UI commit
+    commit(precheck.data);
     if (!isSupabaseConfigured) {
-      commit(precheck.data);
       return { ok: true };
     }
 
@@ -501,14 +560,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const supabase = getSupabaseClient();
       const rpcRes = await markInvoicePaidRpc(supabase, id);
       if (!rpcRes.ok) {
-        handleCloudError(`Gagal menandai invoice lunas: ${rpcRes.error}`);
+        handleCloudError(`Gagal menandai invoice lunas: ${rpcRes.error}`, prevState);
         return { ok: false, error: rpcRes.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menandai invoice lunas di Supabase.';
-      handleCloudError(`Gagal menandai invoice lunas: ${msg}`);
+      handleCloudError(`Gagal menandai invoice lunas: ${msg}`, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -520,11 +579,13 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    * all unpaid-out orders in PostgreSQL.
    */
   const updateProfitSplitPercentage = async (team: number, coop: number): Promise<ActionResult> => {
-    const precheck = updateProfitSplit(stateRef.current, team, coop, runtimeCtx().nowIso);
+    const prevState = stateRef.current;
+    const precheck = updateProfitSplit(prevState, team, coop, runtimeCtx().nowIso);
     if (!precheck.ok) return { ok: false, error: precheck.error };
 
+    // 0ms Optimistic UI commit
+    commit(precheck.data);
     if (!isSupabaseConfigured) {
-      commit(precheck.data);
       return { ok: true };
     }
 
@@ -537,14 +598,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         coopSharePct: coop,
       });
       if (!rpcRes.ok) {
-        handleCloudError(`Gagal memperbarui persentase bagi hasil: ${rpcRes.error}`);
+        handleCloudError(`Gagal memperbarui persentase bagi hasil: ${rpcRes.error}`, prevState);
         return { ok: false, error: rpcRes.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal memperbarui persentase bagi hasil di Supabase.';
-      handleCloudError(`Gagal memperbarui persentase bagi hasil: ${msg}`);
+      handleCloudError(`Gagal memperbarui persentase bagi hasil: ${msg}`, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -555,11 +616,13 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    * RPC #4: Executes profit payout via `rpc_execute_profit_payout`.
    */
   const executePayout = async (who: BeneficiaryType | 'BOTH', notes?: string): Promise<ActionResult> => {
-    const precheck = executePayoutEngine(stateRef.current, who, runtimeCtx(), notes);
+    const prevState = stateRef.current;
+    const precheck = executePayoutEngine(prevState, who, runtimeCtx(), notes);
     if (!precheck.ok) return { ok: false, error: precheck.error };
 
+    // 0ms Optimistic UI commit
+    commit(precheck.data);
     if (!isSupabaseConfigured) {
-      commit(precheck.data);
       return { ok: true, count: precheck.count };
     }
 
@@ -569,14 +632,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const supabase = getSupabaseClient();
       const rpcRes = await executeProfitPayoutRpc(supabase, who, null);
       if (!rpcRes.ok) {
-        handleCloudError(`Gagal mencairkan bagi hasil: ${rpcRes.error}`);
+        handleCloudError(`Gagal mencairkan bagi hasil: ${rpcRes.error}`, prevState);
         return { ok: false, error: rpcRes.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true, count: rpcRes.count };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal mencairkan bagi hasil di Supabase.';
-      handleCloudError(`Gagal mencairkan bagi hasil: ${msg}`);
+      handleCloudError(`Gagal mencairkan bagi hasil: ${msg}`, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -586,12 +649,13 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   const saveKitchen = async (input: KitchenMasterInput): Promise<MasterSaveResult> => {
     const error = validateKitchenInput(input);
     if (error) return { ok: false, error };
-    const s = stateRef.current;
-    const nextKitchens = upsertKitchenRecord(s.kitchens, input, new Date().toISOString());
+    const prevState = stateRef.current;
+    const nextKitchens = upsertKitchenRecord(prevState.kitchens, input, new Date().toISOString());
     const saved = input.id ? nextKitchens.find((k) => k.id === input.id) : nextKitchens[nextKitchens.length - 1];
 
+    // 0ms Optimistic UI commit
+    commit({ ...prevState, kitchens: nextKitchens });
     if (!isSupabaseConfigured || !saved) {
-      commit({ ...s, kitchens: nextKitchens });
       return { ok: true };
     }
 
@@ -601,14 +665,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const supabase = getSupabaseClient();
       const res = await upsertKitchenInSupabase(supabase, saved);
       if (!res.ok) {
-        handleCloudError(res.error);
+        handleCloudError(res.error, prevState);
         return { ok: false, error: res.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menyimpan dapur ke Supabase.';
-      handleCloudError(msg);
+      handleCloudError(msg, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -618,12 +682,13 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   const saveItem = async (input: ItemMasterInput): Promise<MasterSaveResult> => {
     const error = validateItemInput(input);
     if (error) return { ok: false, error };
-    const s = stateRef.current;
-    const nextItems = upsertItemRecord(s.items, input, new Date().toISOString());
+    const prevState = stateRef.current;
+    const nextItems = upsertItemRecord(prevState.items, input, new Date().toISOString());
     const saved = input.id ? nextItems.find((i) => i.id === input.id) : nextItems[nextItems.length - 1];
 
+    // 0ms Optimistic UI commit
+    commit({ ...prevState, items: nextItems });
     if (!isSupabaseConfigured || !saved) {
-      commit({ ...s, items: nextItems });
       return { ok: true };
     }
 
@@ -633,14 +698,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const supabase = getSupabaseClient();
       const res = await upsertProductInSupabase(supabase, saved);
       if (!res.ok) {
-        handleCloudError(res.error);
+        handleCloudError(res.error, prevState);
         return { ok: false, error: res.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menyimpan barang ke Supabase.';
-      handleCloudError(msg);
+      handleCloudError(msg, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -657,15 +722,15 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     if (!accountNumber) return { ok: false, error: 'Nomor Rekening wajib diisi.' };
     if (!accountHolder) return { ok: false, error: 'Atas Nama wajib diisi.' };
 
-    const s = stateRef.current;
+    const prevState = stateRef.current;
     const nextSplitConfig: ProfitSplitConfig = {
-      ...s.splitConfig,
+      ...prevState.splitConfig,
       supplier_name: supplierName,
       payment_bank_name: bankName,
       payment_account_number: accountNumber,
       payment_account_holder: accountHolder,
     };
-    const nextInvoices = s.invoices.map((inv) =>
+    const nextInvoices = prevState.invoices.map((inv) =>
       inv.payment_status === 'PAID'
         ? inv
         : {
@@ -676,7 +741,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
             payment_account_holder: accountHolder,
           }
     );
-    commit({ ...s, splitConfig: nextSplitConfig, invoices: nextInvoices });
+    commit({ ...prevState, splitConfig: nextSplitConfig, invoices: nextInvoices });
 
     if (!isSupabaseConfigured) {
       return { ok: true };
@@ -687,22 +752,22 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     try {
       const supabase = getSupabaseClient();
       const rpcRes = await updateAppSettingsRpc(supabase, {
-        teamSharePct: s.splitConfig.team_share_pct,
-        coopSharePct: s.splitConfig.cooperative_share_pct,
+        teamSharePct: prevState.splitConfig.team_share_pct,
+        coopSharePct: prevState.splitConfig.cooperative_share_pct,
         supplierName,
         bankName,
         accountNumber,
         accountHolder,
       });
       if (!rpcRes.ok) {
-        handleCloudError(`Gagal menyimpan rekening pembayaran: ${rpcRes.error}`);
+        handleCloudError(`Gagal menyimpan rekening pembayaran: ${rpcRes.error}`, prevState);
         return { ok: false, error: rpcRes.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menyimpan rekening pembayaran ke Supabase.';
-      handleCloudError(`Gagal menyimpan rekening pembayaran: ${msg}`);
+      handleCloudError(`Gagal menyimpan rekening pembayaran: ${msg}`, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -710,12 +775,12 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteKitchen = async (kitchenId: string): Promise<MasterSaveResult> => {
-    const s = stateRef.current;
-    if (s.deliveries.some((d) => d.kitchen_id === kitchenId)) {
+    const prevState = stateRef.current;
+    if (prevState.deliveries.some((d) => d.kitchen_id === kitchenId)) {
       return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki order aktif/histori.' };
     }
+    commit({ ...prevState, kitchens: prevState.kitchens.filter((k) => k.id !== kitchenId) });
     if (!isSupabaseConfigured) {
-      commit({ ...s, kitchens: s.kitchens.filter((k) => k.id !== kitchenId) });
       return { ok: true };
     }
 
@@ -725,14 +790,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const supabase = getSupabaseClient();
       const res = await deleteKitchenFromSupabase(supabase, kitchenId);
       if (!res.ok) {
-        handleCloudError(res.error);
+        handleCloudError(res.error, prevState);
         return { ok: false, error: res.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menghapus dapur di Supabase.';
-      handleCloudError(msg);
+      handleCloudError(msg, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);
@@ -740,12 +805,12 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   };
 
   const deleteItem = async (itemId: string): Promise<MasterSaveResult> => {
-    const s = stateRef.current;
-    if (s.deliveryItems.some((di) => di.item_id === itemId)) {
+    const prevState = stateRef.current;
+    if (prevState.deliveryItems.some((di) => di.item_id === itemId)) {
       return { ok: false, error: 'Barang tidak dapat dihapus karena sedang digunakan pada order dapur.' };
     }
+    commit({ ...prevState, items: prevState.items.filter((i) => i.id !== itemId) });
     if (!isSupabaseConfigured) {
-      commit({ ...s, items: s.items.filter((i) => i.id !== itemId) });
       return { ok: true };
     }
 
@@ -755,14 +820,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       const supabase = getSupabaseClient();
       const res = await deleteProductFromSupabase(supabase, itemId);
       if (!res.ok) {
-        handleCloudError(res.error);
+        handleCloudError(res.error, prevState);
         return { ok: false, error: res.error };
       }
-      await pullFromSupabase();
+      await reconcileAfterMutation();
       return { ok: true };
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Gagal menghapus barang di Supabase.';
-      handleCloudError(msg);
+      handleCloudError(msg, prevState);
       return { ok: false, error: msg };
     } finally {
       setSyncing(false);

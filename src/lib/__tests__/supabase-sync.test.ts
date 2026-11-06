@@ -332,6 +332,37 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
     expect(lockedDelRes.ok).toBe(false);
     expect(String(lockedDelRes.error)).toMatch(/dikunci/i);
 
+    // 5. Single-hop includeSnapshot returns authoritative MbgData snapshot over the same socket
+    const singleHopEndMock = vi.fn().mockResolvedValue(undefined);
+    const singleHopSql = Object.assign(
+      vi
+        .fn()
+        .mockResolvedValueOnce([{ res: { ok: true } }])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([
+          {
+            kitchens: rows.kitchens,
+            products: rows.products,
+            orders: rows.orders,
+            orderItems: rows.orderItems,
+            invoices: rows.invoices,
+            ledgerEntries: rows.ledgerEntries,
+            appSettings: [rows.appSettings],
+            payoutBatches: rows.payoutBatches,
+          },
+        ]),
+      { end: singleHopEndMock }
+    ) as unknown as Sql;
+
+    const singleHopRes = await executeHyperdriveAction(
+      { action: 'mark_invoice_paid', invoiceId: 'inv-01', adminPin: '1122', includeSnapshot: true },
+      hdEnv,
+      () => singleHopSql
+    );
+    expect(singleHopRes.ok).toBe(true);
+    expect((singleHopRes.snapshot as { kitchens: unknown[] }).kitchens).toHaveLength(25);
+    expect(singleHopEndMock).toHaveBeenCalledTimes(1);
+
     setHyperdriveEndpointStateForTest('unknown');
   });
 });

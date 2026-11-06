@@ -401,6 +401,9 @@ export function fromSupabaseRows(rows: {
 type HyperdriveEndpointState = 'unknown' | 'active' | 'unavailable';
 let hyperdriveEndpointState: HyperdriveEndpointState = 'unknown';
 let verifiedAdminPin: string | null = null;
+let latestHyperdriveSnapshot: MbgData | null = null;
+
+const SWR_STORAGE_KEY = 'mbg_swr_snapshot_v1';
 
 export function setHyperdriveEndpointStateForTest(state: HyperdriveEndpointState): void {
   hyperdriveEndpointState = state;
@@ -408,6 +411,46 @@ export function setHyperdriveEndpointStateForTest(state: HyperdriveEndpointState
 
 export function setVerifiedAdminPinForTest(pin: string | null): void {
   verifiedAdminPin = pin;
+}
+
+export function consumeLatestHyperdriveSnapshot(): MbgData | null {
+  const snap = latestHyperdriveSnapshot;
+  latestHyperdriveSnapshot = null;
+  return snap;
+}
+
+export function readSwrSnapshot(): MbgData | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.sessionStorage.getItem(SWR_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as MbgData;
+    if (!parsed || !Array.isArray(parsed.kitchens) || !Array.isArray(parsed.deliveries)) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function writeSwrSnapshot(data: MbgData): void {
+  if (typeof window === 'undefined') return;
+  try {
+    window.sessionStorage.setItem(
+      SWR_STORAGE_KEY,
+      JSON.stringify({
+        kitchens: data.kitchens,
+        items: data.items,
+        deliveries: data.deliveries,
+        deliveryItems: data.deliveryItems,
+        invoices: data.invoices,
+        splitConfig: data.splitConfig,
+        ledgerEntries: data.ledgerEntries,
+        payoutBatches: data.payoutBatches,
+      })
+    );
+  } catch {
+    // Ignore storage quota errors
+  }
 }
 
 function getActiveAdminPin(): string | undefined {
@@ -430,19 +473,27 @@ async function postHyperdriveAction(
 ): Promise<{ handled: false } | { handled: true; data: Record<string, unknown> }> {
   if (!shouldTryHyperdrive(true)) return { handled: false };
   try {
-    const adminPin = body.action === 'verify_role_pin' ? undefined : getActiveAdminPin();
+    const isVerifyPin = body.action === 'verify_role_pin';
+    const adminPin = isVerifyPin ? undefined : getActiveAdminPin();
     const headers: Record<string, string> = { 'Content-Type': 'application/json' };
     if (adminPin) headers['x-admin-pin'] = adminPin;
+    const payload: Record<string, unknown> = isVerifyPin
+      ? body
+      : { ...body, includeSnapshot: true, ...(adminPin ? { adminPin } : {}) };
     const res = await fetch('/api/hyperdrive', {
       method: 'POST',
       headers,
-      body: JSON.stringify(adminPin ? { ...body, adminPin } : body),
+      body: JSON.stringify(payload),
     });
     if (res.status === 503) {
       hyperdriveEndpointState = 'unavailable';
       return { handled: false };
     }
     const json = (await res.json()) as Record<string, unknown>;
+    if (json.ok && json.snapshot && typeof json.snapshot === 'object') {
+      latestHyperdriveSnapshot = json.snapshot as MbgData;
+      writeSwrSnapshot(latestHyperdriveSnapshot);
+    }
     return { handled: true, data: json };
   } catch {
     return { handled: false };
@@ -818,6 +869,7 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
         const json = (await res.json()) as { ok?: boolean; data?: MbgData };
         if (json.ok && json.data) {
           hyperdriveEndpointState = 'active';
+          writeSwrSnapshot(json.data);
           return json.data;
         }
       }

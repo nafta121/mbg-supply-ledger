@@ -111,53 +111,51 @@ export async function withHyperdriveSql<T>(
 }
 
 /**
- * Queries all relational tables in a single SQL round-trip over 1 Hyperdrive socket and maps them to `MbgData`.
- * Never selects `admin_pin` or `coop_pin` from `public.app_settings`.
+ * Queries all relational tables in a single SQL round-trip over an existing Hyperdrive `sql` socket
+ * and maps them to `MbgData`. Never selects `admin_pin` or `coop_pin` from `public.app_settings`.
  */
+export async function fetchMbgSnapshotFromSql(sql: Sql): Promise<MbgData> {
+  const rows = await sql<
+    Array<{
+      kitchens: KitchenRow[];
+      products: ProductRow[];
+      orders: KitchenOrderRow[];
+      orderItems: KitchenOrderItemRow[];
+      invoices: KitchenInvoiceRow[];
+      ledgerEntries: ProfitLedgerRow[];
+      appSettings: AppSettingsRow[];
+      payoutBatches: ProfitPayoutBatchRow[];
+    }>
+  >`
+    SELECT
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchens ORDER BY code ASC) t), '[]'::json) AS kitchens,
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.products ORDER BY code ASC) t), '[]'::json) AS products,
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_orders ORDER BY created_at DESC LIMIT 2000) t), '[]'::json) AS orders,
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_order_items ORDER BY created_at DESC LIMIT 5000) t), '[]'::json) AS "orderItems",
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_invoices ORDER BY created_at DESC LIMIT 2000) t), '[]'::json) AS invoices,
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_ledger_entries ORDER BY created_at DESC LIMIT 5000) t), '[]'::json) AS "ledgerEntries",
+      COALESCE((SELECT json_agg(to_jsonb(s) - 'admin_pin' - 'coop_pin') FROM public.app_settings s WHERE s.id = 'default'), '[]'::json) AS "appSettings",
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_payout_batches ORDER BY disbursed_at DESC LIMIT 1000) t), '[]'::json) AS "payoutBatches"
+  `;
+  const row = rows[0];
+  return fromSupabaseRows({
+    kitchens: row?.kitchens ?? [],
+    products: row?.products ?? [],
+    orders: row?.orders ?? [],
+    orderItems: row?.orderItems ?? [],
+    invoices: row?.invoices ?? [],
+    ledgerEntries: row?.ledgerEntries ?? [],
+    splitConfigs: [],
+    appSettings: row?.appSettings ?? [],
+    payoutBatches: row?.payoutBatches ?? [],
+  });
+}
+
 export async function queryMbgDataViaHyperdrive(
   env?: HyperdriveEnv,
   sqlFactory?: (connStr: string) => Sql
 ): Promise<MbgData> {
-  return withHyperdriveSql(
-    async (sql) => {
-      const rows = await sql<
-        Array<{
-          kitchens: KitchenRow[];
-          products: ProductRow[];
-          orders: KitchenOrderRow[];
-          orderItems: KitchenOrderItemRow[];
-          invoices: KitchenInvoiceRow[];
-          ledgerEntries: ProfitLedgerRow[];
-          appSettings: AppSettingsRow[];
-          payoutBatches: ProfitPayoutBatchRow[];
-        }>
-      >`
-        SELECT
-          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchens ORDER BY code ASC) t), '[]'::json) AS kitchens,
-          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.products ORDER BY code ASC) t), '[]'::json) AS products,
-          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_orders ORDER BY created_at DESC LIMIT 2000) t), '[]'::json) AS orders,
-          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_order_items ORDER BY created_at DESC LIMIT 5000) t), '[]'::json) AS "orderItems",
-          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_invoices ORDER BY created_at DESC LIMIT 2000) t), '[]'::json) AS invoices,
-          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_ledger_entries ORDER BY created_at DESC LIMIT 5000) t), '[]'::json) AS "ledgerEntries",
-          COALESCE((SELECT json_agg(to_jsonb(s) - 'admin_pin' - 'coop_pin') FROM public.app_settings s WHERE s.id = 'default'), '[]'::json) AS "appSettings",
-          COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_payout_batches ORDER BY disbursed_at DESC LIMIT 1000) t), '[]'::json) AS "payoutBatches"
-      `;
-      const row = rows[0];
-      return fromSupabaseRows({
-        kitchens: row?.kitchens ?? [],
-        products: row?.products ?? [],
-        orders: row?.orders ?? [],
-        orderItems: row?.orderItems ?? [],
-        invoices: row?.invoices ?? [],
-        ledgerEntries: row?.ledgerEntries ?? [],
-        splitConfigs: [],
-        appSettings: row?.appSettings ?? [],
-        payoutBatches: row?.payoutBatches ?? [],
-      });
-    },
-    env,
-    sqlFactory
-  );
+  return withHyperdriveSql((sql) => fetchMbgSnapshotFromSql(sql), env, sqlFactory);
 }
 
 export type HyperdriveActionCore =
@@ -184,11 +182,33 @@ export type HyperdriveActionCore =
   | { action: 'delete_product'; productId: string }
   | { action: 'verify_role_pin'; role: string; pin: string };
 
-export type HyperdriveActionPayload = HyperdriveActionCore & { adminPin?: string };
+export type HyperdriveActionPayload = HyperdriveActionCore & {
+  adminPin?: string;
+  includeSnapshot?: boolean;
+};
+
+const ADMIN_PIN_CACHE_TTL_MS = 5 * 60 * 1000;
+const verifiedAdminPinExpiry = new Map<string, number>();
+
+function isAdminPinCached(pin: string): boolean {
+  const exp = verifiedAdminPinExpiry.get(pin);
+  if (!exp) return false;
+  if (Date.now() > exp) {
+    verifiedAdminPinExpiry.delete(pin);
+    return false;
+  }
+  return true;
+}
+
+function cacheVerifiedAdminPin(pin: string): void {
+  verifiedAdminPinExpiry.set(pin, Date.now() + ADMIN_PIN_CACHE_TTL_MS);
+}
 
 /**
  * Executes an RPC or table mutation directly over Cloudflare Hyperdrive.
  * All mutating actions require a valid `adminPin` verified via `rpc_verify_role_pin('OWNER_ADMIN', pin)`.
+ * When `payload.includeSnapshot` is true, returns the authoritative `MbgData` snapshot over the same socket
+ * so the client never needs a second `GET /api/hyperdrive` round-trip.
  */
 export async function executeHyperdriveAction(
   payload: HyperdriveActionPayload,
@@ -197,18 +217,28 @@ export async function executeHyperdriveAction(
 ): Promise<Record<string, unknown>> {
   return withHyperdriveSql(
     async (sql) => {
+      const useEdgePinCache = !sqlFactory;
       if (payload.action !== 'verify_role_pin') {
         const pin = String(payload.adminPin ?? '').trim();
         if (!pin) {
           return { ok: false, error: 'PIN Admin wajib diisi untuk mengubah data.' };
         }
-        const pinRows = await sql<Array<{ res: { ok?: boolean } }>>`
-          SELECT public.rpc_verify_role_pin('OWNER_ADMIN', ${pin}::text) AS res
-        `;
-        if (!pinRows[0]?.res?.ok) {
-          return { ok: false, error: 'PIN Admin tidak valid atau sesi telah berakhir.' };
+        if (!useEdgePinCache || !isAdminPinCached(pin)) {
+          const pinRows = await sql<Array<{ res: { ok?: boolean } }>>`
+            SELECT public.rpc_verify_role_pin('OWNER_ADMIN', ${pin}::text) AS res
+          `;
+          if (!pinRows[0]?.res?.ok) {
+            return { ok: false, error: 'PIN Admin tidak valid atau sesi telah berakhir.' };
+          }
+          if (useEdgePinCache) cacheVerifiedAdminPin(pin);
         }
       }
+
+      const attachSnapshot = async (res: Record<string, unknown>): Promise<Record<string, unknown>> => {
+        if (!res.ok || !payload.includeSnapshot) return res;
+        const snapshot = await fetchMbgSnapshotFromSql(sql);
+        return { ...res, snapshot };
+      };
 
       switch (payload.action) {
         case 'upsert_order': {
@@ -228,13 +258,13 @@ export async function executeHyperdriveAction(
             ) AS res
           `;
           const res = rows[0]?.res ?? {};
-          return {
+          return attachSnapshot({
             ok: true,
             order_id: String(res.order_id ?? ''),
             order_code: String(res.order_code ?? ''),
             merged: Boolean(res.merged),
             count: Number(res.count ?? itemsJson.length),
-          };
+          });
         }
 
         case 'update_order': {
@@ -256,16 +286,16 @@ export async function executeHyperdriveAction(
             ) AS res
           `;
           const res = rows[0]?.res ?? {};
-          return {
+          return attachSnapshot({
             ok: true,
             order_id: String(res.order_id ?? payload.input.delivery_id),
             count: Number(res.count ?? itemsJson.length),
-          };
+          });
         }
 
         case 'mark_invoice_paid': {
           await sql`SELECT public.rpc_mark_invoice_paid(${payload.invoiceId}::text)`;
-          return { ok: true };
+          return attachSnapshot({ ok: true });
         }
 
         case 'execute_payout': {
@@ -277,11 +307,11 @@ export async function executeHyperdriveAction(
             ) AS res
           `;
           const res = rows[0]?.res ?? {};
-          return {
+          return attachSnapshot({
             ok: true,
             count: Number(res.count ?? 0),
             total_payout_rp: Number(res.total_payout_rp ?? 0),
-          };
+          });
         }
 
         case 'update_app_settings': {
@@ -296,7 +326,7 @@ export async function executeHyperdriveAction(
               ${p.supplierName ?? null}::text
             )
           `;
-          return { ok: true };
+          return attachSnapshot({ ok: true });
         }
 
         case 'delete_order_item': {
@@ -320,7 +350,7 @@ export async function executeHyperdriveAction(
           if (deleted.length === 0) {
             return { ok: false, error: 'Baris order sudah dikunci (Invoice Lunas / Bagi Hasil Cair) dan tidak bisa dihapus.' };
           }
-          return { ok: true };
+          return attachSnapshot({ ok: true });
         }
 
         case 'delete_order': {
@@ -341,7 +371,7 @@ export async function executeHyperdriveAction(
           if (deleted.length === 0) {
             return { ok: false, error: 'Order sudah dikunci (Invoice Lunas / Bagi Hasil Cair) dan tidak bisa dihapus.' };
           }
-          return { ok: true };
+          return attachSnapshot({ ok: true });
         }
 
         case 'upsert_kitchen': {
@@ -362,7 +392,7 @@ export async function executeHyperdriveAction(
               default_markup_per_kg = EXCLUDED.default_markup_per_kg,
               is_active = EXCLUDED.is_active
           `;
-          return { ok: true };
+          return attachSnapshot({ ok: true });
         }
 
         case 'upsert_product': {
@@ -382,24 +412,28 @@ export async function executeHyperdriveAction(
               default_margin_per_kg_rp = EXCLUDED.default_margin_per_kg_rp,
               is_active = EXCLUDED.is_active
           `;
-          return { ok: true };
+          return attachSnapshot({ ok: true });
         }
 
         case 'delete_kitchen': {
           await sql`DELETE FROM public.kitchens WHERE id = ${payload.kitchenId}`;
-          return { ok: true };
+          return attachSnapshot({ ok: true });
         }
 
         case 'delete_product': {
           await sql`DELETE FROM public.products WHERE id = ${payload.productId}`;
-          return { ok: true };
+          return attachSnapshot({ ok: true });
         }
 
         case 'verify_role_pin': {
           const rows = await sql<Array<{ res: { ok?: boolean } }>>`
             SELECT public.rpc_verify_role_pin(${payload.role}::text, ${payload.pin}::text) AS res
           `;
-          return { ok: Boolean(rows[0]?.res?.ok) };
+          const ok = Boolean(rows[0]?.res?.ok);
+          if (ok && payload.role === 'OWNER_ADMIN' && useEdgePinCache) {
+            cacheVerifiedAdminPin(String(payload.pin ?? '').trim());
+          }
+          return { ok };
         }
       }
     },
