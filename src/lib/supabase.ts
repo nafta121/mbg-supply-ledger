@@ -1,33 +1,72 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-
 /**
- * Fallback URL & Publishable Anon Key for project `nrdepkayabbbshnmyrvc`
- * (obtained via Supabase MCP `get_project_url` & `get_publishable_keys`),
- * guaranteeing Vercel production deployments always connect to the live
- * Supabase PostgreSQL cloud backend without falling back to offline/local mode.
+ * Zero-dependency client interface & stub for the Full Cloudflare (D1 + Workers + Durable Objects) architecture.
+ *
+ * All production reads and writes are executed through `/api/hyperdrive` (Cloudflare D1)
+ * and `/api/ws` (Cloudflare `MbgSyncHub` Durable Object WebSocket Hibernation).
+ * The `SupabaseClient` interface is retained solely for backward-compatible unit testing.
  */
-export const SUPABASE_FALLBACK_URL = 'https://nrdepkayabbbshnmyrvc.supabase.co';
-export const SUPABASE_FALLBACK_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5yZGVwa2F5YWJiYnNobm15cnZjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIyMjQ5ODAsImV4cCI6MjEwNzgwMDk4MH0.Rllaa2VW8Aq_YJIqfMJRv20s4a1aUpdh8pb7pSoBKiQ';
 
-export const SUPABASE_PROJECT_URL =
-  process.env.NEXT_PUBLIC_SUPABASE_URL ||
-  process.env.SUPABASE_URL ||
-  SUPABASE_FALLBACK_URL;
+export interface SupabaseQueryBuilder {
+  select: (columns?: string) => {
+    order: (
+      col: string,
+      opts?: { ascending?: boolean }
+    ) => Promise<{ data: unknown[] | null; error: { message: string } | null }> & {
+      limit: (n: number) => Promise<{ data: unknown[] | null; error: { message: string } | null }>;
+      range: (from: number, to: number) => Promise<{ data: unknown[] | null; error: { message: string } | null }>;
+    };
+    eq: (col: string, val: unknown) => Promise<{ data: unknown[] | null; error: { message: string } | null }>;
+  };
+  delete: () => {
+    eq: (col: string, val: unknown) => Promise<{ error: { message: string } | null }>;
+  };
+  upsert: (
+    row: unknown,
+    opts?: { onConflict?: string }
+  ) => Promise<{ error: { message: string } | null }>;
+}
 
-export const SUPABASE_PUBLIC_KEY =
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ||
-  process.env.SUPABASE_PUBLISHABLE_KEY ||
-  SUPABASE_FALLBACK_ANON_KEY;
+export interface SupabaseRealtimeChannel {
+  on: (
+    type: string,
+    filter: Record<string, unknown>,
+    callback: () => void
+  ) => SupabaseRealtimeChannel;
+  subscribe: (callback?: (status: string) => void) => SupabaseRealtimeChannel;
+}
 
-export const isSupabaseConfigured = Boolean(SUPABASE_PROJECT_URL && SUPABASE_PUBLIC_KEY);
+export interface SupabaseClient {
+  rpc: (
+    fn: string,
+    params?: Record<string, unknown>
+  ) => Promise<{ data: unknown; error: { message: string } | null }>;
+  from: (table: string) => SupabaseQueryBuilder;
+  channel?: (name: string) => SupabaseRealtimeChannel;
+  removeChannel?: (channel: SupabaseRealtimeChannel) => Promise<void>;
+}
 
-let browserClient: SupabaseClient | null = null;
+export const isSupabaseConfigured = true;
 
-export const getSupabaseClient = (): SupabaseClient => {
-  if (!browserClient) {
-    browserClient = createClient(SUPABASE_PROJECT_URL, SUPABASE_PUBLIC_KEY);
-  }
-  return browserClient;
+const stubError = { message: 'Cloudflare D1 endpoint (/api/hyperdrive) sedang tidak terjangkau.' };
+
+const cloudflareStubClient: SupabaseClient = {
+  rpc: async () => ({ data: null, error: stubError }),
+  from: () => ({
+    select: () => ({
+      order: () => {
+        const p = Promise.resolve({ data: null, error: stubError });
+        return Object.assign(p, {
+          limit: () => Promise.resolve({ data: null, error: stubError }),
+          range: () => Promise.resolve({ data: null, error: stubError }),
+        });
+      },
+      eq: () => Promise.resolve({ data: null, error: stubError }),
+    }),
+    delete: () => ({
+      eq: () => Promise.resolve({ error: stubError }),
+    }),
+    upsert: () => Promise.resolve({ error: stubError }),
+  }),
 };
+
+export const getSupabaseClient = (): SupabaseClient => cloudflareStubClient;

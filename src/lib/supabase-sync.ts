@@ -9,7 +9,7 @@
  *   `profit_ledger_entries`, `app_settings`, `profit_payout_batches`) and executes direct
  *   Supabase `INSERT` / `UPDATE` / `DELETE` / `RPC` operations.
  */
-import type { SupabaseClient } from '@supabase/supabase-js';
+import type { SupabaseClient } from './supabase';
 import type {
   BeneficiaryType,
   Item,
@@ -47,7 +47,7 @@ export interface KitchenRow {
   pic_name: string;
   pic_phone: string;
   default_markup_per_kg?: number | string | null;
-  is_active: boolean;
+  is_active: boolean | number;
   created_at?: string | null;
 }
 
@@ -58,7 +58,7 @@ export interface ProductRow {
   category?: string | null;
   default_kitchen_price_rp: number | string;
   default_margin_per_kg_rp: number | string;
-  is_active: boolean;
+  is_active: boolean | number;
   created_at?: string | null;
 }
 
@@ -84,7 +84,7 @@ export interface KitchenOrderItemRow {
   qty_accepted_kg: number | string | null;
   kitchen_unit_price_rp: number | string;
   margin_per_kg_rp: number | string;
-  is_weighed: boolean;
+  is_weighed: boolean | number;
   weighed_at?: string | null;
   shrinkage_reason?: string | null;
   shrinkage_note?: string | null;
@@ -123,8 +123,8 @@ export interface ProfitLedgerRow {
   team_amount_rp: number | string;
   coop_amount_rp: number | string;
   status: 'LOCKED_UNPAID' | 'AVAILABLE_FOR_PAYOUT' | 'PAID_OUT';
-  team_paid_out: boolean;
-  coop_paid_out: boolean;
+  team_paid_out: boolean | number;
+  coop_paid_out: boolean | number;
   team_payout_batch_id?: string | null;
   coop_payout_batch_id?: string | null;
   team_paid_out_at?: string | null;
@@ -202,7 +202,7 @@ export function fromSupabaseRows(rows: {
     pic_name: k.pic_name,
     pic_phone: k.pic_phone,
     default_markup_per_kg: num(k.default_markup_per_kg),
-    is_active: k.is_active,
+    is_active: Boolean(k.is_active),
     created_at: k.created_at ?? DEFAULT_ISO,
   }));
 
@@ -214,7 +214,7 @@ export function fromSupabaseRows(rows: {
     base_unit: 'kg',
     default_kitchen_price_per_kg: num(p.default_kitchen_price_rp),
     default_margin_per_kg: num(p.default_margin_per_kg_rp),
-    is_active: p.is_active,
+    is_active: Boolean(p.is_active),
     created_at: p.created_at ?? DEFAULT_ISO,
   }));
 
@@ -234,8 +234,9 @@ export function fromSupabaseRows(rows: {
   }));
 
   const deliveryItems: KitchenDeliveryItem[] = rows.orderItems.map((oi) => {
+    const isWeighed = Boolean(oi.is_weighed);
     const orderedKg = roundKg(oi.qty_ordered_kg);
-    const acceptedKg = oi.is_weighed && oi.qty_accepted_kg !== null ? roundKg(oi.qty_accepted_kg) : orderedKg;
+    const acceptedKg = isWeighed && oi.qty_accepted_kg !== null && oi.qty_accepted_kg !== undefined ? roundKg(oi.qty_accepted_kg) : orderedKg;
     const shrinkKg = Math.max(0, gramsToKg(kgToGrams(orderedKg) - kgToGrams(acceptedKg)));
     const unitPrice = num(oi.kitchen_unit_price_rp);
     const marginPerKg = num(oi.margin_per_kg_rp);
@@ -257,7 +258,7 @@ export function fromSupabaseRows(rows: {
       margin_per_kg_snapshot: marginPerKg,
       line_invoice_amount: lineInvoice,
       line_margin_amount: lineMargin,
-      weighed_at: oi.is_weighed ? oi.weighed_at ?? oi.updated_at ?? DEFAULT_ISO : null,
+      weighed_at: isWeighed ? oi.weighed_at ?? oi.updated_at ?? DEFAULT_ISO : null,
       rejection_reason: rejectionReason,
       created_at: oi.created_at ?? DEFAULT_ISO,
       updated_at: oi.updated_at ?? DEFAULT_ISO,
@@ -330,8 +331,10 @@ export function fromSupabaseRows(rows: {
         ? 'AVAILABLE_FOR_PAYOUT'
         : 'LOCKED_UNPAID';
 
-    const teamStatus: LedgerPayoutStatus = r.team_paid_out ? 'PAID_OUT' : baseStatus;
-    const coopStatus: LedgerPayoutStatus = r.coop_paid_out ? 'PAID_OUT' : baseStatus;
+    const teamPaid = Boolean(r.team_paid_out);
+    const coopPaid = Boolean(r.coop_paid_out);
+    const teamStatus: LedgerPayoutStatus = teamPaid ? 'PAID_OUT' : baseStatus;
+    const coopStatus: LedgerPayoutStatus = coopPaid ? 'PAID_OUT' : baseStatus;
     const deliveryItemId = r.order_item_id ?? r.id;
 
     ledgerEntries.push(
@@ -348,7 +351,7 @@ export function fromSupabaseRows(rows: {
         payout_status: teamStatus,
         payout_batch_id: r.team_payout_batch_id ?? null,
         unlocked_at: r.unlocked_at ?? null,
-        paid_out_at: r.team_paid_out ? r.team_paid_out_at ?? r.paid_out_at ?? DEFAULT_ISO : null,
+        paid_out_at: teamPaid ? r.team_paid_out_at ?? r.paid_out_at ?? DEFAULT_ISO : null,
         created_at: r.created_at ?? DEFAULT_ISO,
         updated_at: r.updated_at ?? DEFAULT_ISO,
       },
@@ -365,7 +368,7 @@ export function fromSupabaseRows(rows: {
         payout_status: coopStatus,
         payout_batch_id: r.coop_payout_batch_id ?? null,
         unlocked_at: r.unlocked_at ?? null,
-        paid_out_at: r.coop_paid_out ? r.coop_paid_out_at ?? r.paid_out_at ?? DEFAULT_ISO : null,
+        paid_out_at: coopPaid ? r.coop_paid_out_at ?? r.paid_out_at ?? DEFAULT_ISO : null,
         created_at: r.created_at ?? DEFAULT_ISO,
         updated_at: r.updated_at ?? DEFAULT_ISO,
       }
@@ -1185,20 +1188,23 @@ export function subscribeToMbgRealtime(
     }, 45000);
   }
 
-  const channel = supabase
-    .channel('mbg-order-driven-realtime')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchens' }, debouncedChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, debouncedChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_orders' }, debouncedChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_order_items' }, debouncedChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_invoices' }, debouncedChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_ledger_entries' }, debouncedChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, debouncedChange)
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_payout_batches' }, debouncedChange)
-    .subscribe((status) => {
-      supabaseConnected = status === 'SUBSCRIBED';
-      notifyStatus();
-    });
+  const channel =
+    typeof supabase?.channel === 'function'
+      ? supabase
+          .channel('mbg-order-driven-realtime')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchens' }, debouncedChange)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, debouncedChange)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_orders' }, debouncedChange)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_order_items' }, debouncedChange)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_invoices' }, debouncedChange)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_ledger_entries' }, debouncedChange)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, debouncedChange)
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_payout_batches' }, debouncedChange)
+          .subscribe((status) => {
+            supabaseConnected = status === 'SUBSCRIBED';
+            notifyStatus();
+          })
+      : null;
 
   return () => {
     disposed = true;
@@ -1216,6 +1222,8 @@ export function subscribeToMbgRealtime(
       }
       edgeWs = null;
     }
-    void supabase.removeChannel(channel);
+    if (channel && typeof supabase?.removeChannel === 'function') {
+      void supabase.removeChannel(channel);
+    }
   };
 }

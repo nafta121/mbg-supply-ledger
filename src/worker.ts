@@ -2,8 +2,8 @@
  * Cloudflare Worker entrypoint & Durable Object (`MbgSyncHub`) for MBG Supply Chain Ledger.
  *
  * Pillars implemented:
- * 1. Database Latency & Edge Cache:
- *    - Hyperdrive connection pooling (`env.HYPERDRIVE.connectionString`)
+ * 1. Database Latency & Edge Cache (Cloudflare D1):
+ *    - Primary SQLite database on Cloudflare Edge (`env.DB` -> `mbg-supply-ledger-db`)
  *    - Edge Snapshot Micro-Cache (`caches.default`, 5s TTL) + `ETag` (`If-None-Match` -> `304 Not Modified`)
  *    - Instant cache update/invalidation on `POST /api/hyperdrive`
  * 2. Real-Time Multi-Device Connectivity (`MbgSyncHub` Durable Object):
@@ -582,6 +582,15 @@ export class MbgSyncHub {
       return jsonResponse({ ok: true, id, docType, refId, sizeBytes, createdAt });
     }
 
+    if (url.pathname === '/documents' && request.method === 'DELETE') {
+      const id = url.searchParams.get('id')?.trim();
+      if (!id) {
+        return jsonResponse({ ok: false, error: 'Parameter id wajib diisi.' }, 400);
+      }
+      this.ctx.storage?.sql.exec(`DELETE FROM documents WHERE id = ?`, id);
+      return jsonResponse({ ok: true, deletedId: id });
+    }
+
     return jsonResponse({ ok: false, error: 'Not Found' }, 404);
   }
 
@@ -735,6 +744,31 @@ export default {
         });
       }
 
+      if (request.method === 'DELETE') {
+        const pin = String(request.headers.get('x-admin-pin') ?? '').trim();
+        if (!pin) {
+          return jsonResponse({ ok: false, error: 'PIN Admin wajib diisi.' }, 401);
+        }
+        const pinCheck = await executeHyperdriveAction(
+          {
+            action: 'verify_role_pin',
+            role: 'OWNER_ADMIN',
+            pin,
+            clientIp: extractClientIp(request),
+          },
+          env
+        );
+        if (!pinCheck.ok) {
+          return jsonResponse(
+            { ok: false, error: String(pinCheck.error ?? 'PIN Admin tidak valid.') },
+            403
+          );
+        }
+        const target = new URL('https://mbg-sync-hub.internal/documents');
+        target.search = url.search;
+        return stub.fetch(target.toString(), { method: 'DELETE' });
+      }
+
       return jsonResponse({ ok: false, error: 'Method Not Allowed' }, 405);
     }
 
@@ -797,7 +831,8 @@ export default {
         try {
           const data = await queryMbgDataViaHyperdrive(env);
           const etag = await computeSnapshotEtag(data);
-          const serialized = JSON.stringify({ ok: true, source: 'hyperdrive', etag, data });
+          const source = env.DB ? 'd1' : 'hyperdrive';
+          const serialized = JSON.stringify({ ok: true, source, etag, data });
 
           if (edgeCache) {
             const cacheableResponse = new Response(serialized, {
@@ -879,7 +914,7 @@ export default {
               if (edgeCache) {
                 const serializedSnapshot = JSON.stringify({
                   ok: true,
-                  source: 'hyperdrive',
+                  source: env.DB ? 'd1' : 'hyperdrive',
                   etag: nextEtag,
                   data: result.snapshot,
                 });

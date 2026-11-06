@@ -1,5 +1,5 @@
-import type { SupabaseClient } from '@supabase/supabase-js';
-import type { Sql } from 'postgres';
+import type { Sql } from '../hyperdrive';
+import type { SupabaseClient } from '../supabase';
 import { describe, expect, it, vi } from 'vitest';
 import {
   executeHyperdriveAction,

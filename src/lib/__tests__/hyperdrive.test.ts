@@ -1,13 +1,15 @@
-import type { Sql } from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import worker, { type DurableObjectStateLike, MbgSyncHub } from '../../worker';
 import {
   computeSnapshotEtag,
+  type D1DatabaseLike,
+  type D1PreparedStatementLike,
   executeHyperdriveAction,
   isHyperdriveConfigured,
   queryMbgDataViaHyperdrive,
   resetHyperdrivePinGuardForTest,
   resolveHyperdriveConnectionString,
+  type Sql,
   timingSafeEqualBytes,
 } from '../hyperdrive';
 import { createInitialSeedState, toSupabaseRows } from './seed-fixture';
@@ -291,5 +293,104 @@ describe('Cloudflare Hyperdrive Security & Scale Hardening', () => {
     expect(apkJson.apk.versionCode).toBe(2);
     expect(apkJson.apk.versionName).toBe('1.1.0');
     expect(apkJson.apk.mandatory).toBe(true);
+  });
+
+  it('executes full Cloudflare D1 snapshot reads, SHA-256 PIN verification, and atomic batch mutations via env.DB', async () => {
+    const seed = createInitialSeedState();
+    const rows = toSupabaseRows(seed);
+    // Hash for role='OWNER_ADMIN', salt='mbg-pin-salt-admin-v1', pin='1122':
+    // sha256("OWNER_ADMIN:mbg-pin-salt-admin-v1:1122") = e67bc0661e992a765eb4b5518aa51fc0bd4a2eb2ca8da837a2782bd77d0f13bd
+    const adminSalt = 'mbg-pin-salt-admin-v1';
+    const adminHash = 'e67bc0661e992a765eb4b5518aa51fc0bd4a2eb2ca8da837a2782bd77d0f13bd';
+
+    const executedStatements: Array<{ query: string; values: unknown[] }> = [];
+
+    const createStatement = (query: string, values: unknown[] = []): D1PreparedStatementLike => ({
+      bind: (...bound: unknown[]) => createStatement(query, bound),
+      first: async <T = Record<string, unknown>>() => {
+        executedStatements.push({ query, values });
+        if (query.includes('FROM role_pins')) {
+          return { pin_salt: adminSalt, pin_hash: adminHash } as unknown as T;
+        }
+        if (query.includes('FROM kitchen_orders WHERE id = ?')) {
+          return { id: 'deliv-01', kitchen_id: 'kitchen-01', order_date: '2026-10-16', order_code: 'SJ-20261016-DPR01-01' } as unknown as T;
+        }
+        if (query.includes('FROM app_settings WHERE id =')) {
+          return rows.appSettings as unknown as T;
+        }
+        if (query.includes('FROM kitchen_invoices WHERE order_id = ?')) {
+          return rows.invoices[0] as unknown as T;
+        }
+        return null;
+      },
+      all: async <T = Record<string, unknown>>() => {
+        executedStatements.push({ query, values });
+        if (query.includes('FROM profit_ledger_entries WHERE order_id = ?')) {
+          return { results: [] as T[] };
+        }
+        return { results: [] as T[] };
+      },
+      run: async () => {
+        executedStatements.push({ query, values });
+        return { success: true };
+      },
+    });
+
+    const fakeD1: D1DatabaseLike = {
+      prepare: (query: string) => createStatement(query),
+      batch: async <T = Record<string, unknown>>(statements: D1PreparedStatementLike[]) => {
+        // When 8 statements are batched, it's fetchMbgSnapshotFromD1
+        if (statements.length === 8) {
+          return [
+            { results: rows.kitchens.map((k) => ({ ...k, is_active: 1 })) as unknown as T[] },
+            { results: rows.products.map((p) => ({ ...p, is_active: 1 })) as unknown as T[] },
+            { results: rows.orders as unknown as T[] },
+            { results: rows.orderItems.map((oi) => ({ ...oi, is_weighed: oi.is_weighed ? 1 : 0 })) as unknown as T[] },
+            { results: rows.invoices as unknown as T[] },
+            {
+              results: rows.ledgerEntries.map((le) => ({
+                ...le,
+                team_paid_out: le.team_paid_out ? 1 : 0,
+                coop_paid_out: le.coop_paid_out ? 1 : 0,
+              })) as unknown as T[],
+            },
+            { results: [rows.appSettings] as unknown as T[] },
+            { results: rows.payoutBatches as unknown as T[] },
+          ];
+        }
+        return statements.map(() => ({ results: [] as T[], success: true }));
+      },
+    };
+
+    const d1Env = { DB: fakeD1 };
+    expect(isHyperdriveConfigured(d1Env)).toBe(true);
+
+    // 1. Read snapshot via D1 batch (with SQLite integer booleans 1/0 coerced to true/false)
+    const snapshot = await queryMbgDataViaHyperdrive(d1Env);
+    expect(snapshot.kitchens).toHaveLength(25);
+    expect(snapshot.kitchens[0]?.is_active).toBe(true);
+    expect(snapshot.items[0]?.is_active).toBe(true);
+    expect(snapshot.deliveries).toHaveLength(5);
+
+    // 2. Verify Admin PIN via Web Crypto SHA-256 against D1 role_pins
+    const validPinRes = await executeHyperdriveAction(
+      { action: 'verify_role_pin', role: 'OWNER_ADMIN', pin: '1122', clientIp: '198.51.100.10' },
+      d1Env
+    );
+    expect(validPinRes).toEqual({ ok: true });
+
+    const invalidPinRes = await executeHyperdriveAction(
+      { action: 'verify_role_pin', role: 'OWNER_ADMIN', pin: '0000', clientIp: '198.51.100.10' },
+      d1Env
+    );
+    expect(invalidPinRes).toEqual({ ok: false });
+
+    // 3. Delete order via D1 atomic batch + includeSnapshot
+    const deleteRes = await executeHyperdriveAction(
+      { action: 'delete_order', orderId: 'deliv-01', adminPin: '1122', includeSnapshot: true },
+      d1Env
+    );
+    expect(deleteRes.ok).toBe(true);
+    expect((deleteRes.snapshot as { kitchens: unknown[] }).kitchens).toHaveLength(25);
   });
 });
