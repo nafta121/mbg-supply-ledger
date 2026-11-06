@@ -20,7 +20,7 @@ type InvFilter = 'unpaid' | 'paid' | 'all';
 
 export function Tab3KitchenInvoices() {
   const store = useMbgStore();
-  const { activeRole, isSyncing, invoices, kitchens, ledgerEntries, markInvoicePaid } = store;
+  const { activeRole, isSyncing, invoices, kitchens, ledgerEntries, markInvoicePaid, deleteOrder } = store;
 
   const [invFilter, setInvFilter] = useState<InvFilter>('unpaid');
   const [sortBy, setSortBy] = useState<SortMode>('date_desc');
@@ -28,6 +28,7 @@ export function Tab3KitchenInvoices() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   const [confirmPaidId, setConfirmPaidId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [printDoc, setPrintDoc] = useState<PrintDocMode | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
 
@@ -330,7 +331,7 @@ export function Tab3KitchenInvoices() {
                                         Tandai Lunas
                                       </button>
                                     ))}
-                                  <div className={`grid gap-2 ${!hasPaidOut ? 'grid-cols-3' : 'grid-cols-2'}`}>
+                                  <div className={`grid gap-2 ${!hasPaidOut ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
                                     {!hasPaidOut && (
                                       <button
                                         type="button"
@@ -366,28 +367,72 @@ export function Tab3KitchenInvoices() {
                                     >
                                       Salin &amp; WA
                                     </button>
-                                      {hasPaidOut && (
-                                        <p className="col-span-2 pt-0.5 text-[11px] text-muted">
-                                          Pengeditan invoice dikunci karena bagi hasil sudah dicairkan.
-                                        </p>
-                                      )}
-                                    </div>
+                                    <button
+                                      type="button"
+                                      disabled={isSyncing}
+                                      onClick={() => setConfirmDeleteId(inv.id)}
+                                      className="btn-secondary min-h-[40px] border-error-border px-2 text-[12px] !text-error hover:!bg-error-bg"
+                                    >
+                                      Hapus Invoice
+                                    </button>
+                                    {hasPaidOut && (
+                                      <p className="col-span-3 pt-0.5 text-[11px] text-muted">
+                                        Pengeditan invoice dikunci karena bagi hasil sudah dicairkan.
+                                      </p>
+                                    )}
                                   </div>
-                                )}
-                              </div>
-                            </>
-                          )}
-                        </Card>
-                      );
-                    })}
-                  </div>
+                                  {confirmDeleteId === inv.id && (
+                                    <div className="flex items-center justify-between gap-2 rounded-[6px] border border-error-border bg-error-bg px-3 py-2">
+                                      <span className="text-[13px] font-medium text-error-ink">
+                                        Hapus invoice {inv.invoice_number}?
+                                      </span>
+                                      <div className="flex shrink-0 items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          disabled={isSyncing}
+                                          onClick={async () => {
+                                            setConfirmDeleteId(null);
+                                            const res = await deleteOrder(inv.delivery_id);
+                                            if (!res.ok) {
+                                              setToast({ kind: 'error', text: res.error });
+                                              return;
+                                            }
+                                            setToast({
+                                              kind: 'ok',
+                                              text: `Invoice ${inv.invoice_number} (${title}) dihapus.`,
+                                            });
+                                          }}
+                                          className="btn-primary min-h-[40px] !border-error !bg-error px-3 text-[12px]"
+                                        >
+                                          Ya
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={isSyncing}
+                                          onClick={() => setConfirmDeleteId(null)}
+                                          className="btn-secondary min-h-[40px] bg-white px-3 text-[12px]"
+                                        >
+                                          Tidak
+                                        </button>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )}
+                      </Card>
+                    );
+                  })}
                 </div>
-              );
-            })}
-            </div>
+              </div>
+            );
+          })}
           </div>
         </div>
       </div>
+    </div>
 
       <OrderInvoiceEditSheet
         deliveryId={editingDeliveryId}

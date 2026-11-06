@@ -726,23 +726,7 @@ export async function deleteKitchenOrderFromSupabase(
     return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menghapus order.') };
   }
   try {
-    const [{ data: paidInv }, { data: paidOut }] = await Promise.all([
-      supabase.from('kitchen_invoices').select('id').eq('order_id', orderId).eq('status', 'PAID').limit(1),
-      supabase
-        .from('profit_ledger_entries')
-        .select('id')
-        .eq('order_id', orderId)
-        .or('team_paid_out.eq.true,coop_paid_out.eq.true')
-        .limit(1),
-    ]);
-    if ((paidInv && paidInv.length > 0) || (paidOut && paidOut.length > 0)) {
-      return { ok: false, error: 'Order sudah dikunci (Invoice Lunas / Bagi Hasil Cair) dan tidak bisa dihapus.' };
-    }
-    const { error } = await supabase
-      .from('kitchen_orders')
-      .delete()
-      .eq('id', orderId)
-      .neq('status', 'BAST_LOCKED');
+    const { error } = await supabase.from('kitchen_orders').delete().eq('id', orderId);
     if (error) return { ok: false, error: error.message };
     return { ok: true };
   } catch (e) {

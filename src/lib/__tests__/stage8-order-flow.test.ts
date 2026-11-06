@@ -205,10 +205,15 @@ describe('Stage 8 — Bagi hasil cash-basis (Menunggu Dapur Bayar → Siap Dicai
     expect(s.ledgerEntries.every((le) => le.payout_status === 'AVAILABLE_FOR_PAYOUT')).toBe(true);
     expect(PAYOUT_LABEL.AVAILABLE_FOR_PAYOUT).toBe('Siap Dicairkan');
 
-    // Frozen after Lunas.
+    // Weighing & individual line removal are frozen after Lunas, while full order/invoice deletion is allowed for Admin.
     expect(applyBastWeights(s, [{ delivery_item_id: s.deliveryItems[0]!.id, qty_accepted_kg: 1 }], c.nowIso).ok).toBe(false);
     expect(removeOrderLine(s, s.deliveryItems[0]!.id, c.nowIso).ok).toBe(false);
-    expect(deleteKitchenOrder(s, s.deliveries[0]!.id).ok).toBe(false);
+    const delPaid = deleteKitchenOrder(s, s.deliveries[0]!.id);
+    expect(delPaid.ok).toBe(true);
+    if (delPaid.ok) {
+      expect(delPaid.data.invoices).toHaveLength(0);
+      expect(delPaid.data.ledgerEntries).toHaveLength(0);
+    }
     // A new order for the same kitchen opens a fresh order/invoice.
     const s2 = ok(createKitchenOrder(s, { kitchen_id: 'kitchen-01', lines: [wortel] }, c));
     expect(s2.invoices).toHaveLength(2);
@@ -222,6 +227,10 @@ describe('Stage 8 — Bagi hasil cash-basis (Menunggu Dapur Bayar → Siap Dicai
     expect(coop.every((le) => le.payout_status === 'AVAILABLE_FOR_PAYOUT')).toBe(true);
     const bothPaid = ok(executePayout(s, 'BOTH', c));
     expect(bothPaid.ledgerEntries.every((le) => le.payout_status === 'PAID_OUT')).toBe(true);
+    // Deleting a paid-out invoice also cleans up its empty payout batches
+    const delPaidOut = ok(deleteKitchenOrder(bothPaid, bothPaid.deliveries[0]!.id));
+    expect(delPaidOut.invoices).toHaveLength(0);
+    expect(delPaidOut.payoutBatches).toHaveLength(0);
 
     // Changing the split never rewrites lines that were (partly) paid out:
     // Tim + Koperasi stays exactly the line margin (no over-distribution).

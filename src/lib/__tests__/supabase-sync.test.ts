@@ -316,21 +316,33 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
     });
     expect(endMock).toHaveBeenCalledTimes(1);
 
-    // 4. Blocks delete_order when order is locked (paid invoice or disbursed profit share returns 0 rows)
-    const lockedDeleteSql = Object.assign(
+    // 4. Returns error when delete_order targets a non-existent order/invoice, and succeeds (with batch sync) for paid invoices
+    const missingDeleteSql = Object.assign(
+      vi.fn().mockResolvedValueOnce([{ res: { ok: true } }]).mockResolvedValueOnce([]),
+      { end: vi.fn().mockResolvedValue(undefined) }
+    ) as unknown as Sql;
+    const missingDelRes = await executeHyperdriveAction(
+      { action: 'delete_order', orderId: 'deliv-missing', adminPin: '1122' },
+      hdEnv,
+      () => missingDeleteSql
+    );
+    expect(missingDelRes.ok).toBe(false);
+    expect(String(missingDelRes.error)).toMatch(/tidak ditemukan/i);
+
+    const paidDeleteSql = Object.assign(
       vi
         .fn()
         .mockResolvedValueOnce([{ res: { ok: true } }])
+        .mockResolvedValueOnce([{ id: 'deliv-01', team_batch_id: 'pbatch-team-1', coop_batch_id: null }])
         .mockResolvedValueOnce([]),
       { end: vi.fn().mockResolvedValue(undefined) }
     ) as unknown as Sql;
-    const lockedDelRes = await executeHyperdriveAction(
+    const paidDelRes = await executeHyperdriveAction(
       { action: 'delete_order', orderId: 'deliv-01', adminPin: '1122' },
       hdEnv,
-      () => lockedDeleteSql
+      () => paidDeleteSql
     );
-    expect(lockedDelRes.ok).toBe(false);
-    expect(String(lockedDelRes.error)).toMatch(/dikunci/i);
+    expect(paidDelRes).toEqual({ ok: true });
 
     // 5. Single-hop includeSnapshot returns authoritative MbgData snapshot over the same socket
     const singleHopEndMock = vi.fn().mockResolvedValue(undefined);

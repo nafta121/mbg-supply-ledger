@@ -380,43 +380,77 @@ export async function executeHyperdriveAction(
           const deleted = await sql<Array<{ id: string }>>`
             DELETE FROM public.kitchen_order_items oi
             WHERE oi.id = ${payload.itemId}
-              AND NOT EXISTS (
-                SELECT 1 FROM public.kitchen_orders o
-                WHERE o.id = oi.order_id AND o.status = 'BAST_LOCKED'
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM public.kitchen_invoices i
-                WHERE i.order_id = oi.order_id AND i.status = 'PAID'
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM public.profit_ledger_entries p
-                WHERE p.order_id = oi.order_id AND (p.team_paid_out OR p.coop_paid_out)
-              )
             RETURNING oi.id
           `;
           if (deleted.length === 0) {
-            return { ok: false, error: 'Baris order sudah dikunci (Invoice Lunas / Bagi Hasil Cair) dan tidak bisa dihapus.' };
+            return { ok: false, error: 'Baris order tidak ditemukan.' };
           }
           return attachSnapshot({ ok: true });
         }
 
         case 'delete_order': {
-          const deleted = await sql<Array<{ id: string }>>`
-            DELETE FROM public.kitchen_orders o
-            WHERE o.id = ${payload.orderId}
-              AND o.status <> 'BAST_LOCKED'
-              AND NOT EXISTS (
-                SELECT 1 FROM public.kitchen_invoices i
-                WHERE i.order_id = o.id AND i.status = 'PAID'
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM public.profit_ledger_entries p
-                WHERE p.order_id = o.id AND (p.team_paid_out OR p.coop_paid_out)
-              )
-            RETURNING o.id
+          const deleted = await sql<
+            Array<{ id: string; team_batch_id: string | null; coop_batch_id: string | null }>
+          >`
+            WITH affected AS (
+              SELECT DISTINCT
+                team_payout_batch_id AS team_batch_id,
+                coop_payout_batch_id AS coop_batch_id
+              FROM public.profit_ledger_entries
+              WHERE order_id = ${payload.orderId}
+            ),
+            deleted AS (
+              DELETE FROM public.kitchen_orders o
+              WHERE o.id = ${payload.orderId}
+              RETURNING o.id
+            )
+            SELECT
+              d.id,
+              a.team_batch_id,
+              a.coop_batch_id
+            FROM deleted d
+            LEFT JOIN affected a ON TRUE
           `;
-          if (deleted.length === 0) {
-            return { ok: false, error: 'Order sudah dikunci (Invoice Lunas / Bagi Hasil Cair) dan tidak bisa dihapus.' };
+          if (!deleted || deleted.length === 0) {
+            return { ok: false, error: 'Order / invoice tidak ditemukan.' };
+          }
+          const batchIds = Array.from(
+            new Set(
+              deleted
+                .flatMap((r) => [r.team_batch_id, r.coop_batch_id])
+                .filter((id): id is string => Boolean(id))
+            )
+          );
+          for (const batchId of batchIds) {
+            await sql`
+              WITH stats AS (
+                SELECT
+                  COUNT(*)::int AS cnt,
+                  COALESCE(ROUND(SUM(
+                    CASE
+                      WHEN team_payout_batch_id = ${batchId} AND team_paid_out THEN team_amount_rp
+                      WHEN coop_payout_batch_id = ${batchId} AND coop_paid_out THEN coop_amount_rp
+                      ELSE 0
+                    END
+                  ), 2), 0) AS total_rp
+                FROM public.profit_ledger_entries
+                WHERE team_payout_batch_id = ${batchId} OR coop_payout_batch_id = ${batchId}
+              ),
+              del AS (
+                DELETE FROM public.profit_payout_batches b
+                USING stats s
+                WHERE b.id = ${batchId} AND (s.cnt = 0 OR s.total_rp <= 0)
+              )
+              UPDATE public.profit_payout_batches b
+              SET
+                total_payout_amount = s.total_rp,
+                notes = CASE
+                  WHEN b.beneficiary_type = 'TEAM' THEN 'Pencairan bagi hasil Tim (' || s.cnt || ' baris)'
+                  ELSE 'Pencairan bagi hasil Koperasi (' || s.cnt || ' baris)'
+                END
+              FROM stats s
+              WHERE b.id = ${batchId} AND s.cnt > 0 AND s.total_rp > 0
+            `;
           }
           return attachSnapshot({ ok: true });
         }

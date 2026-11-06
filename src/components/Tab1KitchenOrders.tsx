@@ -600,12 +600,22 @@ export function Tab1KitchenOrders() {
                               <span className="font-bold tabular-nums text-signal">{formatRp(marginTotal)}</span>
                             </div>
                             {hasPaidOut ? (
-                              <p className="pt-0.5 text-[11px] text-muted">
-                                Order dikunci permanen karena bagi hasil sudah dicairkan.
-                              </p>
+                              <div className="space-y-1.5 pt-1">
+                                <button
+                                  type="button"
+                                  disabled={isSyncing}
+                                  onClick={() => handleDeleteOrder(delivery.id, title)}
+                                  className="btn-secondary min-h-[40px] w-full whitespace-nowrap border-error-border text-[12px] !text-error hover:!bg-error-bg"
+                                >
+                                  Hapus Order
+                                </button>
+                                <p className="pt-0.5 text-[11px] text-muted">
+                                  Pengeditan order dikunci karena bagi hasil sudah dicairkan.
+                                </p>
+                              </div>
                             ) : (
                               <div className="space-y-1.5 pt-1">
-                                <div className={`grid gap-2 ${locked ? 'grid-cols-1' : 'grid-cols-3'}`}>
+                                <div className={`grid gap-2 ${locked ? 'grid-cols-2' : 'grid-cols-3'}`}>
                                   <button
                                     type="button"
                                     onClick={() => setEditingDeliveryId(delivery.id)}
@@ -614,28 +624,26 @@ export function Tab1KitchenOrders() {
                                     Edit Order
                                   </button>
                                   {!locked && (
-                                    <>
-                                      <button
-                                        type="button"
-                                        onClick={() => startAddToKitchen(delivery.kitchen_id, delivery.delivery_date)}
-                                        className="btn-secondary min-h-[40px] text-[12px]"
-                                      >
-                                        + Tambah Barang
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={isSyncing}
-                                        onClick={() => handleDeleteOrder(delivery.id, title)}
-                                        className="btn-secondary min-h-[40px] border-error-border text-[12px] !text-error hover:!bg-error-bg"
-                                      >
-                                        Hapus Order
-                                      </button>
-                                    </>
+                                    <button
+                                      type="button"
+                                      onClick={() => startAddToKitchen(delivery.kitchen_id, delivery.delivery_date)}
+                                      className="btn-secondary min-h-[40px] text-[12px]"
+                                    >
+                                      + Tambah Barang
+                                    </button>
                                   )}
+                                  <button
+                                    type="button"
+                                    disabled={isSyncing}
+                                    onClick={() => handleDeleteOrder(delivery.id, title)}
+                                    className="btn-secondary min-h-[40px] border-error-border text-[12px] !text-error hover:!bg-error-bg"
+                                  >
+                                    Hapus Order
+                                  </button>
                                 </div>
                                 {locked && (
                                   <p className="text-[11px] text-muted">
-                                    Penambahan &amp; penghapusan barang dikunci karena invoice sudah lunas.
+                                    Penambahan barang baris dikunci karena invoice sudah lunas.
                                   </p>
                                 )}
                               </div>
