@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { composeShrinkReason, describeShrinkReason, parseShrinkReason } from '../courier-view';
 import { buildInvoiceWaText } from '../invoice-view';
-import { toWholeKg } from '../financial-engine';
+import { roundKg } from '../financial-engine';
 import { createInitialSeedState } from './seed-fixture';
-import { formatKg, formatKgNum, formatShrinkKgNum, parseKgInput, parseWholeKgInput } from '../ui-format';
+import { formatKg, formatKgNum, parseAcceptedKgInput, parseKgInput } from '../ui-format';
 
 const TRAILING_ZERO_KG = /\d[.,]\d*0\s*kg|\d\.000\s*kg/;
 
@@ -26,21 +26,16 @@ describe('Stage 7/8 — dynamic Indonesian decimal kilogram formatting (Invarian
   });
 
   it('rounds to at most 3 decimal places and never prints -0', () => {
-    expect(toWholeKg(48.75)).toBe(48.75);
-    expect(toWholeKg(12.5)).toBe(12.5);
-    expect(toWholeKg(0.1 + 0.2)).toBe(0.3);
-    expect(toWholeKg(-0.5)).toBe(-0.5);
-    expect(toWholeKg(-0.0001)).toBe(0);
+    expect(roundKg(48.75)).toBe(48.75);
+    expect(roundKg(12.5)).toBe(12.5);
+    expect(roundKg(0.1 + 0.2)).toBe(0.3);
+    expect(roundKg(-0.5)).toBe(-0.5);
+    expect(roundKg(-0.0001)).toBe(0);
     expect(formatKgNum(-0.0001)).toBe('0');
-    expect(toWholeKg(Number.NaN)).toBe(0);
+    expect(roundKg(Number.NaN)).toBe(0);
   });
 
-  it('formats shrinkage as a negative deduction and round-trips shrink reason strings', () => {
-    expect(formatShrinkKgNum(1)).toBe('-1');
-    expect(formatShrinkKgNum(0.5)).toBe('-0,5');
-    expect(formatShrinkKgNum(2)).toBe('-2');
-    expect(formatShrinkKgNum(0)).toBe('0');
-
+  it('round-trips shrink reason strings', () => {
     const composed = composeShrinkReason('Barang Rusak/Reject', 'wortel patah');
     expect(composed).toBe('Barang Rusak/Reject — wortel patah');
     expect(parseShrinkReason(composed)).toEqual({ reason: 'Barang Rusak/Reject', note: 'wortel patah' });
@@ -55,11 +50,11 @@ describe('Stage 7/8 — dynamic Indonesian decimal kilogram formatting (Invarian
     expect(parseKgInput('')).toBe(0);
     expect(parseKgInput('-4')).toBe(0);
     expect(parseKgInput('abc')).toBe(0);
-    expect(parseWholeKgInput('35')).toBe(35);
-    expect(parseWholeKgInput('35,5')).toBe(35.5);
-    expect(parseWholeKgInput('0,2')).toBe(0.2);
-    expect(parseWholeKgInput('-1')).toBeNull();
-    expect(parseWholeKgInput('')).toBeNull();
+    expect(parseAcceptedKgInput('35')).toBe(35);
+    expect(parseAcceptedKgInput('35,5')).toBe(35.5);
+    expect(parseAcceptedKgInput('0,2')).toBe(0.2);
+    expect(parseAcceptedKgInput('-1')).toBeNull();
+    expect(parseAcceptedKgInput('')).toBeNull();
   });
 });
 

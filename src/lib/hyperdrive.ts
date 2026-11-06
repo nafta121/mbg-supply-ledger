@@ -22,8 +22,6 @@ import {
   type ProfitPayoutBatchRow,
 } from './supabase-sync';
 
-export const HYPERDRIVE_CONFIG_ID = 'b25c4027b55f44c8a219ac965d2f2720';
-
 export interface HyperdriveBinding {
   connectionString: string;
 }
@@ -127,13 +125,16 @@ export async function fetchMbgSnapshotFromSql(sql: Sql): Promise<MbgData> {
       payoutBatches: ProfitPayoutBatchRow[];
     }>
   >`
+    WITH recent_orders AS (
+      SELECT * FROM public.kitchen_orders ORDER BY created_at DESC LIMIT 2000
+    )
     SELECT
       COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchens ORDER BY code ASC) t), '[]'::json) AS kitchens,
       COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.products ORDER BY code ASC) t), '[]'::json) AS products,
-      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_orders ORDER BY created_at DESC LIMIT 2000) t), '[]'::json) AS orders,
-      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_order_items ORDER BY created_at DESC LIMIT 5000) t), '[]'::json) AS "orderItems",
-      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_invoices ORDER BY created_at DESC LIMIT 2000) t), '[]'::json) AS invoices,
-      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_ledger_entries ORDER BY created_at DESC LIMIT 5000) t), '[]'::json) AS "ledgerEntries",
+      COALESCE((SELECT json_agg(t) FROM recent_orders t), '[]'::json) AS orders,
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_order_items WHERE order_id IN (SELECT id FROM recent_orders) ORDER BY created_at DESC) t), '[]'::json) AS "orderItems",
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_invoices WHERE order_id IN (SELECT id FROM recent_orders) ORDER BY created_at DESC) t), '[]'::json) AS invoices,
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_ledger_entries WHERE order_id IN (SELECT id FROM recent_orders) ORDER BY created_at DESC) t), '[]'::json) AS "ledgerEntries",
       COALESCE((SELECT json_agg(to_jsonb(s) - 'admin_pin' - 'coop_pin') FROM public.app_settings s WHERE s.id = 'default'), '[]'::json) AS "appSettings",
       COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_payout_batches ORDER BY disbursed_at DESC LIMIT 1000) t), '[]'::json) AS "payoutBatches"
   `;
@@ -185,23 +186,63 @@ export type HyperdriveActionCore =
 export type HyperdriveActionPayload = HyperdriveActionCore & {
   adminPin?: string;
   includeSnapshot?: boolean;
+  clientIp?: string;
 };
 
 const ADMIN_PIN_CACHE_TTL_MS = 5 * 60 * 1000;
-const verifiedAdminPinExpiry = new Map<string, number>();
+let cachedAdminPin: { pin: string; expiresAt: number } | null = null;
+
+const MAX_PIN_FAILURES = 5;
+const PIN_LOCKOUT_MS = 10 * 60 * 1000;
+const MAX_TRACKED_PIN_CLIENTS = 256;
+const PIN_LOCKOUT_ERROR = 'Terlalu banyak percobaan PIN salah. Coba lagi dalam 10 menit.';
+
+interface PinFailureEntry {
+  count: number;
+  resetAt: number;
+}
+
+const pinFailuresByClient = new Map<string, PinFailureEntry>();
+
+export function resetHyperdrivePinGuardForTest(): void {
+  cachedAdminPin = null;
+  pinFailuresByClient.clear();
+}
 
 function isAdminPinCached(pin: string): boolean {
-  const exp = verifiedAdminPinExpiry.get(pin);
-  if (!exp) return false;
-  if (Date.now() > exp) {
-    verifiedAdminPinExpiry.delete(pin);
+  if (!cachedAdminPin || cachedAdminPin.pin !== pin) return false;
+  if (Date.now() > cachedAdminPin.expiresAt) {
+    cachedAdminPin = null;
     return false;
   }
   return true;
 }
 
 function cacheVerifiedAdminPin(pin: string): void {
-  verifiedAdminPinExpiry.set(pin, Date.now() + ADMIN_PIN_CACHE_TTL_MS);
+  cachedAdminPin = { pin, expiresAt: Date.now() + ADMIN_PIN_CACHE_TTL_MS };
+}
+
+function isClientPinLocked(clientKey: string): boolean {
+  const entry = pinFailuresByClient.get(clientKey);
+  if (!entry) return false;
+  if (Date.now() > entry.resetAt) {
+    pinFailuresByClient.delete(clientKey);
+    return false;
+  }
+  return entry.count >= MAX_PIN_FAILURES;
+}
+
+function recordPinFailure(clientKey: string): void {
+  const now = Date.now();
+  const existing = pinFailuresByClient.get(clientKey);
+  const count = existing && now <= existing.resetAt ? existing.count + 1 : 1;
+  if (!pinFailuresByClient.has(clientKey) && pinFailuresByClient.size >= MAX_TRACKED_PIN_CLIENTS) {
+    const oldestKey = pinFailuresByClient.keys().next().value;
+    if (oldestKey !== undefined) {
+      pinFailuresByClient.delete(oldestKey);
+    }
+  }
+  pinFailuresByClient.set(clientKey, { count, resetAt: now + PIN_LOCKOUT_MS });
 }
 
 /**
@@ -218,18 +259,24 @@ export async function executeHyperdriveAction(
   return withHyperdriveSql(
     async (sql) => {
       const useEdgePinCache = !sqlFactory;
+      const clientKey = (payload.clientIp ?? 'global').trim() || 'global';
       if (payload.action !== 'verify_role_pin') {
         const pin = String(payload.adminPin ?? '').trim();
         if (!pin) {
           return { ok: false, error: 'PIN Admin wajib diisi untuk mengubah data.' };
+        }
+        if (isClientPinLocked(clientKey)) {
+          return { ok: false, error: PIN_LOCKOUT_ERROR };
         }
         if (!useEdgePinCache || !isAdminPinCached(pin)) {
           const pinRows = await sql<Array<{ res: { ok?: boolean } }>>`
             SELECT public.rpc_verify_role_pin('OWNER_ADMIN', ${pin}::text) AS res
           `;
           if (!pinRows[0]?.res?.ok) {
+            recordPinFailure(clientKey);
             return { ok: false, error: 'PIN Admin tidak valid atau sesi telah berakhir.' };
           }
+          pinFailuresByClient.delete(clientKey);
           if (useEdgePinCache) cacheVerifiedAdminPin(pin);
         }
       }
@@ -426,14 +473,22 @@ export async function executeHyperdriveAction(
         }
 
         case 'verify_role_pin': {
+          if (isClientPinLocked(clientKey)) {
+            return { ok: false, error: PIN_LOCKOUT_ERROR };
+          }
           const rows = await sql<Array<{ res: { ok?: boolean } }>>`
             SELECT public.rpc_verify_role_pin(${payload.role}::text, ${payload.pin}::text) AS res
           `;
           const ok = Boolean(rows[0]?.res?.ok);
-          if (ok && payload.role === 'OWNER_ADMIN' && useEdgePinCache) {
+          if (!ok) {
+            recordPinFailure(clientKey);
+            return { ok: false };
+          }
+          pinFailuresByClient.delete(clientKey);
+          if (payload.role === 'OWNER_ADMIN' && useEdgePinCache) {
             cacheVerifiedAdminPin(String(payload.pin ?? '').trim());
           }
-          return { ok };
+          return { ok: true };
         }
       }
     },

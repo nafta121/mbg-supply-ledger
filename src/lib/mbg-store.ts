@@ -46,7 +46,7 @@ import {
   upsertProductInSupabase,
   writeSwrSnapshot,
 } from './supabase-sync';
-import { getJakartaTodayYmd } from './ui-format';
+import { getJakartaTodayYmd, parseRpInput } from './ui-format';
 
 export type {
   CreateOrderInput,
@@ -127,12 +127,6 @@ export interface MbgContextValue extends MbgState {
 
 const clean = (v: string | null | undefined): string => (v ?? '').trim();
 
-/** "14.000" / "Rp 14.000" → 14000 (digits only; empty → 0). */
-function rupiahFromText(raw: string | null | undefined): number {
-  const digits = clean(raw).replace(/\D/g, '');
-  return digits ? Number(digits) : 0;
-}
-
 function nextCode(prefix: string, suffix: string, existing: string[]): string {
   const taken = new Set(existing);
   let n = existing.length + 1;
@@ -153,8 +147,8 @@ export function validateKitchenInput(input: KitchenMasterInput): string | null {
 
 export function validateItemInput(input: ItemMasterInput): string | null {
   if (!clean(input.name)) return 'Nama barang wajib diisi.';
-  const price = rupiahFromText(input.default_kitchen_price_per_kg);
-  const margin = rupiahFromText(input.default_margin_per_kg);
+  const price = parseRpInput(input.default_kitchen_price_per_kg);
+  const margin = parseRpInput(input.default_margin_per_kg);
   if (margin > price) return 'Margin default tidak boleh melebihi harga dapur default.';
   return null;
 }
@@ -188,8 +182,8 @@ export function upsertItemRecord(list: Item[], input: ItemMasterInput, nowIso: s
     name: clean(input.name),
     category: clean(input.category) || 'Lainnya',
     base_unit: 'kg' as const, // Invariant 1: unit is always locked to kg
-    default_kitchen_price_per_kg: senToIdr(idrToSen(rupiahFromText(input.default_kitchen_price_per_kg))),
-    default_margin_per_kg: senToIdr(idrToSen(rupiahFromText(input.default_margin_per_kg))),
+    default_kitchen_price_per_kg: senToIdr(idrToSen(parseRpInput(input.default_kitchen_price_per_kg))),
+    default_margin_per_kg: senToIdr(idrToSen(parseRpInput(input.default_margin_per_kg))),
   };
   if (input.id) {
     return list.map((i) => (i.id === input.id ? { ...i, ...fields } : i));
@@ -396,40 +390,61 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
   const setActiveTab = (tab: ActiveTab) => commit({ ...stateRef.current, activeTab: tab });
 
+  const runOptimisticMutation = async <T extends { ok: true } = { ok: true }>(opts: {
+    optimisticState: MbgState;
+    localSuccess?: T;
+    skipCloud?: boolean;
+    errorPrefix?: string;
+    fallbackError: string;
+    cloudOp: (supabase: ReturnType<typeof getSupabaseClient>) => Promise<T | { ok: false; error: string }>;
+  }): Promise<T | { ok: false; error: string }> => {
+    if (isSyncingRef.current) {
+      return { ok: false, error: 'Sedang menyimpan perubahan sebelumnya, mohon tunggu sebentar.' };
+    }
+    const prevState = stateRef.current;
+    commit(opts.optimisticState);
+    if (!isSupabaseConfigured || opts.skipCloud) {
+      return opts.localSuccess ?? ({ ok: true } as T);
+    }
+
+    setSyncing(true);
+    setSyncError(null);
+    const formatError = (err: string) => (opts.errorPrefix ? `${opts.errorPrefix}: ${err}` : err);
+    try {
+      const res = await opts.cloudOp(getSupabaseClient());
+      if (!res.ok) {
+        handleCloudError(formatError(res.error), prevState);
+        return { ok: false, error: res.error };
+      }
+      await reconcileAfterMutation();
+      return res;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : opts.fallbackError;
+      handleCloudError(formatError(msg), prevState);
+      return { ok: false, error: msg };
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   /**
    * RPC #1: Creates or merges a kitchen order in PostgreSQL via `rpc_upsert_kitchen_order`,
    * which invokes `fn_recalculate_order_financials` on the server and returns authoritative totals.
    */
   const createOrder = async (input: CreateOrderInput): Promise<ActionResult> => {
-    const prevState = stateRef.current;
-    const precheck = createKitchenOrder(prevState, input, runtimeCtx());
+    const precheck = createKitchenOrder(stateRef.current, input, runtimeCtx());
     if (!precheck.ok) return { ok: false, error: precheck.error };
-
-    // 0ms Optimistic UI commit
-    commit(precheck.data);
-    if (!isSupabaseConfigured) {
-      return { ok: true, merged: precheck.merged, count: precheck.count };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const orderDate = clean(input.order_date) || getJakartaTodayYmd();
-      const rpcRes = await upsertKitchenOrderRpc(supabase, input, orderDate);
-      if (!rpcRes.ok) {
-        handleCloudError(`Gagal menyimpan order: ${rpcRes.error}`, prevState);
-        return { ok: false, error: rpcRes.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true, merged: rpcRes.merged, count: rpcRes.count };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal menyimpan order ke Supabase.';
-      handleCloudError(`Gagal menyimpan order: ${msg}`, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    const orderDate = clean(input.order_date) || getJakartaTodayYmd();
+    return runOptimisticMutation<{ ok: true; merged?: boolean; count?: number }>({
+      optimisticState: precheck.data,
+      localSuccess: { ok: true, merged: precheck.merged, count: precheck.count },
+      errorPrefix: 'Gagal menyimpan order',
+      fallbackError: 'Gagal menyimpan order ke Supabase.',
+      cloudOp: async (supabase) => {
+        const res = await upsertKitchenOrderRpc(supabase, input, orderDate);
+        return res.ok ? { ok: true, merged: res.merged, count: res.count } : res;
+      },
+    });
   };
 
   /**
@@ -437,34 +452,18 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    * via `rpc_update_kitchen_order`.
    */
   const updateOrder = async (input: UpdateOrderInput): Promise<ActionResult> => {
-    const prevState = stateRef.current;
-    const precheck = updateKitchenOrder(prevState, input, runtimeCtx());
+    const precheck = updateKitchenOrder(stateRef.current, input, runtimeCtx());
     if (!precheck.ok) return { ok: false, error: precheck.error };
-
-    // 0ms Optimistic UI commit
-    commit(precheck.data);
-    if (!isSupabaseConfigured) {
-      return { ok: true, count: precheck.count };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const rpcRes = await updateKitchenOrderRpc(supabase, input);
-      if (!rpcRes.ok) {
-        handleCloudError(`Gagal memperbarui order/invoice: ${rpcRes.error}`, prevState);
-        return { ok: false, error: rpcRes.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true, count: rpcRes.count };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal memperbarui order/invoice di Supabase.';
-      handleCloudError(`Gagal memperbarui order/invoice: ${msg}`, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation<{ ok: true; count?: number }>({
+      optimisticState: precheck.data,
+      localSuccess: { ok: true, count: precheck.count },
+      errorPrefix: 'Gagal memperbarui order/invoice',
+      fallbackError: 'Gagal memperbarui order/invoice di Supabase.',
+      cloudOp: async (supabase) => {
+        const res = await updateKitchenOrderRpc(supabase, input);
+        return res.ok ? { ok: true, count: res.count } : res;
+      },
+    });
   };
 
   const removeOrderLine = async (id: string): Promise<ActionResult> => {
@@ -472,66 +471,30 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     const targetItem = prevState.deliveryItems.find((d) => d.id === id);
     const precheck = removeOrderLineEngine(prevState, id, runtimeCtx().nowIso);
     if (!precheck.ok) return { ok: false, error: precheck.error };
-
-    // 0ms Optimistic UI commit
-    commit(precheck.data);
-    if (!isSupabaseConfigured || !targetItem) {
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const isLastItem =
-        prevState.deliveryItems.filter((d) => d.delivery_id === targetItem.delivery_id).length <= 1;
-      const delRes = isLastItem
-        ? await deleteKitchenOrderFromSupabase(supabase, targetItem.delivery_id)
-        : await deleteOrderItemFromSupabase(supabase, id);
-      if (!delRes.ok) {
-        handleCloudError(`Gagal menghapus barang order: ${delRes.error}`, prevState);
-        return { ok: false, error: delRes.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal menghapus barang order di Supabase.';
-      handleCloudError(`Gagal menghapus barang order: ${msg}`, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    const isLastItem =
+      targetItem !== undefined &&
+      prevState.deliveryItems.filter((d) => d.delivery_id === targetItem.delivery_id).length <= 1;
+    return runOptimisticMutation({
+      optimisticState: precheck.data,
+      skipCloud: !targetItem,
+      errorPrefix: 'Gagal menghapus barang order',
+      fallbackError: 'Gagal menghapus barang order di Supabase.',
+      cloudOp: (supabase) =>
+        isLastItem
+          ? deleteKitchenOrderFromSupabase(supabase, targetItem.delivery_id)
+          : deleteOrderItemFromSupabase(supabase, id),
+    });
   };
 
   const deleteOrder = async (id: string): Promise<ActionResult> => {
-    const prevState = stateRef.current;
-    const precheck = deleteKitchenOrder(prevState, id);
+    const precheck = deleteKitchenOrder(stateRef.current, id);
     if (!precheck.ok) return { ok: false, error: precheck.error };
-
-    // 0ms Optimistic UI commit
-    commit(precheck.data);
-    if (!isSupabaseConfigured) {
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const delRes = await deleteKitchenOrderFromSupabase(supabase, id);
-      if (!delRes.ok) {
-        handleCloudError(`Gagal menghapus order: ${delRes.error}`, prevState);
-        return { ok: false, error: delRes.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal menghapus order di Supabase.';
-      handleCloudError(`Gagal menghapus order: ${msg}`, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation({
+      optimisticState: precheck.data,
+      errorPrefix: 'Gagal menghapus order',
+      fallbackError: 'Gagal menghapus order di Supabase.',
+      cloudOp: (supabase) => deleteKitchenOrderFromSupabase(supabase, id),
+    });
   };
 
   /**
@@ -539,8 +502,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    */
   const markInvoicePaid = async (id: string): Promise<ActionResult> => {
     const nowIso = runtimeCtx().nowIso;
-    const prevState = stateRef.current;
-    let baseState = prevState;
+    let baseState = stateRef.current;
     const inv = baseState.invoices.find((i) => i.id === id);
     if (inv) {
       const unweighed = baseState.deliveryItems
@@ -553,31 +515,12 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     }
     const precheck = markInvoicePaidEngine(baseState, id, nowIso);
     if (!precheck.ok) return { ok: false, error: precheck.error };
-
-    // 0ms Optimistic UI commit
-    commit(precheck.data);
-    if (!isSupabaseConfigured) {
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const rpcRes = await markInvoicePaidRpc(supabase, id);
-      if (!rpcRes.ok) {
-        handleCloudError(`Gagal menandai invoice lunas: ${rpcRes.error}`, prevState);
-        return { ok: false, error: rpcRes.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal menandai invoice lunas di Supabase.';
-      handleCloudError(`Gagal menandai invoice lunas: ${msg}`, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation({
+      optimisticState: precheck.data,
+      errorPrefix: 'Gagal menandai invoice lunas',
+      fallbackError: 'Gagal menandai invoice lunas di Supabase.',
+      cloudOp: (supabase) => markInvoicePaidRpc(supabase, id),
+    });
   };
 
   /**
@@ -585,71 +528,32 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    * all unpaid-out orders in PostgreSQL.
    */
   const updateProfitSplitPercentage = async (team: number, coop: number): Promise<ActionResult> => {
-    const prevState = stateRef.current;
-    const precheck = updateProfitSplit(prevState, team, coop, runtimeCtx().nowIso);
+    const precheck = updateProfitSplit(stateRef.current, team, coop, runtimeCtx().nowIso);
     if (!precheck.ok) return { ok: false, error: precheck.error };
-
-    // 0ms Optimistic UI commit
-    commit(precheck.data);
-    if (!isSupabaseConfigured) {
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const rpcRes = await updateAppSettingsRpc(supabase, {
-        teamSharePct: team,
-        coopSharePct: coop,
-      });
-      if (!rpcRes.ok) {
-        handleCloudError(`Gagal memperbarui persentase bagi hasil: ${rpcRes.error}`, prevState);
-        return { ok: false, error: rpcRes.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal memperbarui persentase bagi hasil di Supabase.';
-      handleCloudError(`Gagal memperbarui persentase bagi hasil: ${msg}`, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation({
+      optimisticState: precheck.data,
+      errorPrefix: 'Gagal memperbarui persentase bagi hasil',
+      fallbackError: 'Gagal memperbarui persentase bagi hasil di Supabase.',
+      cloudOp: (supabase) => updateAppSettingsRpc(supabase, { teamSharePct: team, coopSharePct: coop }),
+    });
   };
 
   /**
    * RPC #4: Executes profit payout via `rpc_execute_profit_payout`.
    */
   const executePayout = async (who: BeneficiaryType | 'BOTH', notes?: string): Promise<ActionResult> => {
-    const prevState = stateRef.current;
-    const precheck = executePayoutEngine(prevState, who, runtimeCtx(), notes);
+    const precheck = executePayoutEngine(stateRef.current, who, runtimeCtx(), notes);
     if (!precheck.ok) return { ok: false, error: precheck.error };
-
-    // 0ms Optimistic UI commit
-    commit(precheck.data);
-    if (!isSupabaseConfigured) {
-      return { ok: true, count: precheck.count };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const rpcRes = await executeProfitPayoutRpc(supabase, who, null);
-      if (!rpcRes.ok) {
-        handleCloudError(`Gagal mencairkan bagi hasil: ${rpcRes.error}`, prevState);
-        return { ok: false, error: rpcRes.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true, count: rpcRes.count };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal mencairkan bagi hasil di Supabase.';
-      handleCloudError(`Gagal mencairkan bagi hasil: ${msg}`, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation<{ ok: true; count?: number }>({
+      optimisticState: precheck.data,
+      localSuccess: { ok: true, count: precheck.count },
+      errorPrefix: 'Gagal mencairkan bagi hasil',
+      fallbackError: 'Gagal mencairkan bagi hasil di Supabase.',
+      cloudOp: async (supabase) => {
+        const res = await executeProfitPayoutRpc(supabase, who, null);
+        return res.ok ? { ok: true, count: res.count } : res;
+      },
+    });
   };
 
   const saveKitchen = async (input: KitchenMasterInput): Promise<MasterSaveResult> => {
@@ -658,31 +562,12 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     const prevState = stateRef.current;
     const nextKitchens = upsertKitchenRecord(prevState.kitchens, input, new Date().toISOString());
     const saved = input.id ? nextKitchens.find((k) => k.id === input.id) : nextKitchens[nextKitchens.length - 1];
-
-    // 0ms Optimistic UI commit
-    commit({ ...prevState, kitchens: nextKitchens });
-    if (!isSupabaseConfigured || !saved) {
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const res = await upsertKitchenInSupabase(supabase, saved);
-      if (!res.ok) {
-        handleCloudError(res.error, prevState);
-        return { ok: false, error: res.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal menyimpan dapur ke Supabase.';
-      handleCloudError(msg, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation({
+      optimisticState: { ...prevState, kitchens: nextKitchens },
+      skipCloud: !saved,
+      fallbackError: 'Gagal menyimpan dapur ke Supabase.',
+      cloudOp: (supabase) => upsertKitchenInSupabase(supabase, saved!),
+    });
   };
 
   const saveItem = async (input: ItemMasterInput): Promise<MasterSaveResult> => {
@@ -691,31 +576,12 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     const prevState = stateRef.current;
     const nextItems = upsertItemRecord(prevState.items, input, new Date().toISOString());
     const saved = input.id ? nextItems.find((i) => i.id === input.id) : nextItems[nextItems.length - 1];
-
-    // 0ms Optimistic UI commit
-    commit({ ...prevState, items: nextItems });
-    if (!isSupabaseConfigured || !saved) {
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const res = await upsertProductInSupabase(supabase, saved);
-      if (!res.ok) {
-        handleCloudError(res.error, prevState);
-        return { ok: false, error: res.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal menyimpan barang ke Supabase.';
-      handleCloudError(msg, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation({
+      optimisticState: { ...prevState, items: nextItems },
+      skipCloud: !saved,
+      fallbackError: 'Gagal menyimpan barang ke Supabase.',
+      cloudOp: (supabase) => upsertProductInSupabase(supabase, saved!),
+    });
   };
 
   const savePaymentAccount = async (input: PaymentAccountInfo): Promise<MasterSaveResult> => {
@@ -747,37 +613,20 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
             payment_account_holder: accountHolder,
           }
     );
-    commit({ ...prevState, splitConfig: nextSplitConfig, invoices: nextInvoices });
-
-    if (!isSupabaseConfigured) {
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const rpcRes = await updateAppSettingsRpc(supabase, {
-        teamSharePct: prevState.splitConfig.team_share_pct,
-        coopSharePct: prevState.splitConfig.cooperative_share_pct,
-        supplierName,
-        bankName,
-        accountNumber,
-        accountHolder,
-      });
-      if (!rpcRes.ok) {
-        handleCloudError(`Gagal menyimpan rekening pembayaran: ${rpcRes.error}`, prevState);
-        return { ok: false, error: rpcRes.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal menyimpan rekening pembayaran ke Supabase.';
-      handleCloudError(`Gagal menyimpan rekening pembayaran: ${msg}`, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation({
+      optimisticState: { ...prevState, splitConfig: nextSplitConfig, invoices: nextInvoices },
+      errorPrefix: 'Gagal menyimpan rekening pembayaran',
+      fallbackError: 'Gagal menyimpan rekening pembayaran ke Supabase.',
+      cloudOp: (supabase) =>
+        updateAppSettingsRpc(supabase, {
+          teamSharePct: prevState.splitConfig.team_share_pct,
+          coopSharePct: prevState.splitConfig.cooperative_share_pct,
+          supplierName,
+          bankName,
+          accountNumber,
+          accountHolder,
+        }),
+    });
   };
 
   const deleteKitchen = async (kitchenId: string): Promise<MasterSaveResult> => {
@@ -785,29 +634,11 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     if (prevState.deliveries.some((d) => d.kitchen_id === kitchenId)) {
       return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki order aktif/histori.' };
     }
-    commit({ ...prevState, kitchens: prevState.kitchens.filter((k) => k.id !== kitchenId) });
-    if (!isSupabaseConfigured) {
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const res = await deleteKitchenFromSupabase(supabase, kitchenId);
-      if (!res.ok) {
-        handleCloudError(res.error, prevState);
-        return { ok: false, error: res.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal menghapus dapur di Supabase.';
-      handleCloudError(msg, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation({
+      optimisticState: { ...prevState, kitchens: prevState.kitchens.filter((k) => k.id !== kitchenId) },
+      fallbackError: 'Gagal menghapus dapur di Supabase.',
+      cloudOp: (supabase) => deleteKitchenFromSupabase(supabase, kitchenId),
+    });
   };
 
   const deleteItem = async (itemId: string): Promise<MasterSaveResult> => {
@@ -815,29 +646,11 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     if (prevState.deliveryItems.some((di) => di.item_id === itemId)) {
       return { ok: false, error: 'Barang tidak dapat dihapus karena sedang digunakan pada order dapur.' };
     }
-    commit({ ...prevState, items: prevState.items.filter((i) => i.id !== itemId) });
-    if (!isSupabaseConfigured) {
-      return { ok: true };
-    }
-
-    setSyncing(true);
-    setSyncError(null);
-    try {
-      const supabase = getSupabaseClient();
-      const res = await deleteProductFromSupabase(supabase, itemId);
-      if (!res.ok) {
-        handleCloudError(res.error, prevState);
-        return { ok: false, error: res.error };
-      }
-      await reconcileAfterMutation();
-      return { ok: true };
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Gagal menghapus barang di Supabase.';
-      handleCloudError(msg, prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    return runOptimisticMutation({
+      optimisticState: { ...prevState, items: prevState.items.filter((i) => i.id !== itemId) },
+      fallbackError: 'Gagal menghapus barang di Supabase.',
+      cloudOp: (supabase) => deleteProductFromSupabase(supabase, itemId),
+    });
   };
 
   const value: MbgContextValue = {

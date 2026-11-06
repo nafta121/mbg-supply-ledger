@@ -26,6 +26,7 @@ type ProfitFilter = 'all' | 'avail' | 'locked' | 'paid_out';
 export function Tab4ProfitSharing() {
   const {
     activeRole,
+    isSyncing,
     splitConfig,
     ledgerEntries,
     invoices,
@@ -41,6 +42,7 @@ export function Tab4ProfitSharing() {
   const [profitFilter, setProfitFilter] = useState<ProfitFilter>('all');
   const [sortBy, setSortBy] = useState<SortMode>('date_desc');
   const [groupBy, setGroupBy] = useState<GroupMode>('none');
+  const [confirmPayoutWho, setConfirmPayoutWho] = useState<BeneficiaryType | 'ALL' | null>(null);
 
   const kitchenById = useMemo(() => new Map(kitchens.map((k) => [k.id, k])), [kitchens]);
 
@@ -120,18 +122,11 @@ export function Tab4ProfitSharing() {
   const coopPct = splitConfig.cooperative_share_pct;
 
   const handlePayout = async (who: BeneficiaryType | 'ALL') => {
-    if (!isAdmin) return;
+    if (!isAdmin || isSyncing) return;
     const total = who === 'ALL' ? availTotal : who === 'TEAM' ? availTeam : availCoop;
     if (total <= 0) return;
     const whoLabel = who === 'ALL' ? 'Tim & Koperasi' : who === 'TEAM' ? 'Tim' : 'Koperasi';
-    if (
-      typeof window !== 'undefined' &&
-      !window.confirm(
-        `Cairkan bagi hasil ${whoLabel} sebesar ${formatRp(total)}? Status akan dikunci permanen sebagai Sudah Cair.`
-      )
-    ) {
-      return;
-    }
+    setConfirmPayoutWho(null);
     const res = await executePayout(who === 'ALL' ? 'BOTH' : who);
     if (!res.ok) {
       setToast({ kind: 'error', text: res.error });
@@ -221,32 +216,76 @@ export function Tab4ProfitSharing() {
 
           {isAdmin && (
             <div className="space-y-2 pt-0.5">
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  disabled={availCoop <= 0}
-                  onClick={() => handlePayout('COOPERATIVE')}
-                  className="btn-primary min-h-[40px] w-full px-2 text-[13px]"
-                >
-                  Cairkan Koperasi
-                </button>
-                <button
-                  type="button"
-                  disabled={availTeam <= 0}
-                  onClick={() => handlePayout('TEAM')}
-                  className="btn-secondary min-h-[40px] w-full px-2 text-[13px]"
-                >
-                  Cairkan Tim
-                </button>
-              </div>
-              <button
-                type="button"
-                disabled={availTeam <= 0 || availCoop <= 0}
-                onClick={() => handlePayout('ALL')}
-                className="btn-secondary min-h-[36px] w-full text-[12px]"
-              >
-                Cairkan Semua ({formatRp(availTotal)})
-              </button>
+              {confirmPayoutWho ? (
+                <div className="space-y-2 rounded-[6px] border border-rule bg-paper-2 p-3">
+                  <p className="text-[12px] font-medium text-ink">
+                    Cairkan bagi hasil{' '}
+                    {confirmPayoutWho === 'ALL'
+                      ? 'Tim & Koperasi'
+                      : confirmPayoutWho === 'TEAM'
+                        ? 'Tim'
+                        : 'Koperasi'}{' '}
+                    sebesar{' '}
+                    <span className="font-bold tabular-nums">
+                      {formatRp(
+                        confirmPayoutWho === 'ALL'
+                          ? availTotal
+                          : confirmPayoutWho === 'TEAM'
+                            ? availTeam
+                            : availCoop
+                      )}
+                    </span>
+                    ? Status akan dikunci permanen sebagai Sudah Cair.
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={isSyncing}
+                      onClick={() => void handlePayout(confirmPayoutWho)}
+                      className="btn-primary min-h-[40px] px-3 text-[12px]"
+                    >
+                      Ya, Cairkan
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSyncing}
+                      onClick={() => setConfirmPayoutWho(null)}
+                      className="btn-secondary min-h-[40px] px-3 text-[12px]"
+                    >
+                      Batal
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      disabled={isSyncing || availCoop <= 0}
+                      onClick={() => setConfirmPayoutWho('COOPERATIVE')}
+                      className="btn-primary min-h-[40px] w-full px-2 text-[13px]"
+                    >
+                      Cairkan Koperasi
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isSyncing || availTeam <= 0}
+                      onClick={() => setConfirmPayoutWho('TEAM')}
+                      className="btn-secondary min-h-[40px] w-full px-2 text-[13px]"
+                    >
+                      Cairkan Tim
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={isSyncing || availTeam <= 0 || availCoop <= 0}
+                    onClick={() => setConfirmPayoutWho('ALL')}
+                    className="btn-secondary min-h-[40px] w-full text-[12px]"
+                  >
+                    Cairkan Semua ({formatRp(availTotal)})
+                  </button>
+                </>
+              )}
               {availTotal <= 0 && lockedTotal > 0 && (
                 <p className="text-[11px] text-muted">
                   Tandai invoice sebagai Lunas di tab Invoice Dapur untuk membuka pencairan bagi hasil.
@@ -334,6 +373,7 @@ export function Tab4ProfitSharing() {
               </div>
               <button
                 type="button"
+                disabled={isSyncing}
                 onClick={() => applySplit(Number(teamPctInput))}
                 className="btn-primary"
               >

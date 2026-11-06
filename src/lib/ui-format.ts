@@ -5,8 +5,8 @@
  * invoice, payable, or profit-share amounts — they only sum/format values
  * the store already produced (Invariant 1: no raw float accumulation).
  */
-import type { InvoicePaymentStatus, LedgerPayoutStatus, OrderProgress, UserRole } from '../types/mbg';
-import { gramsToKg, idrToSen, kgToGrams, roundKg, senToIdr } from './financial-engine';
+import type { InvoicePaymentStatus, LedgerPayoutStatus } from '../types/mbg';
+import { idrToSen, roundKg, senToIdr } from './financial-engine';
 
 const ID_KG_FORMATTER = new Intl.NumberFormat('id-ID', {
   minimumFractionDigits: 0,
@@ -24,22 +24,12 @@ export function formatIdr(idr: number): string {
   }).format(exact);
 }
 
-// ---------- Exact aggregation (grams / sen BigInt) ----------
-
-export function sumKg(values: number[]): number {
-  let grams = 0n;
-  for (const v of values) grams += kgToGrams(Number.isFinite(v) ? v : 0);
-  return gramsToKg(grams);
-}
+// ---------- Exact aggregation (sen BigInt) ----------
 
 export function sumIdr(values: number[]): number {
   let sen = 0n;
   for (const v of values) sen += idrToSen(Number.isFinite(v) ? v : 0);
   return senToIdr(sen);
-}
-
-export function subtractKg(a: number, b: number): number {
-  return gramsToKg(kgToGrams(a) - kgToGrams(b));
 }
 
 /**
@@ -71,11 +61,6 @@ export function parseAcceptedKgInput(raw: string): number | null {
   const val = Number(cleaned);
   if (!Number.isFinite(val) || val < 0) return null;
   return Math.round(val * 1000) / 1000;
-}
-
-/** Backward-compatible alias for `parseAcceptedKgInput` (supports decimal kg `>= 0`). */
-export function parseWholeKgInput(raw: string): number | null {
-  return parseAcceptedKgInput(raw);
 }
 
 /**
@@ -138,12 +123,6 @@ export function formatKg(value: number): string {
   return `${formatKgNum(value)} kg`;
 }
 
-/** Shrinkage shown as a deduction: `1` → `"-1"`, `0.5` → `"-0,5"`, `0` → `"0"` (no unit). */
-export function formatShrinkKgNum(shrinkKg: number): string {
-  const clean = roundKg(shrinkKg);
-  return clean > 0 ? `-${formatKgNum(clean)}` : formatKgNum(clean);
-}
-
 /** "SPPG Dapur 01 - Tebet (Dapur A)" → "Tebet" */
 export function shortKitchenName(name: string): string {
   const afterDash = name.includes(' - ') ? name.split(' - ').slice(1).join(' - ') : name;
@@ -151,13 +130,6 @@ export function shortKitchenName(name: string): string {
 }
 
 // ---------- Operational labels (no technical codes on screen) ----------
-
-export const ROLE_LABEL: Record<UserRole, string> = {
-  OWNER_ADMIN: 'Admin',
-  FINANCE: 'Keuangan',
-  FIELD_TEAM: 'Tim Lapangan',
-  COOPERATIVE_VIEWER: 'Koperasi',
-};
 
 export const PAYOUT_LABEL: Record<LedgerPayoutStatus, string> = {
   LOCKED_UNPAID: 'Menunggu Dapur Bayar',
@@ -173,12 +145,6 @@ export const INVOICE_LABEL: Record<InvoicePaymentStatus, string> = {
   UNPAID: 'Belum Bayar',
   PARTIALLY_PAID: 'Belum Bayar',
   PAID: 'Lunas',
-};
-
-export const ORDER_PROGRESS_LABEL: Record<OrderProgress, string> = {
-  WAITING_COURIER: 'Menunggu Kurir',
-  PARTIALLY_WEIGHED: 'Sebagian Tertimbang',
-  BAST_DONE: 'Selesai BAST',
 };
 
 export type Tone = 'green' | 'amber' | 'red' | 'slate';

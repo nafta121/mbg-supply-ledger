@@ -45,6 +45,7 @@ function MasterForm<T extends { id?: string }>({
   onSave,
   onCancel,
   extra,
+  disabled,
 }: {
   idPrefix: string;
   fields: FieldDef<T>[];
@@ -52,14 +53,22 @@ function MasterForm<T extends { id?: string }>({
   onSave: (value: T) => Promise<MasterSaveResult>;
   onCancel: () => void;
   extra?: React.ReactNode;
+  disabled?: boolean;
 }) {
   const [value, setValue] = useState<T>(initial);
   const [error, setError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await onSave(value);
-    if (!res.ok) setError(res.error);
+    if (isSubmitting || disabled) return;
+    setIsSubmitting(true);
+    try {
+      const res = await onSave(value);
+      if (!res.ok) setError(res.error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -94,10 +103,15 @@ function MasterForm<T extends { id?: string }>({
         )}
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <button type="button" onClick={onCancel} className="btn-secondary min-h-[40px]">
+        <button
+          type="button"
+          disabled={isSubmitting || disabled}
+          onClick={onCancel}
+          className="btn-secondary min-h-[40px]"
+        >
           Batal
         </button>
-        <button type="submit" className="btn-primary min-h-[40px]">
+        <button type="submit" disabled={isSubmitting || disabled} className="btn-primary min-h-[40px]">
           Simpan
         </button>
       </div>
@@ -106,8 +120,18 @@ function MasterForm<T extends { id?: string }>({
 }
 
 export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { activeRole, kitchens, items, splitConfig, saveKitchen, saveItem, savePaymentAccount, deleteKitchen, deleteItem } =
-    useMbgStore();
+  const {
+    activeRole,
+    isSyncing,
+    kitchens,
+    items,
+    splitConfig,
+    saveKitchen,
+    saveItem,
+    savePaymentAccount,
+    deleteKitchen,
+    deleteItem,
+  } = useMbgStore();
   const [tab, setTab] = useState<MasterTab>('kitchens');
   const [editing, setEditing] = useState<string | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
@@ -177,9 +201,9 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
   };
 
   const rowBtn =
-    'min-h-[34px] shrink-0 rounded-[6px] border border-control bg-white px-2.5 text-[12px] font-medium text-ink-2 transition-colors hover:bg-paper-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50';
+    'min-h-[38px] shrink-0 rounded-[6px] border border-control bg-white px-2.5 text-[12px] font-medium text-ink-2 transition-colors hover:bg-paper-2 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50';
   const delBtn =
-    'min-h-[34px] shrink-0 rounded-[6px] border border-error-border bg-white px-2.5 text-[12px] font-medium text-error transition-colors hover:bg-error-bg active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50';
+    'min-h-[38px] shrink-0 rounded-[6px] border border-error-border bg-white px-2.5 text-[12px] font-medium text-error transition-colors hover:bg-error-bg active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50';
 
   return (
     <BottomSheet
@@ -267,7 +291,11 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                 </p>
               )}
             </div>
-            <button type="submit" className="btn-secondary min-h-[38px] w-full text-[13px]">
+            <button
+              type="submit"
+              disabled={isSyncing}
+              className="btn-secondary min-h-[38px] w-full whitespace-nowrap text-[13px]"
+            >
               Simpan Rekening Invoice
             </button>
           </form>
@@ -289,6 +317,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               idPrefix="md-k-new"
               fields={KITCHEN_FIELDS}
               initial={EMPTY_KITCHEN}
+              disabled={isSyncing}
               onCancel={() => setEditing(null)}
               onSave={(v) => done(saveKitchen(v), `Dapur "${v.name.trim()}" disimpan ke Supabase.`)}
             />
@@ -297,6 +326,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               idPrefix="md-i-new"
               fields={ITEM_FIELDS}
               initial={EMPTY_ITEM}
+              disabled={isSyncing}
               onCancel={() => setEditing(null)}
               onSave={(v) => done(saveItem(v), `Barang "${v.name.trim()}" disimpan ke Supabase.`)}
               extra={<UnitLockedField id="md-i-new-unit" />}
@@ -323,6 +353,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                       pic_name: k.pic_name,
                       pic_phone: k.pic_phone,
                     }}
+                    disabled={isSyncing}
                     onCancel={() => setEditing(null)}
                     onSave={(v) => done(saveKitchen(v), `Dapur ${k.kitchen_code} diperbarui di Supabase.`)}
                   />
@@ -345,6 +376,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                     </button>
                     <button
                       type="button"
+                      disabled={isSyncing}
                       onClick={async () => {
                         if (typeof window !== 'undefined' && !window.confirm(`Hapus dapur ${k.name}?`)) return;
                         const res = await deleteKitchen(k.id);
@@ -375,6 +407,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                       default_kitchen_price_per_kg: formatThousands(it.default_kitchen_price_per_kg),
                       default_margin_per_kg: formatThousands(it.default_margin_per_kg),
                     }}
+                    disabled={isSyncing}
                     onCancel={() => setEditing(null)}
                     onSave={(v) => done(saveItem(v), `Barang ${it.name} diperbarui di Supabase.`)}
                     extra={<UnitLockedField id={`md-i-${it.id}-unit`} />}
@@ -398,6 +431,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                     </button>
                     <button
                       type="button"
+                      disabled={isSyncing}
                       onClick={async () => {
                         if (typeof window !== 'undefined' && !window.confirm(`Hapus barang ${it.name}?`)) return;
                         const res = await deleteItem(it.id);

@@ -12,13 +12,14 @@ The locked system. Every Hallmark run reads this first and pages share it. Chang
 `src/app/tokens.css` is the source of truth. The roles:
 ```css
 :root {
-  --color-paper: #f2f4f7;  --color-surface: #ffffff;  --color-paper-2: #f8f9fa;  --color-paper-3: #eeeeee;  --color-group: #e9edf2;
-  --color-ink: #0a0a0a;  --color-ink-2: #3d3d3d;  --color-muted: #6b6b6b;  --color-muted-2: #8a8a8a;
-  --color-rule: #e6e6e6;  --color-rule-2: #f0f0f0;  --color-control: #d4d4d4;
-  --color-accent: #141414;  --color-accent-hover: #262626;  --color-accent-ink: #ffffff;  --color-focus: #141414;  --color-signal: #1d5fbf;
-  --color-success: #2e7d32;  --color-success-bg: #dcfae5;  --color-success-border: #b7ebd0;  --color-success-ink: #04250e;
-  --color-warning: #92400e;  --color-warning-bg: #fffbeb;  --color-warning-border: #fde68a;
-  --color-error: #c4242a;  --color-error-bg: #ffedea;  --color-error-border: #f5c2c0;  --color-error-ink: #831c1e;
+  --color-paper: #f7f5f0;  --color-surface: #ffffff;  --color-paper-2: #f4f1ea;  --color-paper-3: #efece6;  --color-group: #eae5dc;
+  --color-ink: #141413;  --color-ink-2: #3f3c39;  --color-muted: #57534e;  --color-muted-2: #78716c;
+  --color-rule: #e5e0d8;  --color-rule-2: #ede9e1;  --color-control: #d6d0c4;
+  --color-accent: #14532d;  --color-accent-hover: #166534;  --color-accent-ink: #ffffff;  --color-focus: #14532d;  --color-signal: #14532d;
+  --color-success: #15803d;  --color-success-bg: #dcfce7;  --color-success-border: #86efac;  --color-success-ink: #14532d;
+  --color-warning: #92400e;  --color-warning-bg: #fef3c7;  --color-warning-border: #fcd34d;
+  --color-error: #b91c1c;  --color-error-bg: #fee2e2;  --color-error-border: #fca5a5;  --color-error-ink: #7f1d1d;
+  --color-error-hover: rgba(252, 165, 165, 0.35);  --color-scrim: rgba(20, 20, 19, 0.45);
   --font-display: "Geist", Inter, system-ui, -apple-system, sans-serif;
   --font-body: "Geist", Inter, system-ui, -apple-system, sans-serif;
   --font-outlier: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
@@ -28,7 +29,7 @@ The locked system. Every Hallmark run reads this first and pages share it. Chang
 The spacing scale, the type scale, the easings and the durations are the scaffold's and live in `src/app/tokens.css`.
 
 ## Controls
-- Primary: `var(--color-accent)` fill (`#141414`) · `6px` radius · `40px` min-height
+- Primary: `var(--color-accent)` fill (`#14532d`) · `6px` radius · `40px` min-height
 - Secondary: `1px solid var(--color-control)` outline on `var(--color-surface)` · same `6px` radius and `40px` min-height
 
 ## Motion

@@ -54,6 +54,10 @@ export default {
           if (headerPin && !payload.adminPin) {
             payload.adminPin = headerPin;
           }
+          payload.clientIp =
+            (request.headers.get('cf-connecting-ip') ?? request.headers.get('x-forwarded-for') ?? 'global')
+              .split(',')[0]
+              ?.trim() || 'global';
           const result = await executeHyperdriveAction(payload, env);
           return jsonResponse(result, 200);
         } catch (e) {

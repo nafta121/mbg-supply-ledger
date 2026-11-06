@@ -11,23 +11,15 @@ import {
   parseKgInput,
   parseRpInput,
   PAYOUT_LABEL,
-  ROLE_LABEL,
   shortKitchenName,
-  subtractKg,
   sumIdr,
-  sumKg,
   toWaNumber,
 } from '../ui-format';
 
 describe('ui-format helpers', () => {
-  it('sums kg and IDR exactly without float drift', () => {
-    expect(sumKg([0.1, 0.2])).toBe(0.3);
-    expect(sumKg([12.5, 0.2, 1.25])).toBe(13.95);
-    expect(sumKg([49, 48, 50, 50, 50])).toBe(247);
+  it('sums IDR exactly without float drift', () => {
     expect(sumIdr([0.1, 0.2])).toBe(0.3);
     expect(sumIdr([120000, 117000, 86850])).toBe(323850);
-    expect(subtractKg(50, 49)).toBe(1);
-    expect(subtractKg(12.5, 0.2)).toBe(12.3);
   });
 
   it('formats rupiah and smart Indonesian decimal kg without trailing zeros', () => {
@@ -96,9 +88,6 @@ describe('ui-format helpers', () => {
   it('maps technical statuses to operational labels', () => {
     expect(PAYOUT_LABEL.LOCKED_UNPAID).toBe('Menunggu Dapur Bayar');
     expect(PAYOUT_LABEL.AVAILABLE_FOR_PAYOUT).toBe('Siap Dicairkan');
-    expect(ROLE_LABEL.OWNER_ADMIN).toBe('Admin');
-    expect(ROLE_LABEL.FIELD_TEAM).toBe('Tim Lapangan');
-    expect(ROLE_LABEL.COOPERATIVE_VIEWER).toBe('Koperasi');
     expect(INVOICE_LABEL.PAID).toBe('Lunas');
     expect(INVOICE_LABEL.UNPAID).toBe('Belum Bayar');
     expect(invoiceTone('PAID')).toBe('green');

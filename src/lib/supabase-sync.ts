@@ -409,10 +409,6 @@ export function setHyperdriveEndpointStateForTest(state: HyperdriveEndpointState
   hyperdriveEndpointState = state;
 }
 
-export function setVerifiedAdminPinForTest(pin: string | null): void {
-  verifiedAdminPin = pin;
-}
-
 export function consumeLatestHyperdriveSnapshot(): MbgData | null {
   const snap = latestHyperdriveSnapshot;
   latestHyperdriveSnapshot = null;
@@ -948,7 +944,7 @@ export async function deleteKitchenFromSupabase(
   if (hd.handled) {
     return hd.data.ok
       ? { ok: true }
-      : { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki histori order.' };
+      : { ok: false, error: String(hd.data.error ?? 'Dapur tidak dapat dihapus karena masih memiliki histori order.') };
   }
   const { error } = await supabase.from('kitchens').delete().eq('id', kitchenId);
   if (error) return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki histori order.' };
@@ -963,7 +959,7 @@ export async function deleteProductFromSupabase(
   if (hd.handled) {
     return hd.data.ok
       ? { ok: true }
-      : { ok: false, error: 'Barang tidak dapat dihapus karena masih digunakan di order dapur.' };
+      : { ok: false, error: String(hd.data.error ?? 'Barang tidak dapat dihapus karena masih digunakan di order dapur.') };
   }
   const { error } = await supabase.from('products').delete().eq('id', productId);
   if (error) return { ok: false, error: 'Barang tidak dapat dihapus karena masih digunakan di order dapur.' };

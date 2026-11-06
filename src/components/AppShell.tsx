@@ -222,7 +222,7 @@ export function AppShell() {
                     type="button"
                     aria-pressed={active}
                     onClick={() => handleRolePillClick(opt.role)}
-                    className={`min-h-[30px] rounded-[4px] border px-2.5 text-[12px] font-medium transition-colors ${
+                    className={`min-h-[34px] rounded-[4px] border px-2.5 text-[12px] font-medium transition-colors ${
                       active
                         ? 'border-rule bg-white text-ink'
                         : 'border-transparent text-muted hover:text-ink'

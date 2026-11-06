@@ -16,7 +16,7 @@ import {
   updateKitchenOrder,
   updateProfitSplit,
 } from '../order-engine';
-import { ORDER_PROGRESS_LABEL, PAYOUT_LABEL, sumIdr } from '../ui-format';
+import { PAYOUT_LABEL, sumIdr } from '../ui-format';
 
 function ctx(): EngineCtx {
   let n = 0;
@@ -65,7 +65,6 @@ describe('Stage 8 — Order Dapur (multi-item)', () => {
     expect(s.ledgerEntries.every((le) => le.payout_status === 'LOCKED_UNPAID')).toBe(true);
     expect(sumIdr(s.ledgerEntries.map((le) => le.profit_amount))).toBe(107500);
     expect(orderProgress(s.deliveryItems)).toBe('WAITING_COURIER');
-    expect(ORDER_PROGRESS_LABEL[orderProgress(s.deliveryItems)]).toBe('Menunggu Kurir');
   });
 
   it('merges a second order for the same kitchen into the open order & invoice', () => {

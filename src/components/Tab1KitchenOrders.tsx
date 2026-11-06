@@ -33,6 +33,7 @@ type ListFilter = 'active' | 'paid';
 export function Tab1KitchenOrders() {
   const {
     activeRole,
+    isSyncing,
     kitchens,
     items,
     deliveries,
@@ -431,7 +432,7 @@ export function Tab1KitchenOrders() {
               )}
             </div>
 
-            <button type="button" onClick={submit} className="btn-primary min-h-[44px] w-full">
+            <button type="button" disabled={isSyncing} onClick={submit} className="btn-primary min-h-[44px] w-full">
               Simpan Order Dapur
             </button>
           </div>
@@ -574,9 +575,10 @@ export function Tab1KitchenOrders() {
                                     {!locked && !hasPaidOut && (
                                       <button
                                         type="button"
+                                        disabled={isSyncing}
                                         onClick={() => handleRemoveLine(l.id, name)}
                                         aria-label={`Hapus ${name} dari order ${title}`}
-                                        className="flex min-h-[36px] min-w-[36px] items-center justify-center rounded-[6px] border border-transparent text-base text-muted hover:border-error-border hover:bg-error-bg hover:text-error-ink"
+                                        className="flex min-h-[36px] min-w-[36px] items-center justify-center rounded-[6px] border border-transparent text-base text-muted hover:border-error-border hover:bg-error-bg hover:text-error-ink disabled:cursor-not-allowed disabled:opacity-50"
                                       >
                                         ×
                                       </button>
@@ -607,7 +609,7 @@ export function Tab1KitchenOrders() {
                                   <button
                                     type="button"
                                     onClick={() => setEditingDeliveryId(delivery.id)}
-                                    className="btn-secondary min-h-[36px] text-[12px]"
+                                    className="btn-secondary min-h-[40px] text-[12px]"
                                   >
                                     Edit Order
                                   </button>
@@ -616,14 +618,15 @@ export function Tab1KitchenOrders() {
                                       <button
                                         type="button"
                                         onClick={() => startAddToKitchen(delivery.kitchen_id, delivery.delivery_date)}
-                                        className="btn-secondary min-h-[36px] text-[12px]"
+                                        className="btn-secondary min-h-[40px] text-[12px]"
                                       >
                                         + Tambah Barang
                                       </button>
                                       <button
                                         type="button"
+                                        disabled={isSyncing}
                                         onClick={() => handleDeleteOrder(delivery.id, title)}
-                                        className="btn-secondary min-h-[36px] border-error-border text-[12px] !text-error hover:!bg-error-bg"
+                                        className="btn-secondary min-h-[40px] border-error-border text-[12px] !text-error hover:!bg-error-bg"
                                       >
                                         Hapus Order
                                       </button>

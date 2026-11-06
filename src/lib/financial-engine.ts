@@ -38,11 +38,6 @@ export function roundKg(kg: number | string): number {
   return Object.is(rounded, -0) ? 0 : rounded;
 }
 
-/** Backward-compatible alias for `roundKg` (3-decimal dynamic kg precision). */
-export function toWholeKg(kg: number | string): number {
-  return roundKg(kg);
-}
-
 export function idrToSen(idr: number | string): bigint {
   const num = typeof idr === 'string' ? Number(idr) : idr;
   if (!Number.isFinite(num)) {

@@ -20,7 +20,7 @@ type InvFilter = 'unpaid' | 'paid' | 'all';
 
 export function Tab3KitchenInvoices() {
   const store = useMbgStore();
-  const { activeRole, invoices, kitchens, ledgerEntries, markInvoicePaid } = store;
+  const { activeRole, isSyncing, invoices, kitchens, ledgerEntries, markInvoicePaid } = store;
 
   const [invFilter, setInvFilter] = useState<InvFilter>('unpaid');
   const [sortBy, setSortBy] = useState<SortMode>('date_desc');
@@ -293,6 +293,7 @@ export function Tab3KitchenInvoices() {
                                         <div className="flex items-center gap-1.5">
                                           <button
                                             type="button"
+                                            disabled={isSyncing}
                                             onClick={async () => {
                                               setConfirmPaidId(null);
                                               const res = await markInvoicePaid(inv.id);
@@ -305,14 +306,15 @@ export function Tab3KitchenInvoices() {
                                                 text: 'Invoice berhasil ditandai Lunas.',
                                               });
                                             }}
-                                            className="btn-primary min-h-[36px] px-3 text-[12px]"
+                                            className="btn-primary min-h-[40px] px-3 text-[12px]"
                                           >
                                             Ya
                                           </button>
                                           <button
                                             type="button"
+                                            disabled={isSyncing}
                                             onClick={() => setConfirmPaidId(null)}
-                                            className="btn-secondary min-h-[36px] px-3 text-[12px]"
+                                            className="btn-secondary min-h-[40px] px-3 text-[12px]"
                                           >
                                             Tidak
                                           </button>
@@ -321,6 +323,7 @@ export function Tab3KitchenInvoices() {
                                     ) : (
                                       <button
                                         type="button"
+                                        disabled={isSyncing}
                                         onClick={() => setConfirmPaidId(inv.id)}
                                         className={`${inv.id === firstExpandedUnpaidId ? 'btn-primary' : 'btn-secondary'} w-full`}
                                       >
@@ -332,7 +335,7 @@ export function Tab3KitchenInvoices() {
                                       <button
                                         type="button"
                                         onClick={() => setEditingDeliveryId(inv.delivery_id)}
-                                        className="btn-secondary min-h-[36px] px-2 text-[12px]"
+                                        className="btn-secondary min-h-[40px] px-2 text-[12px]"
                                       >
                                         Edit Invoice
                                       </button>
@@ -340,7 +343,7 @@ export function Tab3KitchenInvoices() {
                                     <button
                                       type="button"
                                       onClick={() => setPrintDoc({ type: 'INVOICE', invoiceId: inv.id })}
-                                      className="btn-secondary min-h-[36px] px-2 text-[12px]"
+                                      className="btn-secondary min-h-[40px] px-2 text-[12px]"
                                     >
                                       Cetak / PDF
                                     </button>
@@ -359,7 +362,7 @@ export function Tab3KitchenInvoices() {
                                             )
                                         )
                                       }
-                                      className="btn-secondary min-h-[36px] px-2 text-[12px]"
+                                      className="btn-secondary min-h-[40px] px-2 text-[12px]"
                                     >
                                       Salin &amp; WA
                                     </button>
@@ -402,7 +405,7 @@ export function Tab3KitchenInvoices() {
           <button
             type="button"
             onClick={() => window.print()}
-            className="btn-primary min-h-[36px] px-3 text-[12px]"
+            className="btn-primary min-h-[40px] px-3 text-[12px]"
           >
             Cetak / PDF
           </button>
