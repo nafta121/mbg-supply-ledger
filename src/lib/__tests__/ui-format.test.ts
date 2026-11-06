@@ -6,6 +6,7 @@ import {
   formatRp,
   getJakartaTodayYmd,
   INVOICE_LABEL,
+  invoiceTone,
   parseAcceptedKgInput,
   parseKgInput,
   parseRpInput,
@@ -100,6 +101,8 @@ describe('ui-format helpers', () => {
     expect(ROLE_LABEL.COOPERATIVE_VIEWER).toBe('Koperasi');
     expect(INVOICE_LABEL.PAID).toBe('Lunas');
     expect(INVOICE_LABEL.UNPAID).toBe('Belum Bayar');
+    expect(invoiceTone('PAID')).toBe('green');
+    expect(invoiceTone('UNPAID')).toBe('red');
   });
 
   it('shortens kitchen names and builds WA numbers', () => {

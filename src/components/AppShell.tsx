@@ -58,6 +58,7 @@ export function AppShell() {
     isSupabaseLive,
     syncError,
     clearSyncError,
+    retrySync,
     setActiveRole,
     setActiveTab,
   } = useMbgStore();
@@ -66,6 +67,7 @@ export function AppShell() {
   const [adminPinOpen, setAdminPinOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState<string | null>(null);
+  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
   const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
 
   useEffect(() => {
@@ -121,21 +123,28 @@ export function AppShell() {
   const handleVerifyRolePin = async (e: React.FormEvent) => {
     e.preventDefault();
     const typedPin = pinInput.trim();
-    const verified = isSupabaseConfigured && isSupabaseLive
-      ? await verifyRolePinRpc(getSupabaseClient(), 'OWNER_ADMIN', typedPin)
-      : false;
-    if (!verified) {
-      setPinError('PIN Admin salah. Periksa kembali PIN 4 digit Anda.');
+    if (!isSupabaseConfigured || !isSupabaseLive) {
+      setPinError('Tidak dapat memverifikasi PIN saat offline. Periksa koneksi internet Anda.');
       return;
     }
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.setItem('mbg_pin_verified_OWNER_ADMIN', '1');
-      window.sessionStorage.setItem('mbg_admin_pin', typedPin);
+    setIsVerifyingPin(true);
+    try {
+      const verified = await verifyRolePinRpc(getSupabaseClient(), 'OWNER_ADMIN', typedPin);
+      if (!verified) {
+        setPinError('PIN Admin salah. Periksa kembali PIN 4 digit Anda.');
+        return;
+      }
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem('mbg_pin_verified_OWNER_ADMIN', '1');
+        window.sessionStorage.setItem('mbg_admin_pin', typedPin);
+      }
+      setAdminPinOpen(false);
+      setPinInput('');
+      setPinError(null);
+      setActiveRole('OWNER_ADMIN');
+    } finally {
+      setIsVerifyingPin(false);
     }
-    setAdminPinOpen(false);
-    setPinInput('');
-    setPinError(null);
-    setActiveRole('OWNER_ADMIN');
   };
 
   const visibleTabs = NAV_TABS.filter((t) => t.roles.includes(activeRole));
@@ -183,7 +192,7 @@ export function AppShell() {
                     isSyncing ? 'bg-warning' : isSupabaseLive ? 'bg-success' : 'bg-muted-2'
                   }`}
                 />
-                {isSyncing ? 'Menyimpan…' : isSupabaseLive ? 'Live Supabase' : 'Offline'}
+                {isSyncing ? 'Menyimpan…' : isSupabaseLive ? 'Tersinkron' : 'Offline'}
               </span>
             </div>
           </div>
@@ -233,7 +242,7 @@ export function AppShell() {
                   onClick={() => setMasterOpen(true)}
                   aria-label="Pengaturan & Data Master"
                   title="Pengaturan & Data Master"
-                  className="flex h-[34px] w-[34px] items-center justify-center rounded-[6px] border border-control bg-white text-ink-2 transition-colors hover:bg-paper-2 hover:text-ink"
+                  className="flex min-h-[38px] min-w-[38px] items-center justify-center rounded-[6px] border border-control bg-white text-ink-2 transition-colors hover:bg-paper-2 hover:text-ink"
                 >
                   <SettingsGearIcon className="h-4 w-4" />
                 </button>
@@ -299,8 +308,12 @@ export function AppShell() {
               >
                 Batal
               </button>
-              <button type="submit" className="btn-primary w-full">
-                Buka Akses
+              <button
+                type="submit"
+                disabled={isVerifyingPin || pinInput.trim().length < 4}
+                className="btn-primary w-full"
+              >
+                {isVerifyingPin ? 'Memverifikasi…' : 'Buka Akses'}
               </button>
             </div>
           </form>
@@ -350,18 +363,27 @@ export function AppShell() {
               className="no-print flex items-start justify-between gap-2 rounded-[8px] border border-error-border bg-error-bg px-3.5 py-2.5 text-[13px] font-medium text-error-ink"
             >
               <span>{syncError}</span>
-              <button
-                type="button"
-                onClick={clearSyncError}
-                className="shrink-0 rounded px-1.5 py-0.5 text-[12px] font-medium text-error-ink hover:bg-error-hover"
-              >
-                Tutup
-              </button>
+              <div className="flex shrink-0 items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => void retrySync()}
+                  className="rounded border border-error-border bg-white px-2 py-1 text-[12px] font-medium text-error-ink hover:bg-error-hover"
+                >
+                  Coba Lagi
+                </button>
+                <button
+                  type="button"
+                  onClick={clearSyncError}
+                  className="rounded px-2 py-1 text-[12px] font-medium text-error-ink hover:bg-error-hover"
+                >
+                  Tutup
+                </button>
+              </div>
             </div>
           )}
 
           {isLoading ? (
-            <div aria-label="Memuat data dari Supabase" className="space-y-3">
+            <div aria-label="Memuat data buku besar" className="space-y-3">
               <div className="card space-y-2 p-4">
                 <div className="h-4 w-32 rounded bg-paper-3" />
                 <div className="h-8 w-48 rounded bg-paper-3" />

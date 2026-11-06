@@ -81,7 +81,7 @@ export function SortGroupControls({
           <button
             type="button"
             onClick={onToggleExpandAll}
-            className="inline-flex min-h-[28px] items-center gap-1 rounded-[6px] border border-control bg-paper-2 px-2.5 text-[11px] font-medium text-ink transition-colors hover:bg-paper-3"
+            className="inline-flex min-h-[34px] items-center gap-1 rounded-[6px] border border-control bg-paper-2 px-2.5 text-[11px] font-medium text-ink transition-colors hover:bg-paper-3"
           >
             {allExpanded ? 'Tutup Semua' : 'Buka Semua'}
           </button>

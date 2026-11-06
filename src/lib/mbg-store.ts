@@ -99,6 +99,7 @@ export interface MbgContextValue extends MbgState {
   /** Non-null when the latest cloud operation failed and state was rolled back from Supabase. */
   syncError: string | null;
   clearSyncError: () => void;
+  retrySync: () => Promise<void>;
   setActiveRole: (role: UserRole) => void;
   setActiveTab: (tab: ActiveTab) => void;
   /** "Simpan Order & Kirim ke Daftar Kurir" via `rpc_upsert_kitchen_order`. */
@@ -298,6 +299,11 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     },
     [commit]
   );
+
+  const retrySync = useCallback(async () => {
+    setSyncError(null);
+    await pullFromSupabase();
+  }, [pullFromSupabase]);
 
   /**
    * Reconciles local state with the authoritative server snapshot returned inside a single-hop
@@ -841,6 +847,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     isSupabaseLive,
     syncError,
     clearSyncError,
+    retrySync,
     setActiveRole,
     setActiveTab,
     createOrder,

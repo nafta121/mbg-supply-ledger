@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { type OrderLineInput, useMbgStore } from '../lib/mbg-store';
 import { findOpenOrder, linesForDelivery, summarizeOrderDraft } from '../lib/order-engine';
 import {
@@ -8,6 +8,8 @@ import {
   formatRp,
   formatThousands,
   getJakartaTodayYmd,
+  INVOICE_LABEL,
+  invoiceTone,
   parseKgInput,
   parseRpInput,
   shortKitchenName,
@@ -55,6 +57,7 @@ export function Tab1KitchenOrders() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   const formRef = useRef<HTMLDetailsElement>(null);
+  const didInitFormOpen = useRef(false);
 
   const kitchenById = useMemo(() => new Map(kitchens.map((k) => [k.id, k])), [kitchens]);
   const itemById = useMemo(() => new Map(items.map((it) => [it.id, it])), [items]);
@@ -83,6 +86,17 @@ export function Tab1KitchenOrders() {
     () => activeOrders.reduce((acc, o) => acc + o.lines.reduce((s, l) => s + l.qty_dispatched_kg, 0), 0),
     [activeOrders]
   );
+
+  useEffect(() => {
+    if (didInitFormOpen.current || typeof window === 'undefined' || !formRef.current) return;
+    if (allOrders.length > 0) {
+      didInitFormOpen.current = true;
+      if (window.innerWidth < 1024 && activeOrders.length > 0) {
+        formRef.current.open = false;
+      }
+    }
+  }, [allOrders.length, activeOrders.length]);
+
   const shownOrders = filter === 'active' ? activeOrders : paidOrders;
   const allExpanded = shownOrders.length > 0 && shownOrders.every((o) => expandedIds.has(o.delivery.id));
   const toggleCard = (id: string) =>
@@ -179,12 +193,20 @@ export function Tab1KitchenOrders() {
       return;
     }
     const filled = orderLines.filter((l, idx) => l.item_id || lines[idx]!.kgStr.trim() !== '');
+    const estRp = formatRp(summary.estimated_invoice);
+    const kLabel = `${kitchen.kitchen_code} — ${shortKitchenName(kitchen.name)}`;
     const res = await createOrder({ kitchen_id: kitchen.id, order_date: targetDate, lines: filled });
     if (!res.ok) {
       setFormError(res.error);
       return;
     }
     resetForm();
+    setToast({
+      kind: 'ok',
+      text: res.merged
+        ? `Order ${kLabel} (${targetDate}) digabung ke order aktif (${estRp}).`
+        : `Order baru ${kLabel} (${targetDate}) disimpan (${estRp}).`,
+    });
   };
 
   const confirmDo = (text: string) => typeof window === 'undefined' || window.confirm(text);
@@ -192,13 +214,21 @@ export function Tab1KitchenOrders() {
   const handleRemoveLine = async (lineId: string, label: string) => {
     if (!confirmDo(`Hapus ${label} dari order?`)) return;
     const res = await removeOrderLine(lineId);
-    if (!res.ok) setToast({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setToast({ kind: 'error', text: res.error });
+      return;
+    }
+    setToast({ kind: 'ok', text: `${label} dihapus dari order.` });
   };
 
   const handleDeleteOrder = async (deliveryId: string, label: string) => {
     if (!confirmDo(`Hapus seluruh order ${label}? Invoice & bagi hasilnya ikut terhapus.`)) return;
     const res = await deleteOrder(deliveryId);
-    if (!res.ok) setToast({ kind: 'error', text: res.error });
+    if (!res.ok) {
+      setToast({ kind: 'error', text: res.error });
+      return;
+    }
+    setToast({ kind: 'ok', text: `Order ${label} berhasil dihapus.` });
   };
 
   return (
@@ -217,23 +247,23 @@ export function Tab1KitchenOrders() {
 
       {/* Hairline-divided Operational Order & Timbang KPI Strip */}
       <div className="kpi-strip grid-cols-3">
-        <div className="p-3">
+        <div className="p-2.5 sm:p-3.5">
           <div className="text-[11px] text-muted">Order Aktif</div>
-          <div className="mt-0.5 truncate text-[16px] font-bold tracking-tight tabular-nums text-ink">
+          <div className="mt-0.5 text-[13px] sm:text-[16px] font-bold tracking-tight tabular-nums text-ink">
             {formatRp(activeTotal)}
           </div>
           <div className="mt-0.5 text-[11px] text-muted tabular-nums">{activeOrders.length} order berjalan</div>
         </div>
-        <div className="p-3">
+        <div className="p-2.5 sm:p-3.5">
           <div className="text-[11px] text-muted">Berat Aktif</div>
-          <div className="mt-0.5 truncate text-[16px] font-bold tracking-tight tabular-nums text-ink">
+          <div className="mt-0.5 text-[13px] sm:text-[16px] font-bold tracking-tight tabular-nums text-ink">
             {formatKgNum(activeKg)} kg
           </div>
           <div className="mt-0.5 text-[11px] text-muted tabular-nums">Total volume</div>
         </div>
-        <div className="p-3">
+        <div className="p-2.5 sm:p-3.5">
           <div className="text-[11px] text-muted">Order Lunas</div>
-          <div className="mt-0.5 truncate text-[16px] font-bold tracking-tight tabular-nums text-success">
+          <div className="mt-0.5 text-[13px] sm:text-[16px] font-bold tracking-tight tabular-nums text-success">
             {formatRp(paidTotal)}
           </div>
           <div className="mt-0.5 text-[11px] text-muted tabular-nums">{paidOrders.length} selesai</div>
@@ -349,11 +379,16 @@ export function Tab1KitchenOrders() {
                             }}
                             className="flex min-h-[42px] w-full items-center justify-between gap-2 px-3 py-1.5 text-left transition-colors hover:bg-paper-2"
                           >
-                            <span className="flex min-w-0 items-center gap-2 truncate text-[14px] text-ink">
-                              <span className="shrink-0 rounded-[4px] border border-rule bg-paper-2 px-1.5 py-0.5 font-mono text-[11px] text-muted">
-                                {k.kitchen_code}
+                            <span className="min-w-0">
+                              <span className="flex items-center gap-2 truncate text-[14px] text-ink">
+                                <span className="shrink-0 rounded-[4px] border border-rule bg-paper-2 px-1.5 py-0.5 font-mono text-[11px] text-muted">
+                                  {k.kitchen_code}
+                                </span>
+                                <span className="truncate font-medium">{shortKitchenName(k.name)}</span>
                               </span>
-                              <span className="truncate">{shortKitchenName(k.name)}</span>
+                              <span className="mt-0.5 block truncate text-[11px] text-muted">
+                                PIC: {k.pic_name}
+                              </span>
                             </span>
                             {hasOpen && <Badge tone="amber">Order aktif</Badge>}
                           </button>
@@ -492,15 +527,19 @@ export function Tab1KitchenOrders() {
                           </p>
                         </div>
                         <div className="flex shrink-0 items-center gap-2">
-                          <div className="text-right">
-                            <div className="text-[13px] font-bold tabular-nums text-ink">
-                              {formatRp(invoice?.total_invoice_amount ?? 0)}
+                          <div className="flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
+                            <div className="text-right">
+                              <div className="text-[13px] font-bold tabular-nums text-ink">
+                                {formatRp(invoice?.total_invoice_amount ?? 0)}
+                              </div>
+                              <div className="text-[11px] font-medium tabular-nums text-signal">
+                                Margin {formatRp(marginTotal)}
+                              </div>
                             </div>
-                            <div className="text-[11px] font-medium tabular-nums text-signal">
-                              Margin {formatRp(marginTotal)}
-                            </div>
+                            <Badge tone={invoiceTone(invoice?.payment_status ?? 'UNPAID')}>
+                              {INVOICE_LABEL[invoice?.payment_status ?? 'UNPAID']}
+                            </Badge>
                           </div>
-                          <Badge tone={locked ? 'green' : 'amber'}>{locked ? 'Lunas' : 'Belum Bayar'}</Badge>
                           <ChevronDownIcon
                             className={`h-4 w-4 shrink-0 text-muted transition-transform motion-reduce:transition-none ${
                               isExpanded ? 'rotate-180' : ''
@@ -537,7 +576,7 @@ export function Tab1KitchenOrders() {
                                         type="button"
                                         onClick={() => handleRemoveLine(l.id, name)}
                                         aria-label={`Hapus ${name} dari order ${title}`}
-                                        className="flex h-7 w-7 items-center justify-center rounded-[4px] border border-transparent text-base text-muted hover:border-error-border hover:bg-error-bg hover:text-error-ink"
+                                        className="flex min-h-[36px] min-w-[36px] items-center justify-center rounded-[6px] border border-transparent text-base text-muted hover:border-error-border hover:bg-error-bg hover:text-error-ink"
                                       >
                                         ×
                                       </button>
@@ -558,32 +597,43 @@ export function Tab1KitchenOrders() {
                               <span className="text-muted">Bagi hasil (Tim + Koperasi)</span>
                               <span className="font-bold tabular-nums text-signal">{formatRp(marginTotal)}</span>
                             </div>
-                            {!hasPaidOut && (
-                              <div className={`grid gap-2 pt-1 ${locked ? 'grid-cols-1' : 'grid-cols-3'}`}>
-                                <button
-                                  type="button"
-                                  onClick={() => setEditingDeliveryId(delivery.id)}
-                                  className="btn-secondary min-h-[36px] text-[12px]"
-                                >
-                                  Edit Order
-                                </button>
-                                {!locked && (
-                                  <>
-                                    <button
-                                      type="button"
-                                      onClick={() => startAddToKitchen(delivery.kitchen_id, delivery.delivery_date)}
-                                      className="btn-secondary min-h-[36px] text-[12px]"
-                                    >
-                                      + Tambah Barang
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() => handleDeleteOrder(delivery.id, title)}
-                                      className="btn-secondary min-h-[36px] border-error-border text-[12px] !text-error hover:!bg-error-bg"
-                                    >
-                                      Hapus Order
-                                    </button>
-                                  </>
+                            {hasPaidOut ? (
+                              <p className="pt-0.5 text-[11px] text-muted">
+                                Order dikunci permanen karena bagi hasil sudah dicairkan.
+                              </p>
+                            ) : (
+                              <div className="space-y-1.5 pt-1">
+                                <div className={`grid gap-2 ${locked ? 'grid-cols-1' : 'grid-cols-3'}`}>
+                                  <button
+                                    type="button"
+                                    onClick={() => setEditingDeliveryId(delivery.id)}
+                                    className="btn-secondary min-h-[36px] text-[12px]"
+                                  >
+                                    Edit Order
+                                  </button>
+                                  {!locked && (
+                                    <>
+                                      <button
+                                        type="button"
+                                        onClick={() => startAddToKitchen(delivery.kitchen_id, delivery.delivery_date)}
+                                        className="btn-secondary min-h-[36px] text-[12px]"
+                                      >
+                                        + Tambah Barang
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDeleteOrder(delivery.id, title)}
+                                        className="btn-secondary min-h-[36px] border-error-border text-[12px] !text-error hover:!bg-error-bg"
+                                      >
+                                        Hapus Order
+                                      </button>
+                                    </>
+                                  )}
+                                </div>
+                                {locked && (
+                                  <p className="text-[11px] text-muted">
+                                    Penambahan &amp; penghapusan barang dikunci karena invoice sudah lunas.
+                                  </p>
                                 )}
                               </div>
                             )}

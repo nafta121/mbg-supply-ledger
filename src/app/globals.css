@@ -1,7 +1,7 @@
 /* Hallmark · shape: app screen · genre: modern-minimal · theme: brand · redesign: full
- * paper: oklch(96.3% 0.005 258) · accent: oklch(19.1% 0 0) · display: Geist · body: Geist
+ * paper: oklch(96.8% 0.007 85) · accent: oklch(39.2% 0.095 152) · display: Geist · body: Geist
  * nav: responsive workbench bar + mobile tablist · signature: expandable kitchen order, weighing and invoice ledger queue · states: default, hover, focus-visible, active, disabled, loading, empty, error
- * axes: light/grotesk-sans/neutral · posture: settled · contrast: pass · v2.0.0 */
+ * axes: light/grotesk-sans/warm · posture: settled · contrast: pass · v2.0.0 */
 /* Hallmark · pre-emit critique: P9 H9 E9 S9 R9 V9 · weakest: H, recomposed app screens so hairline KPI strips and unified ledger toolbars lead above the expandable queue */
 @import url("./tokens.css");
 @import url("./base.css");

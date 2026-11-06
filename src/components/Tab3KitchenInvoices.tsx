@@ -14,7 +14,7 @@ import {
   type SortMode,
 } from './OrderInvoiceEditSheet';
 import { PrintableDocument, type PrintDocMode } from './PrintDocuments';
-import { Badge, Card, NoAccess, Toast, type ToastState } from './ui';
+import { Badge, BottomSheet, Card, NoAccess, SegmentedControl, Toast, type ToastState } from './ui';
 
 type InvFilter = 'unpaid' | 'paid' | 'all';
 
@@ -27,6 +27,7 @@ export function Tab3KitchenInvoices() {
   const [groupBy, setGroupBy] = useState<GroupMode>('none');
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
+  const [confirmPaidId, setConfirmPaidId] = useState<string | null>(null);
   const [printDoc, setPrintDoc] = useState<PrintDocMode | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
 
@@ -81,26 +82,28 @@ export function Tab3KitchenInvoices() {
           </span>
         </div>
 
+        <Toast toast={toast} onClose={() => setToast(null)} />
+
         {/* Hairline-divided KPI Ledger Strip + Collection Progress */}
         <Card className="overflow-hidden">
           <div className="grid grid-cols-3 divide-x divide-rule">
-            <div className="p-3.5">
+            <div className="p-2.5 sm:p-3.5">
               <div className="text-[11px] text-muted">Belum Dibayar</div>
-              <div className="mt-1 truncate text-[17px] font-bold tracking-tight tabular-nums text-ink">
+              <div className="mt-1 text-[13px] sm:text-[17px] font-bold tracking-tight tabular-nums text-ink">
                 {formatRp(unpaidTotal)}
               </div>
               <div className="mt-0.5 text-[11px] text-muted tabular-nums">{unpaid.length} tagihan terbuka</div>
             </div>
-            <div className="p-3.5">
+            <div className="p-2.5 sm:p-3.5">
               <div className="text-[11px] text-muted">Sudah Lunas</div>
-              <div className="mt-1 truncate text-[17px] font-bold tracking-tight tabular-nums text-success">
+              <div className="mt-1 text-[13px] sm:text-[17px] font-bold tracking-tight tabular-nums text-success">
                 {formatRp(paidTotal)}
               </div>
               <div className="mt-0.5 text-[11px] text-muted tabular-nums">{paid.length} tagihan selesai</div>
             </div>
-            <div className="p-3.5">
+            <div className="p-2.5 sm:p-3.5">
               <div className="text-[11px] text-muted">Total Tagihan</div>
-              <div className="mt-1 truncate text-[17px] font-bold tracking-tight tabular-nums text-ink">
+              <div className="mt-1 text-[13px] sm:text-[17px] font-bold tracking-tight tabular-nums text-ink">
                 {formatRp(grandTotal)}
               </div>
               <div className="mt-0.5 text-[11px] text-muted tabular-nums">{paidPct}% terbayar</div>
@@ -113,51 +116,48 @@ export function Tab3KitchenInvoices() {
           </div>
         </Card>
 
-        {/* Unified Invoice Filter & Sort/Group Toolbar */}
-        <div className="ledger-toolbar space-y-2.5 p-3">
-          <div role="group" aria-label="Filter status" className="flex flex-wrap gap-1.5">
-            {(
-              [
-                { v: 'unpaid', l: `Belum Bayar (${unpaid.length})` },
-                { v: 'paid', l: `Lunas (${paid.length})` },
-                { v: 'all', l: `Semua (${invoices.length})` },
-              ] as const
-            ).map((f) => (
-              <button
-                key={f.v}
-                type="button"
-                aria-pressed={invFilter === f.v}
-                onClick={() => setInvFilter(f.v)}
-                className={`min-h-[34px] rounded-[6px] px-3 text-[12px] font-medium transition-colors ${
-                  invFilter === f.v
-                    ? 'bg-accent text-white'
-                    : 'border border-control bg-white text-ink-2 hover:bg-paper-2'
-                }`}
-              >
-                {f.l}
-              </button>
-            ))}
+        <div className="space-y-3.5 lg:grid lg:grid-cols-12 lg:items-start lg:gap-4 lg:space-y-0">
+          <div className="space-y-3.5 lg:col-span-5 lg:sticky lg:top-28">
+            {/* Unified Invoice Filter & Sort/Group Toolbar */}
+            <div className="ledger-toolbar">
+              <div className="hs-card-header bg-paper-2">
+                <h2 className="text-[15px] font-medium text-ink">Filter &amp; Urutan Invoice</h2>
+                <span className="inline-flex h-6 items-center rounded-[6px] border border-rule bg-white px-2 text-[11px] font-medium text-ink-2 tabular-nums">
+                  {filteredInvoices.length} tampil
+                </span>
+              </div>
+              <div className="space-y-2.5 p-3">
+                <SegmentedControl
+                  label="Filter status invoice"
+                  value={invFilter}
+                  onChange={setInvFilter}
+                  options={[
+                    { value: 'unpaid', label: `Belum Bayar (${unpaid.length})` },
+                    { value: 'paid', label: `Lunas (${paid.length})` },
+                    { value: 'all', label: `Semua (${invoices.length})` },
+                  ]}
+                />
+
+                <SortGroupControls
+                  sortBy={sortBy}
+                  onSortChange={setSortBy}
+                  groupBy={groupBy}
+                  onGroupChange={setGroupBy}
+                  idPrefix="invoice"
+                  allExpanded={allExpanded}
+                  onToggleExpandAll={toggleExpandAll}
+                  itemCount={filteredInvoices.length}
+                />
+              </div>
+            </div>
           </div>
 
-          <SortGroupControls
-            sortBy={sortBy}
-            onSortChange={setSortBy}
-            groupBy={groupBy}
-            onGroupChange={setGroupBy}
-            idPrefix="invoice"
-            allExpanded={allExpanded}
-            onToggleExpandAll={toggleExpandAll}
-            itemCount={filteredInvoices.length}
-          />
-        </div>
+          <div className="space-y-3.5 lg:col-span-7">
+            {filteredInvoices.length === 0 && (
+              <Card className="p-6 text-center text-[13px] text-muted">Tidak ada invoice pada filter ini.</Card>
+            )}
 
-        <Toast toast={toast} onClose={() => setToast(null)} />
-
-        {filteredInvoices.length === 0 && (
-          <Card className="p-6 text-center text-[13px] text-muted">Tidak ada invoice pada filter ini.</Card>
-        )}
-
-        <div className="space-y-4">
+            <div className="space-y-4">
           {groupedInvoices.map((bucket) => {
             const bucketTotal = sumIdr(bucket.items.map((i) => i.total_invoice_amount));
             return (
@@ -214,10 +214,12 @@ export function Tab3KitchenInvoices() {
                             </p>
                           </div>
                           <div className="flex shrink-0 items-center gap-2">
-                            <span className="text-[13px] font-bold tabular-nums text-ink">
-                              {formatRp(inv.total_invoice_amount)}
-                            </span>
-                            <Badge tone={invoiceTone(inv.payment_status)}>{INVOICE_LABEL[inv.payment_status]}</Badge>
+                            <div className="flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
+                              <span className="text-[13px] font-bold tabular-nums text-ink">
+                                {formatRp(inv.total_invoice_amount)}
+                              </span>
+                              <Badge tone={invoiceTone(inv.payment_status)}>{INVOICE_LABEL[inv.payment_status]}</Badge>
+                            </div>
                             <ChevronDownIcon
                               className={`h-4 w-4 shrink-0 text-muted transition-transform motion-reduce:transition-none ${
                                 isExpanded ? 'rotate-180' : ''
@@ -284,20 +286,47 @@ export function Tab3KitchenInvoices() {
 
                               {isAdmin && (
                                 <div className="space-y-2 pt-0.5">
-                                  {!isPaid && (
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        const res = await markInvoicePaid(inv.id);
-                                        if (!res.ok) {
-                                          setToast({ kind: 'error', text: res.error });
-                                        }
-                                      }}
-                                      className={`${inv.id === firstExpandedUnpaidId ? 'btn-primary' : 'btn-secondary'} w-full`}
-                                    >
-                                      Tandai Lunas
-                                    </button>
-                                  )}
+                                  {!isPaid &&
+                                    (confirmPaidId === inv.id ? (
+                                      <div className="flex items-center justify-between gap-2 rounded-[6px] border border-rule bg-white px-3 py-2">
+                                        <span className="text-[13px] font-medium text-ink">Tandai lunas?</span>
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={async () => {
+                                              setConfirmPaidId(null);
+                                              const res = await markInvoicePaid(inv.id);
+                                              if (!res.ok) {
+                                                setToast({ kind: 'error', text: res.error });
+                                                return;
+                                              }
+                                              setToast({
+                                                kind: 'ok',
+                                                text: 'Invoice berhasil ditandai Lunas.',
+                                              });
+                                            }}
+                                            className="btn-primary min-h-[36px] px-3 text-[12px]"
+                                          >
+                                            Ya
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setConfirmPaidId(null)}
+                                            className="btn-secondary min-h-[36px] px-3 text-[12px]"
+                                          >
+                                            Tidak
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmPaidId(inv.id)}
+                                        className={`${inv.id === firstExpandedUnpaidId ? 'btn-primary' : 'btn-secondary'} w-full`}
+                                      >
+                                        Tandai Lunas
+                                      </button>
+                                    ))}
                                   <div className={`grid gap-2 ${!hasPaidOut ? 'grid-cols-3' : 'grid-cols-2'}`}>
                                     {!hasPaidOut && (
                                       <button
@@ -334,19 +363,26 @@ export function Tab3KitchenInvoices() {
                                     >
                                       Salin &amp; WA
                                     </button>
+                                      {hasPaidOut && (
+                                        <p className="col-span-2 pt-0.5 text-[11px] text-muted">
+                                          Pengeditan invoice dikunci karena bagi hasil sudah dicairkan.
+                                        </p>
+                                      )}
+                                    </div>
                                   </div>
-                                </div>
-                              )}
-                            </div>
-                          </>
-                        )}
-                      </Card>
-                    );
-                  })}
+                                )}
+                              </div>
+                            </>
+                          )}
+                        </Card>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -357,30 +393,23 @@ export function Tab3KitchenInvoices() {
         onSaved={(msg) => setToast({ kind: 'ok', text: msg })}
       />
 
-      {/* On-screen print preview */}
-      {printDoc && (
-        <div className="no-print fixed inset-0 z-50 flex items-end justify-center bg-scrim sm:items-center sm:p-4">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Pratinjau dokumen"
-            className="max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[8px] border border-rule bg-white p-4 sm:rounded-[8px]"
+      {/* Accessible On-screen print preview via BottomSheet */}
+      <BottomSheet
+        open={Boolean(printDoc)}
+        title="Pratinjau Invoice"
+        onClose={() => setPrintDoc(null)}
+        headerActions={
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="btn-primary min-h-[36px] px-3 text-[12px]"
           >
-            <div className="mb-3 flex items-center justify-between gap-2 border-b border-rule pb-3">
-              <span className="text-[15px] font-medium text-ink">Pratinjau Invoice</span>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => window.print()} className="btn-primary min-h-[34px] text-[12px]">
-                  Cetak / PDF
-                </button>
-                <button type="button" onClick={() => setPrintDoc(null)} className="btn-secondary min-h-[34px] text-[12px]">
-                  Tutup
-                </button>
-              </div>
-            </div>
-            <PrintableDocument doc={printDoc} />
-          </div>
-        </div>
-      )}
+            Cetak / PDF
+          </button>
+        }
+      >
+        {printDoc && <PrintableDocument doc={printDoc} />}
+      </BottomSheet>
 
       <div className="print-only p-6">{printDoc && <PrintableDocument doc={printDoc} />}</div>
     </section>

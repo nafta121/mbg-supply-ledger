@@ -13,7 +13,15 @@ import {
   sumIdr,
 } from '../lib/ui-format';
 import { ChevronDownIcon } from './Icons';
-import { Badge, Card, NoAccess, StatRow, Toast, type ToastState } from './ui';
+import {
+  type GroupMode,
+  sortAndGroupItems,
+  SortGroupControls,
+  type SortMode,
+} from './OrderInvoiceEditSheet';
+import { Badge, Card, NoAccess, SegmentedControl, StatRow, Toast, type ToastState } from './ui';
+
+type ProfitFilter = 'all' | 'avail' | 'locked' | 'paid_out';
 
 export function Tab4ProfitSharing() {
   const {
@@ -30,6 +38,9 @@ export function Tab4ProfitSharing() {
   const [teamPctInput, setTeamPctInput] = useState(String(splitConfig.team_share_pct));
   const [toast, setToast] = useState<ToastState>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const [profitFilter, setProfitFilter] = useState<ProfitFilter>('all');
+  const [sortBy, setSortBy] = useState<SortMode>('date_desc');
+  const [groupBy, setGroupBy] = useState<GroupMode>('none');
 
   const kitchenById = useMemo(() => new Map(kitchens.map((k) => [k.id, k])), [kitchens]);
 
@@ -68,7 +79,29 @@ export function Tab4ProfitSharing() {
       })),
     [invoices, kitchenById, ledgerEntries]
   );
-  const allExpanded = invoiceProfits.length > 0 && invoiceProfits.every(({ inv }) => expandedIds.has(inv.id));
+
+  const filteredProfits = useMemo(() => {
+    if (profitFilter === 'all') return invoiceProfits;
+    return invoiceProfits.filter(({ profit }) => {
+      const s = profit.coop_status;
+      if (profitFilter === 'avail') return s === 'AVAILABLE_FOR_PAYOUT' || profit.team_status === 'AVAILABLE_FOR_PAYOUT';
+      if (profitFilter === 'locked') return s === 'LOCKED_UNPAID' || profit.team_status === 'LOCKED_UNPAID';
+      return s === 'PAID_OUT' && profit.team_status === 'PAID_OUT';
+    });
+  }, [invoiceProfits, profitFilter]);
+
+  const groupedProfits = useMemo(
+    () =>
+      sortAndGroupItems(filteredProfits, sortBy, groupBy, {
+        getDate: (p) => p.inv.invoice_date || '',
+        getKitchenName: (p) => (p.kitchen ? shortKitchenName(p.kitchen.name) : '-'),
+        getKitchenCode: (p) => p.kitchen?.kitchen_code ?? '-',
+        getCode: (p) => p.inv.invoice_number,
+      }),
+    [filteredProfits, sortBy, groupBy]
+  );
+
+  const allExpanded = filteredProfits.length > 0 && filteredProfits.every(({ inv }) => expandedIds.has(inv.id));
   const toggleInvoiceRow = (id: string) =>
     setExpandedIds((prev) => {
       const next = new Set(prev);
@@ -77,7 +110,7 @@ export function Tab4ProfitSharing() {
       return next;
     });
   const toggleExpandAll = () =>
-    setExpandedIds(allExpanded ? new Set() : new Set(invoiceProfits.map(({ inv }) => inv.id)));
+    setExpandedIds(allExpanded ? new Set() : new Set(filteredProfits.map(({ inv }) => inv.id)));
 
   if (activeRole === 'FIELD_TEAM') return <NoAccess />;
 
@@ -90,10 +123,24 @@ export function Tab4ProfitSharing() {
     if (!isAdmin) return;
     const total = who === 'ALL' ? availTotal : who === 'TEAM' ? availTeam : availCoop;
     if (total <= 0) return;
+    const whoLabel = who === 'ALL' ? 'Tim & Koperasi' : who === 'TEAM' ? 'Tim' : 'Koperasi';
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(
+        `Cairkan bagi hasil ${whoLabel} sebesar ${formatRp(total)}? Status akan dikunci permanen sebagai Sudah Cair.`
+      )
+    ) {
+      return;
+    }
     const res = await executePayout(who === 'ALL' ? 'BOTH' : who);
     if (!res.ok) {
       setToast({ kind: 'error', text: res.error });
+      return;
     }
+    setToast({
+      kind: 'ok',
+      text: `Pencairan bagi hasil ${whoLabel} sebesar ${formatRp(total)} berhasil dicatat.`,
+    });
   };
 
   const applySplit = async (teamVal: number) => {
@@ -104,7 +151,12 @@ export function Tab4ProfitSharing() {
     const res = await updateProfitSplitPercentage(team, coop);
     if (!res.ok) {
       setToast({ kind: 'error', text: res.error });
+      return;
     }
+    setToast({
+      kind: 'ok',
+      text: `Porsi bagi hasil disimpan: Tim ${formatKgNum(team)}% : Koperasi ${formatKgNum(coop)}%.`,
+    });
   };
 
   return (
@@ -143,20 +195,20 @@ export function Tab4ProfitSharing() {
             >
               <div
                 style={{ width: `${coopPct}%` }}
-                className="h-full bg-signal"
+                className="h-full bg-accent"
               />
               <div
                 style={{ width: `${teamPct}%` }}
-                className="h-full border-l-2 border-white bg-accent"
+                className="h-full border-l-2 border-white bg-ink-2"
               />
             </div>
             <div className="flex items-center justify-between text-[11px] text-muted tabular-nums">
               <span className="inline-flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-[2px] bg-signal" />
+                <span className="h-2 w-2 rounded-[2px] bg-accent" />
                 Koperasi ({coopPct}%)
               </span>
               <span className="inline-flex items-center gap-1.5">
-                <span className="h-2 w-2 rounded-[2px] bg-accent" />
+                <span className="h-2 w-2 rounded-[2px] bg-ink-2" />
                 Tim ({teamPct}%)
               </span>
             </div>
@@ -195,6 +247,11 @@ export function Tab4ProfitSharing() {
               >
                 Cairkan Semua ({formatRp(availTotal)})
               </button>
+              {availTotal <= 0 && lockedTotal > 0 && (
+                <p className="text-[11px] text-muted">
+                  Tandai invoice sebagai Lunas di tab Invoice Dapur untuk membuka pencairan bagi hasil.
+                </p>
+              )}
             </div>
           )}
         </div>
@@ -223,73 +280,69 @@ export function Tab4ProfitSharing() {
         </div>
       </Card>
 
-      {/* Preline Accordion: Atur Porsi Bagi Hasil */}
-      <details className="card group overflow-hidden">
-        <summary className="flex min-h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[14px] font-medium text-ink transition-colors hover:bg-paper-2">
-          <span>Atur Porsi Bagi Hasil</span>
-          <span className="flex items-center gap-2 text-[13px] tabular-nums text-muted">
-            Tim {teamPct}% : Koperasi {coopPct}%
-            <ChevronDownIcon className="h-4 w-4 text-muted transition-transform motion-reduce:transition-none group-open:rotate-180" />
-          </span>
-        </summary>
-        <div className="space-y-3 border-t border-rule bg-paper-2 p-4">
-          {isAdmin ? (
-            <>
-              <div className="grid grid-cols-3 gap-2">
-                {[60, 50, 70].map((t) => (
+      {/* Preline Accordion: Atur Porsi Bagi Hasil (Admin only) */}
+      {isAdmin && (
+        <details className="card group overflow-hidden">
+          <summary className="flex min-h-[46px] cursor-pointer list-none items-center justify-between px-4 text-[14px] font-medium text-ink transition-colors hover:bg-paper-2">
+            <span>Atur Porsi Bagi Hasil</span>
+            <span className="flex items-center gap-2 text-[13px] tabular-nums text-muted">
+              Tim {teamPct}% : Koperasi {coopPct}%
+              <ChevronDownIcon className="h-4 w-4 text-muted transition-transform motion-reduce:transition-none group-open:rotate-180" />
+            </span>
+          </summary>
+          <div className="space-y-3 border-t border-rule bg-paper-2 p-4">
+            <div className="grid grid-cols-3 gap-2">
+              {[60, 50, 70].map((t) => {
+                const selected = Number(teamPctInput) === t;
+                return (
                   <button
                     key={t}
                     type="button"
-                    aria-pressed={teamPct === t}
-                    onClick={() => applySplit(t)}
+                    aria-pressed={selected}
+                    onClick={() => setTeamPctInput(String(t))}
                     className={`btn-chip min-h-[36px] tabular-nums ${
-                      teamPct === t ? '!border-accent !bg-accent !text-white' : ''
+                      selected ? '!border-accent !bg-accent !text-white' : ''
                     }`}
                   >
                     {t} : {100 - t}
                   </button>
-                ))}
+                );
+              })}
+            </div>
+            <div className="flex items-end gap-2">
+              <div className="flex-1">
+                <label htmlFor="split-team" className="mb-1 block text-[12px] font-medium text-muted">
+                  Tim (%)
+                </label>
+                <input
+                  id="split-team"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={teamPctInput}
+                  onChange={(e) => setTeamPctInput(e.target.value)}
+                  className="field-input text-right tabular-nums"
+                />
               </div>
-              <div className="flex items-end gap-2">
-                <div className="flex-1">
-                  <label htmlFor="split-team" className="mb-1 block text-[12px] font-medium text-muted">
-                    Tim (%)
-                  </label>
-                  <input
-                    id="split-team"
-                    type="number"
-                    inputMode="decimal"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={teamPctInput}
-                    onChange={(e) => setTeamPctInput(e.target.value)}
-                    className="field-input text-right tabular-nums"
-                  />
+              <div className="flex-1">
+                <span className="mb-1 block text-[12px] font-medium text-muted">Koperasi (%)</span>
+                <div className="field-input flex items-center justify-end bg-paper-3 tabular-nums text-muted">
+                  {formatKgNum(Math.max(0, 100 - (Number(teamPctInput) || 0)))}
                 </div>
-                <div className="flex-1">
-                  <span className="mb-1 block text-[12px] font-medium text-muted">Koperasi (%)</span>
-                  <div className="field-input flex items-center justify-end bg-paper-3 tabular-nums text-muted">
-                    {Math.max(0, 100 - (Number(teamPctInput) || 0)).toFixed(2)}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => applySplit(Number(teamPctInput))}
-                  className="btn-primary"
-                >
-                  Simpan
-                </button>
               </div>
-            </>
-          ) : (
-            <p className="flex items-center gap-x-2 text-[13px] text-muted">
-              <span>Tim {teamPct}%</span>
-              <span>Koperasi {coopPct}%</span>
-            </p>
-          )}
-        </div>
-      </details>
+              <button
+                type="button"
+                onClick={() => applySplit(Number(teamPctInput))}
+                className="btn-primary"
+              >
+                Simpan
+              </button>
+            </div>
+          </div>
+        </details>
+      )}
 
       {payoutBatches.length > 0 && (
         <details className="card group overflow-hidden">
@@ -320,104 +373,152 @@ export function Tab4ProfitSharing() {
         </div>
 
         {/* Per-kitchen breakdown (Expandable Ledger Queue) */}
-        <Card as="section" className="overflow-hidden lg:col-span-7">
-        <div className="hs-card-header bg-paper-2">
-          <div className="flex items-center gap-2">
-            <h2 className="text-[14px] font-medium text-ink">Rincian per Invoice Dapur</h2>
-            <span className="inline-flex h-6 items-center rounded-[6px] border border-rule bg-white px-2 text-[11px] font-medium text-ink-2 tabular-nums">
-              {invoices.length} invoice
-            </span>
+        <div className="space-y-3.5 lg:col-span-7">
+          <div className="ledger-toolbar">
+            <div className="hs-card-header bg-paper-2">
+              <h2 className="text-[15px] font-medium text-ink">Rincian per Invoice Dapur</h2>
+              <span className="inline-flex h-6 items-center rounded-[6px] border border-rule bg-white px-2 text-[11px] font-medium text-ink-2 tabular-nums">
+                {filteredProfits.length} invoice
+              </span>
+            </div>
+            <div className="space-y-2.5 p-3">
+              <SegmentedControl
+                label="Filter status bagi hasil"
+                value={profitFilter}
+                onChange={setProfitFilter}
+                options={[
+                  { value: 'all', label: `Semua (${invoiceProfits.length})` },
+                  { value: 'avail', label: 'Siap Cair' },
+                  { value: 'locked', label: 'Menunggu' },
+                  { value: 'paid_out', label: 'Sudah Cair' },
+                ]}
+              />
+
+              <SortGroupControls
+                sortBy={sortBy}
+                onSortChange={setSortBy}
+                groupBy={groupBy}
+                onGroupChange={setGroupBy}
+                idPrefix="profit"
+                allExpanded={allExpanded}
+                onToggleExpandAll={toggleExpandAll}
+                itemCount={filteredProfits.length}
+              />
+            </div>
           </div>
-          {invoiceProfits.length > 0 && (
-            <button
-              type="button"
-              aria-pressed={allExpanded}
-              onClick={toggleExpandAll}
-              className="btn-chip min-h-[28px] shrink-0 px-2.5 text-[11px]"
-            >
-              {allExpanded ? 'Tutup Semua' : 'Buka Semua'}
-            </button>
+
+          {filteredProfits.length === 0 ? (
+            <Card className="p-6 text-center text-[13px] text-muted">
+              Tidak ada rincian bagi hasil pada filter ini.
+            </Card>
+          ) : (
+            <div className="space-y-4">
+              {groupedProfits.map((bucket) => {
+                const bucketMargin = sumIdr(bucket.items.map((p) => p.profit.total_margin));
+                return (
+                  <div key={bucket.key} className="space-y-2.5">
+                    {groupBy !== 'none' && (
+                      <div className="flex items-center justify-between gap-2 rounded-[6px] border border-rule bg-group px-3 py-2">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          {bucket.sublabel && (
+                            <span className="shrink-0 rounded-[4px] border border-control bg-white px-1.5 py-0.5 font-mono text-[11px] font-medium text-ink-2">
+                              {bucket.sublabel}
+                            </span>
+                          )}
+                          <span className="truncate text-[13px] font-bold text-ink">{bucket.label}</span>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2 text-right text-[11px] font-medium text-ink-2 tabular-nums">
+                          <span>{bucket.items.length} invoice</span>
+                          <span className="font-bold text-ink">{formatRp(bucketMargin)}</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <Card as="section" className="overflow-hidden">
+                      <ul className="divide-y divide-rule-2">
+                        {bucket.items.map(({ inv, kitchen, profit }) => {
+                          const teamStatus: LedgerPayoutStatus = profit.team_status;
+                          const coopStatus: LedgerPayoutStatus = profit.coop_status;
+                          const split = teamStatus !== coopStatus;
+                          const isExpanded = expandedIds.has(inv.id);
+
+                          return (
+                            <li key={inv.id}>
+                              <button
+                                type="button"
+                                aria-expanded={isExpanded}
+                                onClick={() => toggleInvoiceRow(inv.id)}
+                                className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-paper-2"
+                              >
+                                <div className="min-w-0">
+                                  <div className="truncate text-[14px] font-medium text-ink">
+                                    {kitchen ? `${kitchen.kitchen_code} — ${shortKitchenName(kitchen.name)}` : '-'}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-x-2 truncate font-mono text-[11px] text-muted tabular-nums">
+                                    <span>{inv.invoice_date}</span>
+                                    <span>{inv.invoice_number}</span>
+                                    <span>({formatKgNum(profit.total_accepted_kg)} kg)</span>
+                                  </div>
+                                </div>
+                                <div className="flex shrink-0 items-center gap-2">
+                                  <div className="flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
+                                    <span className="text-[13px] font-bold tabular-nums text-ink">
+                                      {formatRp(profit.total_margin)}
+                                    </span>
+                                    {!split && <Badge tone={payoutTone(coopStatus)}>{PAYOUT_LABEL[coopStatus]}</Badge>}
+                                  </div>
+                                  <ChevronDownIcon
+                                    className={`h-4 w-4 shrink-0 text-muted transition-transform motion-reduce:transition-none ${
+                                      isExpanded ? 'rotate-180' : ''
+                                    }`}
+                                  />
+                                </div>
+                              </button>
+                              {isExpanded && (
+                                <div className="px-4 pb-3.5">
+                                  <div className="grid grid-cols-3 divide-x divide-rule rounded-[6px] border border-rule bg-paper-2 py-2 text-[12px]">
+                                    <div className="min-w-0 px-2.5">
+                                      <div className="truncate text-muted">Total Margin</div>
+                                      <div className="mt-0.5 truncate font-bold tabular-nums text-ink">
+                                        {formatRp(profit.total_margin)}
+                                      </div>
+                                    </div>
+                                    <div className="min-w-0 px-2.5">
+                                      <div className="truncate text-muted">Hak Tim</div>
+                                      <div className="mt-0.5 truncate font-bold tabular-nums text-ink">
+                                        {formatRp(profit.team_amount)}
+                                      </div>
+                                      {split && (
+                                        <div className="mt-1">
+                                          <Badge tone={payoutTone(teamStatus)}>{PAYOUT_LABEL[teamStatus]}</Badge>
+                                        </div>
+                                      )}
+                                    </div>
+                                    <div className="min-w-0 px-2.5 text-right">
+                                      <div className="truncate text-muted">Hak Koperasi</div>
+                                      <div className="mt-0.5 truncate font-bold tabular-nums text-signal">
+                                        {formatRp(profit.coop_amount)}
+                                      </div>
+                                      {split && (
+                                        <div className="mt-1">
+                                          <Badge tone={payoutTone(coopStatus)}>{PAYOUT_LABEL[coopStatus]}</Badge>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </Card>
+                  </div>
+                );
+              })}
+            </div>
           )}
         </div>
-        {invoices.length === 0 ? (
-          <div className="p-6 text-center text-[13px] text-muted">Belum ada rincian bagi hasil.</div>
-        ) : (
-          <ul className="divide-y divide-rule-2">
-            {invoiceProfits.map(({ inv, kitchen, profit }) => {
-              const teamStatus: LedgerPayoutStatus = profit.team_status;
-              const coopStatus: LedgerPayoutStatus = profit.coop_status;
-              const split = teamStatus !== coopStatus;
-              const isExpanded = expandedIds.has(inv.id);
-
-              return (
-                <li key={inv.id}>
-                  <button
-                    type="button"
-                    aria-expanded={isExpanded}
-                    onClick={() => toggleInvoiceRow(inv.id)}
-                    className="flex w-full items-center justify-between gap-2 px-4 py-3 text-left transition-colors hover:bg-paper-2"
-                  >
-                    <div className="min-w-0">
-                      <div className="truncate text-[14px] font-medium text-ink">
-                        {kitchen ? `${kitchen.kitchen_code} — ${shortKitchenName(kitchen.name)}` : '-'}
-                      </div>
-                      <div className="flex items-center gap-x-2 truncate text-[11px] text-muted tabular-nums">
-                        <span className="font-mono">{inv.invoice_number}</span>
-                        <span>({formatKgNum(profit.total_accepted_kg)} kg)</span>
-                      </div>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      <span className="text-[13px] font-bold tabular-nums text-ink">
-                        {formatRp(profit.total_margin)}
-                      </span>
-                      {!split && <Badge tone={payoutTone(coopStatus)}>{PAYOUT_LABEL[coopStatus]}</Badge>}
-                      <ChevronDownIcon
-                        className={`h-4 w-4 shrink-0 text-muted transition-transform motion-reduce:transition-none ${
-                          isExpanded ? 'rotate-180' : ''
-                        }`}
-                      />
-                    </div>
-                  </button>
-                  {isExpanded && (
-                    <div className="px-4 pb-3.5">
-                      <div className="grid grid-cols-3 divide-x divide-rule rounded-[6px] border border-rule bg-paper-2 py-2 text-[12px]">
-                        <div className="min-w-0 px-2.5">
-                          <div className="truncate text-muted">Total Margin</div>
-                          <div className="mt-0.5 truncate font-bold tabular-nums text-ink">
-                            {formatRp(profit.total_margin)}
-                          </div>
-                        </div>
-                        <div className="min-w-0 px-2.5">
-                          <div className="truncate text-muted">Hak Tim</div>
-                          <div className="mt-0.5 truncate font-bold tabular-nums text-ink">
-                            {formatRp(profit.team_amount)}
-                          </div>
-                          {split && (
-                            <div className="mt-1">
-                              <Badge tone={payoutTone(teamStatus)}>{PAYOUT_LABEL[teamStatus]}</Badge>
-                            </div>
-                          )}
-                        </div>
-                        <div className="min-w-0 px-2.5 text-right">
-                          <div className="truncate text-muted">Hak Koperasi</div>
-                          <div className="mt-0.5 truncate font-bold tabular-nums text-signal">
-                            {formatRp(profit.coop_amount)}
-                          </div>
-                          {split && (
-                            <div className="mt-1">
-                              <Badge tone={payoutTone(coopStatus)}>{PAYOUT_LABEL[coopStatus]}</Badge>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
-        </Card>
       </div>
     </section>
   );

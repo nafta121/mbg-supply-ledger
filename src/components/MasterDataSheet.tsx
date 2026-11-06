@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { type ItemMasterInput, type KitchenMasterInput, type MasterSaveResult, useMbgStore } from '../lib/mbg-store';
 import { formatRp, formatThousands } from '../lib/ui-format';
+import { ChevronDownIcon } from './Icons';
 import { BottomSheet, SegmentedControl, Toast, type ToastState } from './ui';
 
 type MasterTab = 'kitchens' | 'items';
@@ -141,10 +142,11 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
     setEditing(null);
   };
 
-  const done = async (resPromise: Promise<MasterSaveResult>, _text: string): Promise<MasterSaveResult> => {
+  const done = async (resPromise: Promise<MasterSaveResult>, text: string): Promise<MasterSaveResult> => {
     const res = await resPromise;
     if (res.ok) {
       setEditing(null);
+      setToast({ kind: 'ok', text });
     }
     return res;
   };
@@ -166,6 +168,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
       setBankError(res.error);
       return;
     }
+    setToast({ kind: 'ok', text: 'Identitas supplier & rekening pembayaran berhasil disimpan.' });
   };
 
   const addLabel: Record<MasterTab, string> = {
@@ -190,79 +193,85 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
       <div className="space-y-3">
         <Toast toast={toast} onClose={() => setToast(null)} />
 
-        {/* Identitas Supplier & Rekening Pembayaran Invoice Dapur */}
-        <form
-          onSubmit={submitBankAccount}
-          className="space-y-2.5 rounded-[6px] border border-rule bg-paper-2 p-3"
-        >
-          <div className="text-[13px] font-medium text-ink">
-            Identitas Supplier &amp; Rekening Pembayaran Invoice
-          </div>
-          <div>
-            <label htmlFor="md-supplier-name" className="mb-1 block text-[12px] font-medium text-muted">
-              Nama Supplier / Perusahaan Kita <span className="text-error">*</span>
-            </label>
-            <input
-              id="md-supplier-name"
-              type="text"
-              placeholder="Contoh: CV Pangan Nusantara / Supplier MBG"
-              value={supplierName}
-              onChange={(e) => setSupplierName(e.target.value)}
-              className="field-input"
-            />
-          </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {/* Identitas Supplier & Rekening Pembayaran Invoice Dapur (Collapsible) */}
+        <details className="group overflow-hidden rounded-[6px] border border-rule bg-paper-2">
+          <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 text-[13px] font-medium text-ink transition-colors hover:bg-paper-3">
+            <span>Identitas Supplier &amp; Rekening Invoice</span>
+            <span className="flex items-center gap-1.5 text-[11px] font-mono text-muted">
+              <span className="max-w-[140px] truncate">{bankName} {accountNumber}</span>
+              <ChevronDownIcon className="h-4 w-4 shrink-0 text-muted transition-transform motion-reduce:transition-none group-open:rotate-180" />
+            </span>
+          </summary>
+          <form
+            onSubmit={submitBankAccount}
+            className="space-y-2.5 border-t border-rule p-3"
+          >
             <div>
-              <label htmlFor="md-bank-name" className="mb-1 block text-[12px] font-medium text-muted">
-                Nama Bank <span className="text-error">*</span>
+              <label htmlFor="md-supplier-name" className="mb-1 block text-[12px] font-medium text-muted">
+                Nama Supplier / Perusahaan Kita <span className="text-error">*</span>
               </label>
               <input
-                id="md-bank-name"
+                id="md-supplier-name"
                 type="text"
-                placeholder="Contoh: BRI / BCA / Mandiri"
-                value={bankName}
-                onChange={(e) => setBankName(e.target.value)}
+                placeholder="Contoh: CV Pangan Nusantara / Supplier MBG"
+                value={supplierName}
+                onChange={(e) => setSupplierName(e.target.value)}
                 className="field-input"
               />
             </div>
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div>
+                <label htmlFor="md-bank-name" className="mb-1 block text-[12px] font-medium text-muted">
+                  Nama Bank <span className="text-error">*</span>
+                </label>
+                <input
+                  id="md-bank-name"
+                  type="text"
+                  placeholder="Contoh: BRI / BCA / Mandiri"
+                  value={bankName}
+                  onChange={(e) => setBankName(e.target.value)}
+                  className="field-input"
+                />
+              </div>
+              <div>
+                <label htmlFor="md-bank-number" className="mb-1 block text-[12px] font-medium text-muted">
+                  Nomor Rekening <span className="text-error">*</span>
+                </label>
+                <input
+                  id="md-bank-number"
+                  type="text"
+                  placeholder="Contoh: 0000-0000-0000-000"
+                  value={accountNumber}
+                  onChange={(e) => setAccountNumber(e.target.value)}
+                  className="field-input font-mono"
+                />
+              </div>
+            </div>
             <div>
-              <label htmlFor="md-bank-number" className="mb-1 block text-[12px] font-medium text-muted">
-                Nomor Rekening <span className="text-error">*</span>
+              <label htmlFor="md-bank-holder" className="mb-1 block text-[12px] font-medium text-muted">
+                Atas Nama Penerima <span className="text-error">*</span>
               </label>
               <input
-                id="md-bank-number"
+                id="md-bank-holder"
                 type="text"
-                placeholder="Contoh: 0000-0000-0000-000"
-                value={accountNumber}
-                onChange={(e) => setAccountNumber(e.target.value)}
-                className="field-input font-mono"
+                placeholder="Contoh: Bendahara Supplier MBG"
+                value={accountHolder}
+                onChange={(e) => setAccountHolder(e.target.value)}
+                className="field-input"
               />
             </div>
-          </div>
-          <div>
-            <label htmlFor="md-bank-holder" className="mb-1 block text-[12px] font-medium text-muted">
-              Atas Nama Penerima <span className="text-error">*</span>
-            </label>
-            <input
-              id="md-bank-holder"
-              type="text"
-              placeholder="Contoh: Bendahara Supplier MBG"
-              value={accountHolder}
-              onChange={(e) => setAccountHolder(e.target.value)}
-              className="field-input"
-            />
-          </div>
-          <div className="min-h-[1lh]">
-            {bankError && (
-              <p role="alert" className="text-[12px] font-medium text-error">
-                {bankError}
-              </p>
-            )}
-          </div>
-          <button type="submit" className="btn-secondary min-h-[38px] w-full text-[13px]">
-            Simpan Rekening Invoice
-          </button>
-        </form>
+            <div className="min-h-[1lh]">
+              {bankError && (
+                <p role="alert" className="text-[12px] font-medium text-error">
+                  {bankError}
+                </p>
+              )}
+            </div>
+            <button type="submit" className="btn-secondary min-h-[38px] w-full text-[13px]">
+              Simpan Rekening Invoice
+            </button>
+          </form>
+        </details>
 
         <SegmentedControl
           label="Jenis data master"

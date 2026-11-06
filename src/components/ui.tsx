@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useId, useRef } from 'react';
 import type { Tone } from '../lib/ui-format';
 
 const TONE_BADGE: Record<Tone, string> = {
@@ -122,48 +122,101 @@ export function BottomSheet({
   open,
   title,
   onClose,
+  headerActions,
   children,
 }: {
   open: boolean;
   title: string;
   onClose: () => void;
+  headerActions?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
   useEffect(() => {
-    if (!open) return;
+    if (!open || typeof document === 'undefined') return;
+    const prevFocus = document.activeElement as HTMLElement | null;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+
+    const getFocusable = () => {
+      if (!dialogRef.current) return [];
+      return Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])'
+        )
+      ).filter((el) => el.offsetParent !== null);
+    };
+
+    if (dialogRef.current && !dialogRef.current.contains(document.activeElement)) {
+      const first = getFocusable()[0] ?? dialogRef.current;
+      first.focus();
+    }
+
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const focusable = getFocusable();
+        if (focusable.length === 0) return;
+        const first = focusable[0]!;
+        const last = focusable[focusable.length - 1]!;
+        const active = document.activeElement as HTMLElement | null;
+        if (e.shiftKey && (active === first || !dialogRef.current?.contains(active))) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && active === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+      prevFocus?.focus?.();
+    };
+  }, [open]);
 
   if (!open) return null;
   return (
     <div className="no-print fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
-      <button
-        type="button"
-        aria-label="Tutup"
+      <div
+        aria-hidden="true"
         onClick={onClose}
         className="absolute inset-0 bg-scrim"
       />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={title}
+        aria-labelledby={titleId}
+        tabIndex={-1}
         className="relative max-h-[90dvh] w-full max-w-lg overflow-y-auto rounded-t-[8px] border border-rule bg-white sm:rounded-[8px]"
       >
         <div className="mx-auto mt-2.5 h-1 w-10 rounded-full bg-control sm:hidden" />
-        <div className="flex items-center justify-between border-b border-rule bg-paper-2 px-4 py-3">
-          <h2 className="text-[15px] font-medium text-ink">{title}</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Tutup"
-            className="flex h-7 w-7 items-center justify-center rounded-[6px] border border-control bg-white text-base text-muted hover:bg-paper hover:text-ink"
-          >
-            ×
-          </button>
+        <div className="flex items-center justify-between gap-2 border-b border-rule bg-paper-2 px-4 py-3">
+          <h2 id={titleId} className="truncate text-[15px] font-medium text-ink">
+            {title}
+          </h2>
+          <div className="flex shrink-0 items-center gap-2">
+            {headerActions}
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Tutup dialog"
+              className="flex min-h-[36px] min-w-[36px] items-center justify-center rounded-[6px] border border-control bg-white text-base text-muted hover:bg-paper hover:text-ink"
+            >
+              ×
+            </button>
+          </div>
         </div>
         <div className="p-4 pb-6">{children}</div>
       </div>
