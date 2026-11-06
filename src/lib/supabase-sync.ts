@@ -441,20 +441,13 @@ let latestSnapshotEtag: string | null = null;
 
 const SWR_STORAGE_KEY = 'mbg_swr_snapshot_v1';
 const SWR_ETAG_KEY = 'mbg_swr_etag_v1';
-const OFFLINE_OUTBOX_KEY = 'mbg_offline_outbox_v1';
-const MAX_OFFLINE_OUTBOX_ITEMS = 64;
-
-export interface OfflineOutboxItem {
-  clientMutationId: string;
-  action: string;
-  body: Record<string, unknown>;
-  queuedAt: string;
-}
+let pendingExpectedEtag: string | null = null;
 
 export function setHyperdriveEndpointStateForTest(state: HyperdriveEndpointState): void {
   hyperdriveEndpointState = state;
   if (state === 'unknown') {
     latestSnapshotEtag = null;
+    pendingExpectedEtag = null;
   }
 }
 
@@ -491,100 +484,6 @@ function createClientMutationId(): string {
     return crypto.randomUUID();
   }
   return `mut-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-export function readOfflineOutbox(): OfflineOutboxItem[] {
-  if (typeof window === 'undefined') return [];
-  try {
-    const raw = window.localStorage.getItem(OFFLINE_OUTBOX_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as unknown;
-    return Array.isArray(parsed) ? (parsed as OfflineOutboxItem[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function writeOfflineOutbox(items: OfflineOutboxItem[]): void {
-  if (typeof window === 'undefined') return;
-  try {
-    if (items.length === 0) {
-      window.localStorage.removeItem(OFFLINE_OUTBOX_KEY);
-    } else {
-      window.localStorage.setItem(
-        OFFLINE_OUTBOX_KEY,
-        JSON.stringify(items.slice(-MAX_OFFLINE_OUTBOX_ITEMS))
-      );
-    }
-  } catch {
-    // Ignore storage quota errors
-  }
-}
-
-export function enqueueOfflineMutation(body: Record<string, unknown>): OfflineOutboxItem {
-  const clientMutationId =
-    typeof body.clientMutationId === 'string' && body.clientMutationId.trim()
-      ? body.clientMutationId.trim()
-      : createClientMutationId();
-  const sanitizedBody: Record<string, unknown> = { ...body, clientMutationId };
-  delete sanitizedBody.adminPin;
-  const item: OfflineOutboxItem = {
-    clientMutationId,
-    action: String(body.action ?? 'mutation'),
-    body: sanitizedBody,
-    queuedAt: new Date().toISOString(),
-  };
-  const current = readOfflineOutbox().filter((x) => x.clientMutationId !== clientMutationId);
-  current.push(item);
-  writeOfflineOutbox(current);
-  return item;
-}
-
-export async function flushOfflineOutbox(): Promise<{ flushed: number; remaining: number }> {
-  const queue = readOfflineOutbox();
-  if (queue.length === 0) return { flushed: 0, remaining: 0 };
-  const adminPin = getActiveAdminPin();
-  if (!adminPin) return { flushed: 0, remaining: queue.length };
-
-  const remaining: OfflineOutboxItem[] = [];
-  let flushed = 0;
-
-  for (const item of queue) {
-    try {
-      const res = await fetch('/api/hyperdrive', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-admin-pin': adminPin,
-        },
-        body: JSON.stringify({
-          ...item.body,
-          clientMutationId: item.clientMutationId,
-          includeSnapshot: true,
-          adminPin,
-        }),
-      });
-      if (res.ok) {
-        const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-        if (json.ok) {
-          flushed++;
-          const nextEtag = res.headers.get('etag') ?? (typeof json.etag === 'string' ? json.etag : null);
-          setStoredEtag(nextEtag);
-          if (json.snapshot && typeof json.snapshot === 'object') {
-            latestHyperdriveSnapshot = json.snapshot as MbgData;
-            writeSwrSnapshot(latestHyperdriveSnapshot);
-          }
-          continue;
-        }
-      }
-      remaining.push(item);
-    } catch {
-      remaining.push(item);
-    }
-  }
-
-  writeOfflineOutbox(remaining);
-  return { flushed, remaining: remaining.length };
 }
 
 export function readSwrSnapshot(): MbgData | null {
@@ -629,17 +528,16 @@ function getActiveAdminPin(): string | undefined {
   return verifiedAdminPin ?? undefined;
 }
 
-function shouldTryHyperdrive(requireConfirmedActive = false): boolean {
+function shouldTryHyperdrive(): boolean {
   if (hyperdriveEndpointState === 'unavailable') return false;
   if (hyperdriveEndpointState === 'active') return true;
-  if (requireConfirmedActive) return false;
   return typeof window !== 'undefined' && typeof fetch === 'function';
 }
 
 async function postHyperdriveAction(
   body: Record<string, unknown>
 ): Promise<{ handled: false } | { handled: true; data: Record<string, unknown> }> {
-  if (!shouldTryHyperdrive(true)) return { handled: false };
+  if (!shouldTryHyperdrive()) return { handled: false };
   const isVerifyPin = body.action === 'verify_role_pin';
   const clientMutationId = isVerifyPin
     ? undefined
@@ -667,6 +565,7 @@ async function postHyperdriveAction(
       hyperdriveEndpointState = 'unavailable';
       return { handled: false };
     }
+    hyperdriveEndpointState = 'active';
     const json = (await res.json()) as Record<string, unknown>;
     const nextEtag = res.headers.get('etag') ?? (typeof json.etag === 'string' ? json.etag : null);
     setStoredEtag(nextEtag);
@@ -676,9 +575,6 @@ async function postHyperdriveAction(
     }
     return { handled: true, data: json };
   } catch {
-    if (!isVerifyPin && typeof navigator !== 'undefined' && navigator.onLine === false) {
-      enqueueOfflineMutation({ ...body, clientMutationId });
-    }
     return { handled: false };
   }
 }
@@ -1027,18 +923,23 @@ export async function verifyRolePinRpc(
 }
 
 export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promise<MbgData | null> {
-  if (shouldTryHyperdrive(false)) {
+  if (shouldTryHyperdrive()) {
     try {
+      const expectedEtag = pendingExpectedEtag;
+      pendingExpectedEtag = null;
       const cachedSnap = readSwrSnapshot();
       const knownEtag = cachedSnap ? getStoredEtag() : null;
       const headers: Record<string, string> = {};
-      if (knownEtag) {
+      if (knownEtag && (!expectedEtag || expectedEtag === knownEtag)) {
         headers['If-None-Match'] = knownEtag;
       }
-      const res = await fetch('/api/hyperdrive', {
+      const endpoint = expectedEtag
+        ? `/api/hyperdrive?etag=${encodeURIComponent(expectedEtag)}`
+        : '/api/hyperdrive';
+      const res = await fetch(endpoint, {
         method: 'GET',
         cache: 'no-store',
-        ...(knownEtag ? { headers } : {}),
+        ...(Object.keys(headers).length > 0 ? { headers } : {}),
       });
       if (res.status === 503) {
         hyperdriveEndpointState = 'unavailable';
@@ -1055,7 +956,7 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
         }
       }
     } catch {
-      hyperdriveEndpointState = 'unavailable';
+      // Transient network error: do not permanently mark Hyperdrive unavailable
     }
   }
 
@@ -1153,7 +1054,7 @@ export async function deleteProductFromSupabase(
 
 export function subscribeToMbgRealtime(
   supabase: SupabaseClient,
-  onRemoteChange: () => void,
+  onRemoteChange: (pushedSnapshot?: MbgData) => void,
   onStatusChange?: (connected: boolean) => void
 ): () => void {
   let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1163,6 +1064,7 @@ export function subscribeToMbgRealtime(
   let disposed = false;
   let supabaseConnected = false;
   let edgeConnected = false;
+  let lastEdgePushAt = 0;
 
   const notifyStatus = () => {
     if (onStatusChange) {
@@ -1171,17 +1073,17 @@ export function subscribeToMbgRealtime(
   };
 
   const debouncedChange = () => {
+    if (Date.now() - lastEdgePushAt < 2000) return;
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       debounceTimer = null;
+      if (Date.now() - lastEdgePushAt < 2000) return;
       onRemoteChange();
-    }, 250);
+    }, 200);
   };
 
   const handleOnline = () => {
-    void flushOfflineOutbox().then(({ flushed }) => {
-      if (flushed > 0) debouncedChange();
-    });
+    onRemoteChange();
   };
 
   if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
@@ -1209,7 +1111,6 @@ export function subscribeToMbgRealtime(
         }
         edgeConnected = true;
         notifyStatus();
-        handleOnline();
       };
 
       ws.onmessage = (event) => {
@@ -1218,13 +1119,33 @@ export function subscribeToMbgRealtime(
           const msg = JSON.parse(event.data) as {
             type?: string;
             etag?: string;
+            snapshot?: MbgData;
           };
-          if (msg.type === 'mutation' || msg.type === 'document_uploaded') {
-            if (msg.etag && msg.etag !== getStoredEtag()) {
-              debouncedChange();
-            } else if (!msg.etag) {
-              debouncedChange();
+          if (msg.type === 'mutation') {
+            if (msg.etag && msg.etag === getStoredEtag()) {
+              return;
             }
+            if (
+              msg.snapshot &&
+              Array.isArray(msg.snapshot.kitchens) &&
+              Array.isArray(msg.snapshot.deliveries)
+            ) {
+              lastEdgePushAt = Date.now();
+              if (debounceTimer) {
+                clearTimeout(debounceTimer);
+                debounceTimer = null;
+              }
+              setStoredEtag(msg.etag);
+              writeSwrSnapshot(msg.snapshot);
+              onRemoteChange(msg.snapshot);
+              return;
+            }
+            if (msg.etag) {
+              pendingExpectedEtag = msg.etag;
+            }
+            onRemoteChange();
+          } else if (msg.type === 'document_uploaded') {
+            onRemoteChange();
           }
         } catch {
           // Ignore malformed WS message

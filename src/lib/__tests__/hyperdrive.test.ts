@@ -251,11 +251,16 @@ describe('Cloudflare Hyperdrive Security & Scale Hardening', () => {
 
     const hub = new MbgSyncHub(fakeState, hdEnv);
 
-    // 1. Broadcast mutation to connected WebSocket clients
+    // 1. Broadcast mutation (with inline snapshot) to connected WebSocket clients
+    const sampleSnapshot = { kitchens: [], items: [], deliveries: [] };
     const broadcastRes = await hub.fetch(
       new Request('https://mbg-sync-hub.internal/broadcast', {
         method: 'POST',
-        body: JSON.stringify({ action: 'mark_invoice_paid', etag: 'W/"abc"' }),
+        body: JSON.stringify({
+          action: 'mark_invoice_paid',
+          etag: 'W/"abc"',
+          snapshot: sampleSnapshot,
+        }),
       })
     );
     const broadcastJson = (await broadcastRes.json()) as { ok: boolean; clients: number };
@@ -266,6 +271,7 @@ describe('Cloudflare Hyperdrive Security & Scale Hardening', () => {
       type: 'mutation',
       action: 'mark_invoice_paid',
       etag: 'W/"abc"',
+      snapshot: sampleSnapshot,
     });
 
     // 2. Query APK manifest via Worker /api/apk/version

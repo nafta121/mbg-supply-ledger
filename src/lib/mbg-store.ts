@@ -366,9 +366,14 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
 
     const unsubscribe = subscribeToMbgRealtime(
       supabase,
-      () => {
-        // Skip echo events triggered by our own in-flight or just-completed mutations.
-        if (isSyncingRef.current || activeMutationsRef.current > 0 || Date.now() - lastPullAtRef.current < 2500) return;
+      (pushedSnapshot) => {
+        if (isSyncingRef.current || activeMutationsRef.current > 0) return;
+        if (pushedSnapshot && stateRef.current.activeRole !== 'FIELD_TEAM') {
+          lastPullAtRef.current = Date.now();
+          commit({ ...stateRef.current, ...pushedSnapshot });
+          setIsSupabaseLive(true);
+          return;
+        }
         void pullFromSupabase();
       },
       (connected) => {

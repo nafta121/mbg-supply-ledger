@@ -160,7 +160,8 @@ function logStructuredEvent(
 async function broadcastMutationToSyncHub(
   env: WorkerEnv,
   action: string,
-  etag: string
+  etag: string,
+  snapshot?: unknown
 ): Promise<void> {
   const stub = getSyncHubStub(env);
   if (!stub) return;
@@ -168,7 +169,12 @@ async function broadcastMutationToSyncHub(
     await stub.fetch('https://mbg-sync-hub.internal/broadcast', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action, etag, updatedAt: new Date().toISOString() }),
+      body: JSON.stringify({
+        action,
+        etag,
+        ...(snapshot && typeof snapshot === 'object' ? { snapshot } : {}),
+        updatedAt: new Date().toISOString(),
+      }),
     });
   } catch {
     // Non-blocking broadcast best-effort
@@ -321,6 +327,7 @@ export class MbgSyncHub {
       const body = (await request.json().catch(() => ({}))) as {
         action?: string;
         etag?: string;
+        snapshot?: unknown;
         updatedAt?: string;
       };
       const action = String(body.action ?? 'mutation');
@@ -348,6 +355,7 @@ export class MbgSyncHub {
         version: nextVersion,
         action,
         etag,
+        ...(body.snapshot && typeof body.snapshot === 'object' ? { snapshot: body.snapshot } : {}),
         updatedAt,
       });
       return jsonResponse({ ok: true, version: nextVersion, clients });
@@ -741,44 +749,48 @@ export default {
 
       if (request.method === 'GET') {
         const ifNoneMatch = request.headers.get('if-none-match')?.trim();
+        const expectedEtag = url.searchParams.get('etag')?.trim() ?? '';
         const bypassCache = url.searchParams.get('fresh') === '1';
 
         if (edgeCache && !bypassCache) {
           const cachedRes = await edgeCache.match(cacheKey).catch(() => undefined);
           if (cachedRes) {
             const cachedEtag = cachedRes.headers.get('etag') ?? '';
-            if (ifNoneMatch && cachedEtag && ifNoneMatch === cachedEtag) {
+            const isStaleForExpected = Boolean(expectedEtag && cachedEtag !== expectedEtag);
+            if (!isStaleForExpected) {
+              if (ifNoneMatch && cachedEtag && ifNoneMatch === cachedEtag) {
+                logStructuredEvent(ctx, {
+                  route: '/api/hyperdrive',
+                  method: 'GET',
+                  cache: 'HIT-304',
+                  durationMs: Date.now() - startMs,
+                });
+                return new Response(null, {
+                  status: 304,
+                  headers: {
+                    etag: cachedEtag,
+                    'cache-control': 'no-cache',
+                    'x-mbg-cache': 'HIT-304',
+                  },
+                });
+              }
+              const bodyText = await cachedRes.text();
               logStructuredEvent(ctx, {
                 route: '/api/hyperdrive',
                 method: 'GET',
-                cache: 'HIT-304',
+                cache: 'HIT',
                 durationMs: Date.now() - startMs,
               });
-              return new Response(null, {
-                status: 304,
+              return new Response(bodyText, {
+                status: 200,
                 headers: {
-                  etag: cachedEtag,
+                  'content-type': 'application/json; charset=utf-8',
                   'cache-control': 'no-cache',
-                  'x-mbg-cache': 'HIT-304',
+                  ...(cachedEtag ? { etag: cachedEtag } : {}),
+                  'x-mbg-cache': 'HIT',
                 },
               });
             }
-            const bodyText = await cachedRes.text();
-            logStructuredEvent(ctx, {
-              route: '/api/hyperdrive',
-              method: 'GET',
-              cache: 'HIT',
-              durationMs: Date.now() - startMs,
-            });
-            return new Response(bodyText, {
-              status: 200,
-              headers: {
-                'content-type': 'application/json; charset=utf-8',
-                'cache-control': 'no-cache',
-                ...(cachedEtag ? { etag: cachedEtag } : {}),
-                'x-mbg-cache': 'HIT',
-              },
-            });
           }
         }
 
@@ -894,9 +906,11 @@ export default {
             }
 
             if (ctx && typeof ctx.waitUntil === 'function') {
-              ctx.waitUntil(broadcastMutationToSyncHub(env, payload.action, nextEtag));
+              ctx.waitUntil(
+                broadcastMutationToSyncHub(env, payload.action, nextEtag, result.snapshot)
+              );
             } else {
-              void broadcastMutationToSyncHub(env, payload.action, nextEtag);
+              void broadcastMutationToSyncHub(env, payload.action, nextEtag, result.snapshot);
             }
           }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { buildInvoiceProfit } from '../lib/invoice-view';
 import { useMbgStore } from '../lib/mbg-store';
 import type { BeneficiaryType, LedgerPayoutStatus } from '../types/mbg';
@@ -38,6 +38,10 @@ export function Tab4ProfitSharing() {
 
   const [teamPctInput, setTeamPctInput] = useState(String(splitConfig.team_share_pct));
   const [toast, setToast] = useState<ToastState>(null);
+
+  useEffect(() => {
+    setTeamPctInput(String(splitConfig.team_share_pct));
+  }, [splitConfig.team_share_pct]);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [profitFilter, setProfitFilter] = useState<ProfitFilter>('all');
   const [sortBy, setSortBy] = useState<SortMode>('date_desc');
