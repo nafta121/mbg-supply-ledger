@@ -305,12 +305,39 @@ export function recomputeOrder<T extends MbgData>(data: T, deliveryId: string, n
     }
   }
 
+  const nextLedger = [...others, ...rebuilt];
   return {
     ...data,
     deliveries: nextDeliveries,
     invoices: nextInvoices,
-    ledgerEntries: [...others, ...rebuilt],
+    ledgerEntries: nextLedger,
+    payoutBatches: reconcilePayoutBatches(nextLedger, data.payoutBatches),
   };
+}
+
+function reconcilePayoutBatches(
+  ledgerEntries: ProfitLedgerEntry[],
+  payoutBatches: ProfitPayoutBatch[]
+): ProfitPayoutBatch[] {
+  if (payoutBatches.length === 0) return payoutBatches;
+  return payoutBatches
+    .map((batch) => {
+      const remaining = ledgerEntries.filter(
+        (le) =>
+          le.payout_batch_id === batch.id &&
+          le.payout_status === 'PAID_OUT' &&
+          le.beneficiary_type === batch.beneficiary_type
+      );
+      if (remaining.length === 0) return null;
+      let totalSen = 0n;
+      for (const le of remaining) totalSen += idrToSen(le.profit_amount);
+      if (totalSen <= 0n) return null;
+      return {
+        ...batch,
+        total_payout_amount: senToIdr(totalSen),
+      };
+    })
+    .filter((b): b is ProfitPayoutBatch => b !== null);
 }
 
 // ---------- Transitions ----------
@@ -638,32 +665,6 @@ export function deleteKitchenOrder<T extends MbgData>(data: T, deliveryId: strin
   const nextLedger = invoice
     ? data.ledgerEntries.filter((le) => le.invoice_id !== invoice.id)
     : data.ledgerEntries;
-  const affectedBatchIds = new Set(
-    invoice
-      ? data.ledgerEntries
-          .filter((le) => le.invoice_id === invoice.id && le.payout_batch_id !== null)
-          .map((le) => le.payout_batch_id as string)
-      : []
-  );
-  const nextPayoutBatches =
-    affectedBatchIds.size === 0
-      ? data.payoutBatches
-      : data.payoutBatches
-          .map((batch) => {
-            if (!affectedBatchIds.has(batch.id)) return batch;
-            const remaining = nextLedger.filter(
-              (le) => le.payout_batch_id === batch.id && le.payout_status === 'PAID_OUT'
-            );
-            if (remaining.length === 0) return null;
-            let totalSen = 0n;
-            for (const le of remaining) totalSen += idrToSen(le.profit_amount);
-            if (totalSen <= 0n) return null;
-            return {
-              ...batch,
-              total_payout_amount: senToIdr(totalSen),
-            };
-          })
-          .filter((b): b is ProfitPayoutBatch => b !== null);
   return {
     ok: true,
     data: {
@@ -672,7 +673,7 @@ export function deleteKitchenOrder<T extends MbgData>(data: T, deliveryId: strin
       deliveryItems: data.deliveryItems.filter((di) => di.delivery_id !== deliveryId),
       invoices: data.invoices.filter((i) => i.delivery_id !== deliveryId),
       ledgerEntries: nextLedger,
-      payoutBatches: nextPayoutBatches,
+      payoutBatches: reconcilePayoutBatches(nextLedger, data.payoutBatches),
     },
   };
 }

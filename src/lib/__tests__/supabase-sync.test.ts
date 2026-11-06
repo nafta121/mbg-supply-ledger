@@ -127,6 +127,41 @@ describe('Supabase Sync Layer — Order-Driven Schema & Invariants', () => {
     expect(restored.splitConfig.payment_bank_name).toBe('BRI');
     expect(restored.splitConfig.payment_account_number).toBe('388801005597504');
     expect(restored.splitConfig.payment_account_holder).toBe('Yoga Eko Setiawan');
+
+    // Orphaned payout batches (when all orders/invoices/ledgerEntries are deleted) are pruned to 0
+    const cleaned = fromSupabaseRows({
+      kitchens: rows.kitchens,
+      products: rows.products,
+      orders: [],
+      orderItems: [],
+      invoices: [],
+      ledgerEntries: [],
+      splitConfigs: [rows.splitConfig],
+      appSettings: [rows.appSettings],
+      payoutBatches: [
+        {
+          id: 'pbatch-team-orphan',
+          payout_reference: 'POUT-20261104-TIM-01',
+          beneficiary_type: 'TEAM',
+          total_payout_amount: 168000,
+          transfer_proof_url: 'https://storage.mbg.id/payouts/pout-1.jpg',
+          notes: 'Pencairan bagi hasil Tim (4 baris)',
+          disbursed_by: 'user-admin-01',
+          disbursed_at: '2026-11-04T22:41:03.677Z',
+        },
+        {
+          id: 'pbatch-coop-orphan',
+          payout_reference: 'POUT-20261104-KOP-02',
+          beneficiary_type: 'COOPERATIVE',
+          total_payout_amount: 112000,
+          transfer_proof_url: 'https://storage.mbg.id/payouts/pout-1.jpg',
+          notes: 'Pencairan bagi hasil Koperasi (4 baris)',
+          disbursed_by: 'user-admin-01',
+          disbursed_at: '2026-11-04T22:41:03.697Z',
+        },
+      ],
+    });
+    expect(cleaned.payoutBatches).toHaveLength(0);
   });
 
   it('updateKitchenOrderRpc normalizes payload and returns RPC result or error', async () => {

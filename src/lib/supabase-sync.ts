@@ -372,17 +372,52 @@ export function fromSupabaseRows(rows: {
     );
   }
 
-  const payoutBatches: ProfitPayoutBatch[] = rows.payoutBatches.map((pb) => ({
-    id: pb.id,
-    payout_reference: pb.payout_reference,
-    beneficiary_type: pb.beneficiary_type,
-    total_payout_amount: num(pb.total_payout_amount),
-    transfer_proof_url: pb.transfer_proof_url,
-    notes: pb.notes ?? null,
-    disbursed_by: pb.disbursed_by,
-    disbursed_at: pb.disbursed_at,
-    created_at: pb.created_at ?? DEFAULT_ISO,
-  }));
+  const payoutBatches: ProfitPayoutBatch[] = rows.payoutBatches
+    .map((pb) => {
+      const linked = ledgerEntries.filter(
+        (le) =>
+          le.payout_batch_id === pb.id &&
+          le.payout_status === 'PAID_OUT' &&
+          le.beneficiary_type === pb.beneficiary_type
+      );
+      if (linked.length > 0) {
+        let totalSen = 0n;
+        for (const le of linked) totalSen += idrToSen(le.profit_amount);
+        if (totalSen <= 0n) return null;
+        return {
+          id: pb.id,
+          payout_reference: pb.payout_reference,
+          beneficiary_type: pb.beneficiary_type,
+          total_payout_amount: senToIdr(totalSen),
+          transfer_proof_url: pb.transfer_proof_url,
+          notes: pb.notes ?? null,
+          disbursed_by: pb.disbursed_by,
+          disbursed_at: pb.disbursed_at,
+          created_at: pb.created_at ?? DEFAULT_ISO,
+        };
+      }
+      const hasUnlinkedPaidOut = ledgerEntries.some(
+        (le) =>
+          le.payout_batch_id === null &&
+          le.payout_status === 'PAID_OUT' &&
+          le.beneficiary_type === pb.beneficiary_type
+      );
+      if (!hasUnlinkedPaidOut) return null;
+      const fallbackAmount = num(pb.total_payout_amount);
+      if (fallbackAmount <= 0) return null;
+      return {
+        id: pb.id,
+        payout_reference: pb.payout_reference,
+        beneficiary_type: pb.beneficiary_type,
+        total_payout_amount: fallbackAmount,
+        transfer_proof_url: pb.transfer_proof_url,
+        notes: pb.notes ?? null,
+        disbursed_by: pb.disbursed_by,
+        disbursed_at: pb.disbursed_at,
+        created_at: pb.created_at ?? DEFAULT_ISO,
+      };
+    })
+    .filter((pb): pb is ProfitPayoutBatch => pb !== null);
 
   return {
     kitchens,

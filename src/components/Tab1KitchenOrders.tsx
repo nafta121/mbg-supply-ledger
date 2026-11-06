@@ -223,7 +223,12 @@ export function Tab1KitchenOrders() {
   };
 
   const handleDeleteOrder = async (deliveryId: string, label: string) => {
-    if (!confirmDo(`Hapus seluruh order ${label}? Invoice & bagi hasilnya ikut terhapus.`)) return;
+    setExpandedIds((prev) => {
+      if (!prev.has(deliveryId)) return prev;
+      const next = new Set(prev);
+      next.delete(deliveryId);
+      return next;
+    });
     const res = await deleteOrder(deliveryId);
     if (!res.ok) {
       setToast({ kind: 'error', text: res.error });
@@ -603,7 +608,6 @@ export function Tab1KitchenOrders() {
                               <div className="space-y-1.5 pt-1">
                                 <button
                                   type="button"
-                                  disabled={isSyncing}
                                   onClick={() => handleDeleteOrder(delivery.id, title)}
                                   className="btn-secondary min-h-[40px] w-full whitespace-nowrap border-error-border text-[12px] !text-error hover:!bg-error-bg"
                                 >
@@ -634,7 +638,6 @@ export function Tab1KitchenOrders() {
                                   )}
                                   <button
                                     type="button"
-                                    disabled={isSyncing}
                                     onClick={() => handleDeleteOrder(delivery.id, title)}
                                     className="btn-secondary min-h-[40px] border-error-border text-[12px] !text-error hover:!bg-error-bg"
                                   >

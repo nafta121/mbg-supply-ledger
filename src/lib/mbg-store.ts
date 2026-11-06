@@ -251,6 +251,9 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
   const stateRef = useRef<MbgState>(state);
   const isSyncingRef = useRef<boolean>(false);
   const lastPullAtRef = useRef<number>(0);
+  const mutationSeqRef = useRef<number>(0);
+  const activeMutationsRef = useRef<number>(0);
+  const mutationQueueRef = useRef<Promise<unknown>>(Promise.resolve());
 
   const setSyncing = useCallback((v: boolean) => {
     isSyncingRef.current = v;
@@ -275,12 +278,13 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
         setIsLoading(false);
         return;
       }
+      const seqBeforePull = mutationSeqRef.current;
       lastPullAtRef.current = Date.now();
       const supabase = getSupabaseClient();
       const role = roleOverride ?? stateRef.current.activeRole;
 
       const remoteData = await fetchMbgDataFromSupabase(supabase);
-      if (remoteData) {
+      if (remoteData && activeMutationsRef.current === 0 && mutationSeqRef.current === seqBeforePull) {
         commit({
           ...stateRef.current,
           activeRole: role,
@@ -303,19 +307,25 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
    * Reconciles local state with the authoritative server snapshot returned inside a single-hop
    * `POST /api/hyperdrive` response, falling back to `pullFromSupabase()` only when needed.
    */
-  const reconcileAfterMutation = useCallback(async () => {
-    const inlineSnapshot = consumeLatestHyperdriveSnapshot();
-    if (inlineSnapshot) {
-      lastPullAtRef.current = Date.now();
-      commit({
-        ...stateRef.current,
-        ...inlineSnapshot,
-      });
-      setIsSupabaseLive(true);
-      return;
-    }
-    await pullFromSupabase();
-  }, [commit, pullFromSupabase]);
+  const reconcileAfterMutation = useCallback(
+    async (seq: number) => {
+      const inlineSnapshot = consumeLatestHyperdriveSnapshot();
+      if (seq !== mutationSeqRef.current) {
+        return;
+      }
+      if (inlineSnapshot) {
+        lastPullAtRef.current = Date.now();
+        commit({
+          ...stateRef.current,
+          ...inlineSnapshot,
+        });
+        setIsSupabaseLive(true);
+        return;
+      }
+      await pullFromSupabase();
+    },
+    [commit, pullFromSupabase]
+  );
 
   const handleCloudError = useCallback(
     (message: string, rollbackState?: MbgState, roleOverride?: UserRole) => {
@@ -358,7 +368,7 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
       supabase,
       () => {
         // Skip echo events triggered by our own in-flight or just-completed mutations.
-        if (isSyncingRef.current || Date.now() - lastPullAtRef.current < 500) return;
+        if (isSyncingRef.current || activeMutationsRef.current > 0 || Date.now() - lastPullAtRef.current < 2500) return;
         void pullFromSupabase();
       },
       (connected) => {
@@ -398,33 +408,46 @@ export function MbgProvider({ children }: { children: React.ReactNode }) {
     fallbackError: string;
     cloudOp: (supabase: ReturnType<typeof getSupabaseClient>) => Promise<T | { ok: false; error: string }>;
   }): Promise<T | { ok: false; error: string }> => {
-    if (isSyncingRef.current) {
-      return { ok: false, error: 'Sedang menyimpan perubahan sebelumnya, mohon tunggu sebentar.' };
-    }
     const prevState = stateRef.current;
+    const seq = (mutationSeqRef.current += 1);
     commit(opts.optimisticState);
     if (!isSupabaseConfigured || opts.skipCloud) {
       return opts.localSuccess ?? ({ ok: true } as T);
     }
 
+    activeMutationsRef.current += 1;
     setSyncing(true);
     setSyncError(null);
     const formatError = (err: string) => (opts.errorPrefix ? `${opts.errorPrefix}: ${err}` : err);
-    try {
-      const res = await opts.cloudOp(getSupabaseClient());
-      if (!res.ok) {
-        handleCloudError(formatError(res.error), prevState);
-        return { ok: false, error: res.error };
+
+    const runQueued = async (): Promise<T | { ok: false; error: string }> => {
+      try {
+        const res = await opts.cloudOp(getSupabaseClient());
+        if (!res.ok) {
+          handleCloudError(formatError(res.error), seq === mutationSeqRef.current ? prevState : undefined);
+          return { ok: false, error: res.error };
+        }
+        await reconcileAfterMutation(seq);
+        return res;
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : opts.fallbackError;
+        handleCloudError(formatError(msg), seq === mutationSeqRef.current ? prevState : undefined);
+        return { ok: false, error: msg };
+      } finally {
+        activeMutationsRef.current = Math.max(0, activeMutationsRef.current - 1);
+        lastPullAtRef.current = Date.now();
+        if (activeMutationsRef.current === 0) {
+          setSyncing(false);
+        }
       }
-      await reconcileAfterMutation();
-      return res;
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : opts.fallbackError;
-      handleCloudError(formatError(msg), prevState);
-      return { ok: false, error: msg };
-    } finally {
-      setSyncing(false);
-    }
+    };
+
+    const nextInQueue = mutationQueueRef.current.then(runQueued, runQueued);
+    mutationQueueRef.current = nextInQueue.then(
+      () => undefined,
+      () => undefined
+    );
+    return nextInQueue;
   };
 
   /**

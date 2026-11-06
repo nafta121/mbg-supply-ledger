@@ -127,6 +127,16 @@ export async function fetchMbgSnapshotFromSql(sql: Sql): Promise<MbgData> {
   >`
     WITH recent_orders AS (
       SELECT * FROM public.kitchen_orders ORDER BY created_at DESC LIMIT 2000
+    ),
+    purged_batches AS (
+      DELETE FROM public.profit_payout_batches b
+      WHERE NOT EXISTS (
+        SELECT 1
+        FROM public.profit_ledger_entries p
+        WHERE (b.beneficiary_type = 'TEAM' AND p.team_payout_batch_id = b.id AND p.team_paid_out = TRUE)
+           OR (b.beneficiary_type = 'COOPERATIVE' AND p.coop_payout_batch_id = b.id AND p.coop_paid_out = TRUE)
+      )
+      RETURNING b.id
     )
     SELECT
       COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchens ORDER BY code ASC) t), '[]'::json) AS kitchens,
@@ -134,9 +144,9 @@ export async function fetchMbgSnapshotFromSql(sql: Sql): Promise<MbgData> {
       COALESCE((SELECT json_agg(t) FROM recent_orders t), '[]'::json) AS orders,
       COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_order_items WHERE order_id IN (SELECT id FROM recent_orders) ORDER BY created_at DESC) t), '[]'::json) AS "orderItems",
       COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.kitchen_invoices WHERE order_id IN (SELECT id FROM recent_orders) ORDER BY created_at DESC) t), '[]'::json) AS invoices,
-      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_ledger_entries WHERE order_id IN (SELECT id FROM recent_orders) ORDER BY created_at DESC) t), '[]'::json) AS "ledgerEntries",
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_ledger_entries WHERE order_id IN (SELECT id FROM recent_orders) OR invoice_id IN (SELECT id FROM public.kitchen_invoices WHERE order_id IN (SELECT id FROM recent_orders)) ORDER BY created_at DESC) t), '[]'::json) AS "ledgerEntries",
       COALESCE((SELECT json_agg(to_jsonb(s) - 'admin_pin' - 'coop_pin') FROM public.app_settings s WHERE s.id = 'default'), '[]'::json) AS "appSettings",
-      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_payout_batches ORDER BY disbursed_at DESC LIMIT 1000) t), '[]'::json) AS "payoutBatches"
+      COALESCE((SELECT json_agg(t) FROM (SELECT * FROM public.profit_payout_batches WHERE id NOT IN (SELECT id FROM purged_batches) ORDER BY disbursed_at DESC LIMIT 1000) t), '[]'::json) AS "payoutBatches"
   `;
   const row = rows[0];
   return fromSupabaseRows({
@@ -385,73 +395,86 @@ export async function executeHyperdriveAction(
           if (deleted.length === 0) {
             return { ok: false, error: 'Baris order tidak ditemukan.' };
           }
+          await sql`
+            WITH batch_totals AS (
+              SELECT
+                b.id AS batch_id,
+                b.beneficiary_type,
+                COUNT(p.id)::int AS entry_cnt,
+                COALESCE(ROUND(SUM(
+                  CASE
+                    WHEN b.beneficiary_type = 'TEAM' THEN p.team_amount_rp
+                    ELSE p.coop_amount_rp
+                  END
+                ), 2), 0.00) AS total_rp
+              FROM public.profit_payout_batches b
+              LEFT JOIN public.profit_ledger_entries p
+                ON (b.beneficiary_type = 'TEAM' AND p.team_payout_batch_id = b.id AND p.team_paid_out = TRUE)
+                OR (b.beneficiary_type = 'COOPERATIVE' AND p.coop_payout_batch_id = b.id AND p.coop_paid_out = TRUE)
+              GROUP BY b.id, b.beneficiary_type
+            ),
+            deleted_batches AS (
+              DELETE FROM public.profit_payout_batches b
+              USING batch_totals bt
+              WHERE b.id = bt.batch_id AND (bt.entry_cnt = 0 OR bt.total_rp <= 0)
+              RETURNING b.id
+            )
+            UPDATE public.profit_payout_batches b
+            SET
+              total_payout_amount = bt.total_rp,
+              notes = CASE
+                WHEN b.beneficiary_type = 'TEAM' THEN 'Pencairan bagi hasil Tim (' || bt.entry_cnt || ' baris)'
+                ELSE 'Pencairan bagi hasil Koperasi (' || bt.entry_cnt || ' baris)'
+              END
+            FROM batch_totals bt
+            WHERE b.id = bt.batch_id AND bt.entry_cnt > 0 AND bt.total_rp > 0
+          `;
           return attachSnapshot({ ok: true });
         }
 
         case 'delete_order': {
-          const deleted = await sql<
-            Array<{ id: string; team_batch_id: string | null; coop_batch_id: string | null }>
-          >`
-            WITH affected AS (
-              SELECT DISTINCT
-                team_payout_batch_id AS team_batch_id,
-                coop_payout_batch_id AS coop_batch_id
-              FROM public.profit_ledger_entries
-              WHERE order_id = ${payload.orderId}
-            ),
-            deleted AS (
-              DELETE FROM public.kitchen_orders o
-              WHERE o.id = ${payload.orderId}
-              RETURNING o.id
-            )
-            SELECT
-              d.id,
-              a.team_batch_id,
-              a.coop_batch_id
-            FROM deleted d
-            LEFT JOIN affected a ON TRUE
+          const deleted = await sql<Array<{ id: string }>>`
+            DELETE FROM public.kitchen_orders o
+            WHERE o.id = ${payload.orderId}
+            RETURNING o.id
           `;
           if (!deleted || deleted.length === 0) {
             return { ok: false, error: 'Order / invoice tidak ditemukan.' };
           }
-          const batchIds = Array.from(
-            new Set(
-              deleted
-                .flatMap((r) => [r.team_batch_id, r.coop_batch_id])
-                .filter((id): id is string => Boolean(id))
+          await sql`
+            WITH batch_totals AS (
+              SELECT
+                b.id AS batch_id,
+                b.beneficiary_type,
+                COUNT(p.id)::int AS entry_cnt,
+                COALESCE(ROUND(SUM(
+                  CASE
+                    WHEN b.beneficiary_type = 'TEAM' THEN p.team_amount_rp
+                    ELSE p.coop_amount_rp
+                  END
+                ), 2), 0.00) AS total_rp
+              FROM public.profit_payout_batches b
+              LEFT JOIN public.profit_ledger_entries p
+                ON (b.beneficiary_type = 'TEAM' AND p.team_payout_batch_id = b.id AND p.team_paid_out = TRUE)
+                OR (b.beneficiary_type = 'COOPERATIVE' AND p.coop_payout_batch_id = b.id AND p.coop_paid_out = TRUE)
+              GROUP BY b.id, b.beneficiary_type
+            ),
+            deleted_batches AS (
+              DELETE FROM public.profit_payout_batches b
+              USING batch_totals bt
+              WHERE b.id = bt.batch_id AND (bt.entry_cnt = 0 OR bt.total_rp <= 0)
+              RETURNING b.id
             )
-          );
-          for (const batchId of batchIds) {
-            await sql`
-              WITH stats AS (
-                SELECT
-                  COUNT(*)::int AS cnt,
-                  COALESCE(ROUND(SUM(
-                    CASE
-                      WHEN team_payout_batch_id = ${batchId} AND team_paid_out THEN team_amount_rp
-                      WHEN coop_payout_batch_id = ${batchId} AND coop_paid_out THEN coop_amount_rp
-                      ELSE 0
-                    END
-                  ), 2), 0) AS total_rp
-                FROM public.profit_ledger_entries
-                WHERE team_payout_batch_id = ${batchId} OR coop_payout_batch_id = ${batchId}
-              ),
-              del AS (
-                DELETE FROM public.profit_payout_batches b
-                USING stats s
-                WHERE b.id = ${batchId} AND (s.cnt = 0 OR s.total_rp <= 0)
-              )
-              UPDATE public.profit_payout_batches b
-              SET
-                total_payout_amount = s.total_rp,
-                notes = CASE
-                  WHEN b.beneficiary_type = 'TEAM' THEN 'Pencairan bagi hasil Tim (' || s.cnt || ' baris)'
-                  ELSE 'Pencairan bagi hasil Koperasi (' || s.cnt || ' baris)'
-                END
-              FROM stats s
-              WHERE b.id = ${batchId} AND s.cnt > 0 AND s.total_rp > 0
-            `;
-          }
+            UPDATE public.profit_payout_batches b
+            SET
+              total_payout_amount = bt.total_rp,
+              notes = CASE
+                WHEN b.beneficiary_type = 'TEAM' THEN 'Pencairan bagi hasil Tim (' || bt.entry_cnt || ' baris)'
+                ELSE 'Pencairan bagi hasil Koperasi (' || bt.entry_cnt || ' baris)'
+              END
+            FROM batch_totals bt
+            WHERE b.id = bt.batch_id AND bt.entry_cnt > 0 AND bt.total_rp > 0
+          `;
           return attachSnapshot({ ok: true });
         }
 
