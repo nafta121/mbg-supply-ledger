@@ -1,5 +1,12 @@
-const CACHE_NAME = 'mbg-ledger-shell-v3';
-const STATIC_SHELL_ASSETS = new Set(['/', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png']);
+const CACHE_NAME = 'mbg-ledger-shell-v4';
+const STATIC_SHELL_ASSETS = new Set([
+  '/',
+  '/manifest.webmanifest',
+  '/icon-192.png',
+  '/icon-512.png',
+  '/fonts/Geist-Variable.woff2',
+  '/fonts/GeistMono-Variable.woff2',
+]);
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -44,9 +51,11 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Cache-First for immutable Next.js hashed assets (/_next/static/*) and PWA shell icons
+  // Cache-First for immutable Next.js hashed assets (/_next/static/*), self-hosted fonts (/fonts/*), and PWA shell icons
   const isImmutableAsset =
-    url.pathname.startsWith('/_next/static/') || STATIC_SHELL_ASSETS.has(url.pathname);
+    url.pathname.startsWith('/_next/static/') ||
+    url.pathname.startsWith('/fonts/') ||
+    STATIC_SHELL_ASSETS.has(url.pathname);
   if (!isImmutableAsset) return;
 
   event.respondWith(

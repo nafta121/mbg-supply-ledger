@@ -44,6 +44,12 @@ export interface DurableObjectStateLike {
 
 export interface DurableObjectStubLike {
   fetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response>;
+  broadcastMutation?(body: {
+    action?: string;
+    etag?: string;
+    snapshot?: unknown;
+    updatedAt?: string;
+  }): Promise<{ ok: boolean; version: number; clients: number }>;
 }
 
 export interface DurableObjectNamespaceLike {
@@ -89,7 +95,7 @@ declare const WebSocketPair:
   | undefined;
 
 const SNAPSHOT_CACHE_PATH = '/api/hyperdrive/__snapshot_v1';
-const SNAPSHOT_CACHE_TTL_SECONDS = 5;
+const SNAPSHOT_CACHE_TTL_SECONDS = 60;
 
 function jsonResponse(
   body: unknown,
@@ -167,16 +173,21 @@ async function broadcastMutationToSyncHub(
 ): Promise<void> {
   const stub = getSyncHubStub(env);
   if (!stub) return;
+  const payload = {
+    action,
+    etag,
+    ...(snapshot && typeof snapshot === 'object' ? { snapshot } : {}),
+    updatedAt: new Date().toISOString(),
+  };
   try {
+    if (typeof stub.broadcastMutation === 'function') {
+      await stub.broadcastMutation(payload);
+      return;
+    }
     await stub.fetch('https://mbg-sync-hub.internal/broadcast', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        action,
-        etag,
-        ...(snapshot && typeof snapshot === 'object' ? { snapshot } : {}),
-        updatedAt: new Date().toISOString(),
-      }),
+      body: JSON.stringify(payload),
     });
   } catch {
     // Non-blocking broadcast best-effort
@@ -295,6 +306,43 @@ export class MbgSyncHub {
     return sent;
   }
 
+  async broadcastMutation(body: {
+    action?: string;
+    etag?: string;
+    snapshot?: unknown;
+    updatedAt?: string;
+  }): Promise<{ ok: boolean; version: number; clients: number }> {
+    const action = String(body.action ?? 'mutation');
+    const etag = String(body.etag ?? '');
+    const updatedAt = String(body.updatedAt ?? new Date().toISOString());
+    const sql = this.ctx.storage?.sql;
+    let nextVersion = 1;
+    if (sql) {
+      sql.exec(
+        `UPDATE sync_state
+         SET version = version + 1,
+             last_action = ?,
+             etag = CASE WHEN ? != '' THEN ? ELSE etag END,
+             updated_at = ?
+         WHERE id = 'global'`,
+        action,
+        etag,
+        etag,
+        updatedAt
+      );
+      nextVersion = this.getSyncState().version;
+    }
+    const clients = this.broadcastToSockets({
+      type: 'mutation',
+      version: nextVersion,
+      action,
+      etag,
+      ...(body.snapshot && typeof body.snapshot === 'object' ? { snapshot: body.snapshot } : {}),
+      updatedAt,
+    });
+    return { ok: true, version: nextVersion, clients };
+  }
+
   async fetch(input: Request | string | URL, init?: RequestInit): Promise<Response> {
     const request = input instanceof Request ? input : new Request(String(input), init);
     const url = new URL(request.url);
@@ -332,35 +380,7 @@ export class MbgSyncHub {
         snapshot?: unknown;
         updatedAt?: string;
       };
-      const action = String(body.action ?? 'mutation');
-      const etag = String(body.etag ?? '');
-      const updatedAt = String(body.updatedAt ?? new Date().toISOString());
-      const sql = this.ctx.storage?.sql;
-      let nextVersion = 1;
-      if (sql) {
-        sql.exec(
-          `UPDATE sync_state
-           SET version = version + 1,
-               last_action = ?,
-               etag = CASE WHEN ? != '' THEN ? ELSE etag END,
-               updated_at = ?
-           WHERE id = 'global'`,
-          action,
-          etag,
-          etag,
-          updatedAt
-        );
-        nextVersion = this.getSyncState().version;
-      }
-      const clients = this.broadcastToSockets({
-        type: 'mutation',
-        version: nextVersion,
-        action,
-        etag,
-        ...(body.snapshot && typeof body.snapshot === 'object' ? { snapshot: body.snapshot } : {}),
-        updatedAt,
-      });
-      return jsonResponse({ ok: true, version: nextVersion, clients });
+      return jsonResponse(await this.broadcastMutation(body));
     }
 
     if (url.pathname === '/apk' && request.method === 'GET') {

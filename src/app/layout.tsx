@@ -33,6 +33,22 @@ export default function RootLayout({
 }) {
   return (
     <html lang="id">
+      <head>
+        <link
+          rel="preload"
+          href="/fonts/Geist-Variable.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="preload"
+          href="/fonts/GeistMono-Variable.woff2"
+          as="font"
+          type="font/woff2"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body className="min-h-[100dvh] bg-paper text-ink font-sans antialiased">
         {children}
       </body>

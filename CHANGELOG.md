@@ -4,6 +4,14 @@ Seluruh perubahan penting pada arsitektur, fitur, dan optimalisasi aplikasi dica
 
 ---
 
+## [2.2.0] — 2026-11-10 — Tahap 2 Audit Hardening (Performa Edge, Caching Immutable, Tipografi Geist, & Smart Placement)
+
+- **[Web-Perf & Cloudflare] Immutable Caching untuk Aset Statis (`public/_headers`):** Menambahkan aturan `Cache-Control: public, max-age=31536000, immutable` pada `/_next/static/*` dan `/fonts/*` serta `stale-while-revalidate` pada ikon PWA agar tidak memicu revalidasi jaringan pada pemuatan berulang.
+- **[Theming & Web-Perf] Self-Hosted Variable Fonts `Geist` & `Geist Mono` (`public/fonts/`, `src/app/tokens.css`, `src/app/layout.tsx`, `public/sw.js`):** Menyediakan file font variabel `Geist-Variable.woff2` dan `GeistMono-Variable.woff2` secara lokal dengan `@font-face` (`font-display: swap`), `<link rel="preload">`, dan precache Service Worker `v4` sehingga tipografi *Warm Archival Ledger* tampil instan dan 100% bekerja saat offline.
+- **[Cloudflare Best Practices] Smart Placement, Durable Object RPC, & Edge Cache TTL (`wrangler.toml`, `src/worker.ts`, `package.json`):** Mengaktifkan `[placement] mode = "smart"`, menambahkan pemanggilan method langsung `broadcastMutation()` pada `MbgSyncHub`, menaikkan `SNAPSHOT_CACHE_TTL_SECONDS` dari `5` ke `60` detik, serta menambahkan `browserslist` modern.
+
+---
+
 ## [2.1.0] — 2026-11-10 — Tahap 1 Audit Hardening (Keamanan, Presisi Sen `BigInt`, & Skala D1/R2)
 
 - **[Security] Autentikasi `GET /api/documents` (`src/worker.ts`):** Menutup akses publik tanpa autentikasi pada daftar dan unduhan dokumen BAST/bukti transfer dengan mewajibkan verifikasi PIN (`OWNER_ADMIN` atau `COOPERATIVE_VIEWER`).
