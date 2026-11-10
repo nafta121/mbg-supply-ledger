@@ -5,6 +5,8 @@ import {
   type D1DatabaseLike,
   type D1PreparedStatementLike,
   executeHyperdriveAction,
+  hashRolePin,
+  type HyperdriveActionPayload,
   isHyperdriveConfigured,
   queryMbgDataViaHyperdrive,
   resetHyperdrivePinGuardForTest,
@@ -298,10 +300,7 @@ describe('Cloudflare Hyperdrive Security & Scale Hardening', () => {
   it('executes full Cloudflare D1 snapshot reads, SHA-256 PIN verification, and atomic batch mutations via env.DB', async () => {
     const seed = createInitialSeedState();
     const rows = toSupabaseRows(seed);
-    // Hash for role='OWNER_ADMIN', salt='mbg-pin-salt-admin-v1', pin='1122':
-    // sha256("OWNER_ADMIN:mbg-pin-salt-admin-v1:1122") = e67bc0661e992a765eb4b5518aa51fc0bd4a2eb2ca8da837a2782bd77d0f13bd
-    const adminSalt = 'mbg-pin-salt-admin-v1';
-    const adminHash = 'e67bc0661e992a765eb4b5518aa51fc0bd4a2eb2ca8da837a2782bd77d0f13bd';
+    const adminSaltedHash = await hashRolePin('OWNER_ADMIN', '1122');
 
     const executedStatements: Array<{ query: string; values: unknown[] }> = [];
 
@@ -309,8 +308,8 @@ describe('Cloudflare Hyperdrive Security & Scale Hardening', () => {
       bind: (...bound: unknown[]) => createStatement(query, bound),
       first: async <T = Record<string, unknown>>() => {
         executedStatements.push({ query, values });
-        if (query.includes('FROM role_pins')) {
-          return { pin_salt: adminSalt, pin_hash: adminHash } as unknown as T;
+        if (query.includes('FROM role_credentials')) {
+          return { pin_sha256: adminSaltedHash } as unknown as T;
         }
         if (query.includes('FROM kitchen_orders WHERE id = ?')) {
           return { id: 'deliv-01', kitchen_id: 'kitchen-01', order_date: '2026-10-16', order_code: 'SJ-20261016-DPR01-01' } as unknown as T;
@@ -392,5 +391,321 @@ describe('Cloudflare Hyperdrive Security & Scale Hardening', () => {
     );
     expect(deleteRes.ok).toBe(true);
     expect((deleteRes.snapshot as { kitchens: unknown[] }).kitchens).toHaveLength(25);
+  });
+
+  it('enforces Stage 1 Must-Fix security, BigInt Sen split, O(1) settings batch, and R2 document hygiene', async () => {
+    const saltedAdminHex = await hashRolePin('OWNER_ADMIN', '1122');
+    const saltedCoopHex = await hashRolePin('COOPERATIVE_VIEWER', '3344');
+    expect(saltedAdminHex).toBe('65fbd296a1ae8adde6f7340794abb06caa642dc0623c12b8a199d70d4b6265aa');
+    expect(saltedCoopHex).toBe('3679bb403222966183d744b3679589c8823dd3bdb739d8a15f85d5cd8d97db6a');
+
+    const batchedQueries: string[][] = [];
+    const rateLimits = new Map<string, { fail_count: number; reset_at_ms: number }>();
+    const idempotencyLog = new Map<string, { result_json: string; expires_at_ms: number }>();
+
+    const makeStmt = (
+      query: string,
+      values: unknown[] = []
+    ): D1PreparedStatementLike & { __query: string; __values: unknown[] } => ({
+      __query: query,
+      __values: values,
+      bind: (...bound: unknown[]) => makeStmt(query, bound),
+      first: async <T = Record<string, unknown>>() => {
+        if (query.includes('FROM role_credentials')) {
+          const role = String(values[0] ?? '');
+          if (role === 'OWNER_ADMIN') return { pin_sha256: saltedAdminHex } as unknown as T;
+          if (role === 'COOPERATIVE_VIEWER') return { pin_sha256: saltedCoopHex } as unknown as T;
+          return null;
+        }
+        if (query.includes('FROM security_rate_limits')) {
+          const key = String(values[0] ?? '');
+          return (rateLimits.get(key) ?? null) as unknown as T;
+        }
+        if (query.includes('FROM mutation_idempotency_log')) {
+          const key = String(values[0] ?? '');
+          return (idempotencyLog.get(key) ?? null) as unknown as T;
+        }
+        return null;
+      },
+      all: async <T = Record<string, unknown>>() => ({ results: [] as T[] }),
+      run: async () => {
+        if (query.includes('INSERT INTO security_rate_limits')) {
+          rateLimits.set(String(values[0]), {
+            fail_count: Number(values[1]),
+            reset_at_ms: Number(values[2]),
+          });
+        } else if (query.includes('DELETE FROM security_rate_limits')) {
+          rateLimits.delete(String(values[0]));
+        } else if (query.includes('INSERT INTO mutation_idempotency_log')) {
+          idempotencyLog.set(String(values[0]), {
+            result_json: String(values[1]),
+            expires_at_ms: Number(values[2]),
+          });
+        }
+        return { success: true };
+      },
+    });
+
+    let currentOrderItems = [
+      {
+        id: 'ditem-1',
+        order_id: 'deliv-1',
+        product_id: 'prod-1',
+        product_name_snapshot: 'Wortel',
+        qty_ordered_kg: 33.333,
+        qty_accepted_kg: 33.333,
+        kitchen_unit_price_rp: 16500,
+        margin_per_kg_rp: 2000,
+        is_weighed: 1,
+      },
+    ];
+
+    const fakeD1: D1DatabaseLike = {
+      prepare: (query: string) => makeStmt(query),
+      batch: async <T = Record<string, unknown>>(statements: D1PreparedStatementLike[]) => {
+        const qs = statements.map((s) => (s as unknown as { __query: string }).__query);
+        batchedQueries.push(qs);
+
+        // update_order initial read (5 queries)
+        if (qs.length === 5 && qs[0]?.includes('FROM kitchen_orders') && qs[1]?.includes('FROM kitchens')) {
+          return [
+            { results: [{ id: 'deliv-1', kitchen_id: 'k-1', order_date: '2026-11-10', order_code: 'SJ-1' }] as unknown as T[] },
+            { results: [{ id: 'k-1', code: 'DPR-01', name: 'Dapur 1', pic_name: 'PIC' }] as unknown as T[] },
+            { results: [{ id: 'prod-1', code: 'ITM-1', name: 'Wortel' }] as unknown as T[] },
+            {
+              results: [
+                ...currentOrderItems,
+                { id: 'ditem-removed', order_id: 'deliv-1', product_id: 'prod-2', qty_ordered_kg: 5, qty_accepted_kg: 5 },
+              ] as unknown as T[],
+            },
+            { results: [] as unknown as T[] },
+          ];
+        }
+
+        // recalculateOrderFinancialsD1 read (5 queries)
+        if (qs.length === 5 && qs[2]?.includes('FROM kitchen_invoices')) {
+          return [
+            { results: [{ id: 'deliv-1', kitchen_id: 'k-1', order_date: '2026-11-10', order_code: 'SJ-1' }] as unknown as T[] },
+            { results: currentOrderItems as unknown as T[] },
+            { results: [{ id: 'inv-deliv-1', order_id: 'deliv-1', status: 'UNPAID', amount_paid_rp: 0 }] as unknown as T[] },
+            { results: [{ id: 'default', team_share_pct: 50, coop_share_pct: 50 }] as unknown as T[] },
+            {
+              results: [
+                { id: 'ple-ditem-1', order_id: 'deliv-1', order_item_id: 'ditem-1', team_paid_out: 0, coop_paid_out: 0 },
+                { id: 'ple-ditem-removed', order_id: 'deliv-1', order_item_id: 'ditem-removed', team_paid_out: 0, coop_paid_out: 0 },
+              ] as unknown as T[],
+            },
+          ];
+        }
+
+        // update_app_settings read (2 queries)
+        if (qs.length === 2 && qs[0]?.includes('FROM app_settings') && qs[1]?.includes('FROM profit_ledger_entries')) {
+          return [
+            { results: [{ id: 'default', team_share_pct: 50, coop_share_pct: 50 }] as unknown as T[] },
+            {
+              results: [
+                { id: 'ple-1', gross_margin_rp: 66666 },
+                { id: 'ple-2', gross_margin_rp: 33333.33 },
+              ] as unknown as T[],
+            },
+          ];
+        }
+
+        return statements.map(() => ({ results: [] as T[], success: true }));
+      },
+    };
+
+    const env = { DB: fakeD1 };
+
+    // 1. Unknown action returns { ok: false } instead of crashing with TypeError
+    const unknownRes = await executeHyperdriveAction(
+      { action: 'non_existent_action', adminPin: '1122' } as unknown as HyperdriveActionPayload,
+      env
+    );
+    expect(unknownRes.ok).toBe(false);
+    expect(String(unknownRes.error)).toContain('Aksi tidak dikenal');
+
+    // 2. update_order removes an item, computes exact BigInt Sen split, and reconciles payout batches
+    batchedQueries.length = 0;
+    const updateOrderRes = await executeHyperdriveAction(
+      {
+        action: 'update_order',
+        adminPin: '1122',
+        clientMutationId: 'mut-upd-order-1',
+        input: {
+          delivery_id: 'deliv-1',
+          kitchen_id: 'k-1',
+          order_date: '2026-11-10',
+          lines: [
+            {
+              id: 'ditem-1',
+              item_id: 'prod-1',
+              qty_ordered_kg: 33.333,
+              qty_accepted_kg: 33.333,
+              kitchen_unit_price_rp: 16500,
+              margin_per_kg_rp: 2000,
+            },
+          ],
+        },
+      },
+      env
+    );
+    expect(updateOrderRes.ok).toBe(true);
+    // Verify reconcilePayoutBatchesD1 ran after removing ditem-removed
+    const flattenedSql = batchedQueries.flat().join('\n');
+    expect(flattenedSql).toContain('UPDATE profit_payout_batches');
+    expect(flattenedSql).toContain('DELETE FROM profit_payout_batches');
+
+    // Verify D1-persisted idempotency even after clearing in-memory isolate cache
+    resetHyperdrivePinGuardForTest();
+    const dedupUpdateRes = await executeHyperdriveAction(
+      {
+        action: 'update_order',
+        adminPin: '1122',
+        clientMutationId: 'mut-upd-order-1',
+        input: {
+          delivery_id: 'deliv-1',
+          kitchen_id: 'k-1',
+          order_date: '2026-11-10',
+          lines: [],
+        },
+      },
+      env
+    );
+    expect(dedupUpdateRes).toMatchObject({ ok: true, deduplicated: true });
+
+    // 3. update_app_settings executes in exactly 2 D1 batches (1 read + 1 write) regardless of open orders
+    batchedQueries.length = 0;
+    const settingsRes = await executeHyperdriveAction(
+      {
+        action: 'update_app_settings',
+        adminPin: '1122',
+        params: {
+          teamSharePct: 50,
+          coopSharePct: 50,
+          supplierName: 'CV. NMD',
+        },
+      },
+      env
+    );
+    expect(settingsRes.ok).toBe(true);
+    expect(batchedQueries).toHaveLength(2);
+
+    // 4. /api/documents requires PIN on GET, stores empty data_url in DO SQLite when R2 succeeds, and deletes from R2 on DELETE
+    const r2Objects = new Map<string, string>();
+    const doDocs = new Map<string, { id: string; doc_type: string; ref_id: string; file_name: string; content_type: string; data_url: string; size_bytes: number; created_at: string }>();
+
+    const docHubState: DurableObjectStateLike = {
+      storage: {
+        sql: {
+          exec: vi.fn((sqlText: string, ...params: unknown[]) => {
+            if (sqlText.includes('INSERT INTO documents')) {
+              const [id, doc_type, ref_id, file_name, content_type, data_url, size_bytes, created_at] = params as [
+                string,
+                string,
+                string,
+                string,
+                string,
+                string,
+                number,
+                string
+              ];
+              doDocs.set(id, { id, doc_type, ref_id, file_name, content_type, data_url, size_bytes, created_at });
+            } else if (sqlText.includes('DELETE FROM documents WHERE id = ?')) {
+              doDocs.delete(String(params[0]));
+            } else if (sqlText.includes('SELECT file_name FROM documents WHERE id = ?')) {
+              const doc = doDocs.get(String(params[0]));
+              return { toArray: () => (doc ? [{ file_name: doc.file_name }] : []) };
+            } else if (sqlText.includes('FROM documents WHERE id = ?')) {
+              const doc = doDocs.get(String(params[0]));
+              return { toArray: () => (doc ? [{ ...doc }] : []) };
+            }
+            return { toArray: () => [] };
+          }) as unknown as DurableObjectStateLike['storage']['sql']['exec'],
+        },
+      },
+      acceptWebSocket: vi.fn(),
+      getWebSockets: vi.fn(() => []),
+      blockConcurrencyWhile: vi.fn(async (cb) => cb()),
+    };
+
+    const r2Bucket = {
+      get: vi.fn(async (key: string) => {
+        const val = r2Objects.get(key);
+        if (!val) return null;
+        return {
+          body: null,
+          text: async () => val,
+          arrayBuffer: async () => new TextEncoder().encode(val).buffer,
+        };
+      }),
+      put: vi.fn(async (key: string, val: unknown) => {
+        r2Objects.set(key, String(val));
+      }),
+      delete: vi.fn(async (key: string | string[]) => {
+        if (Array.isArray(key)) key.forEach((k) => r2Objects.delete(k));
+        else r2Objects.delete(key);
+      }),
+    };
+
+    const docHub = new MbgSyncHub(docHubState, { ...env, MBG_STORAGE: r2Bucket });
+    const workerEnv = {
+      ...env,
+      MBG_STORAGE: r2Bucket,
+      MBG_SYNC_HUB: {
+        idFromName: () => 'global-id',
+        get: () => docHub,
+        getByName: () => docHub,
+      },
+    };
+
+    // Unauthenticated GET /api/documents is rejected with 401
+    const unauthGet = await worker.fetch(new Request('https://mbg.letsgrow.web.id/api/documents'), workerEnv);
+    expect(unauthGet.status).toBe(401);
+
+    // Upload document via POST /api/documents
+    const postDocRes = await worker.fetch(
+      new Request('https://mbg.letsgrow.web.id/api/documents', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-admin-pin': '1122' },
+        body: JSON.stringify({
+          id: 'doc-bast-01',
+          docType: 'BAST',
+          refId: 'deliv-1',
+          fileName: 'bast-01.jpg',
+          contentType: 'image/jpeg',
+          dataUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRg==',
+        }),
+      }),
+      workerEnv
+    );
+    expect(postDocRes.status).toBe(200);
+    // R2 received the payload while DO SQLite stored '' for data_url
+    expect(r2Objects.get('documents/doc-bast-01/bast-01.jpg')).toBe('data:image/jpeg;base64,/9j/4AAQSkZJRg==');
+    expect(doDocs.get('doc-bast-01')?.data_url).toBe('');
+
+    // Authenticated GET /api/documents?id=doc-bast-01 (with Coop PIN) hydrates data_url from R2
+    const authGet = await worker.fetch(
+      new Request('https://mbg.letsgrow.web.id/api/documents?id=doc-bast-01', {
+        headers: { 'x-role-pin': '3344' },
+      }),
+      workerEnv
+    );
+    expect(authGet.status).toBe(200);
+    const authGetJson = (await authGet.json()) as { ok: boolean; document: { data_url: string } };
+    expect(authGetJson.ok).toBe(true);
+    expect(authGetJson.document.data_url).toBe('data:image/jpeg;base64,/9j/4AAQSkZJRg==');
+
+    // DELETE /api/documents?id=doc-bast-01 removes from both DO SQLite and R2
+    const delDocRes = await worker.fetch(
+      new Request('https://mbg.letsgrow.web.id/api/documents?id=doc-bast-01', {
+        method: 'DELETE',
+        headers: { 'x-admin-pin': '1122' },
+      }),
+      workerEnv
+    );
+    expect(delDocRes.status).toBe(200);
+    expect(doDocs.has('doc-bast-01')).toBe(false);
+    expect(r2Objects.has('documents/doc-bast-01/bast-01.jpg')).toBe(false);
   });
 });

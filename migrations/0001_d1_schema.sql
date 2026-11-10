@@ -133,8 +133,8 @@ CREATE TABLE IF NOT EXISTS app_settings (
   payment_bank_name TEXT NOT NULL DEFAULT 'BRI',
   payment_account_number TEXT NOT NULL DEFAULT '3888 0100 5597 504',
   payment_account_holder TEXT NOT NULL DEFAULT 'Yoga Eko Setiawan',
-  admin_pin TEXT NOT NULL DEFAULT '1122',
-  coop_pin TEXT NOT NULL DEFAULT '3344',
+  admin_pin TEXT NOT NULL DEFAULT '',
+  coop_pin TEXT NOT NULL DEFAULT '',
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -144,12 +144,27 @@ CREATE TABLE IF NOT EXISTS role_credentials (
   updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
--- Seed role credentials (SHA-256 of default PINs 1122 and 3344)
-INSERT OR REPLACE INTO role_credentials (role, pin_sha256, updated_at) VALUES ('OWNER_ADMIN', 'b3282a2f2a28757b3a18ab833de16a9c54518c0b0cf493e3f0a7cf09386f326a', '2026-11-06T12:00:00.000Z');
-INSERT OR REPLACE INTO role_credentials (role, pin_sha256, updated_at) VALUES ('COOPERATIVE_VIEWER', '15fc36b3e80b9d7f87f7dc90cd7a2845c5d8501c30f03379fcf14154f1680380', '2026-11-06T12:00:00.000Z');
+CREATE TABLE IF NOT EXISTS security_rate_limits (
+  client_key TEXT PRIMARY KEY,
+  fail_count INTEGER NOT NULL DEFAULT 0,
+  reset_at_ms INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
 
--- Seed app_settings from production snapshot
-INSERT OR REPLACE INTO app_settings (id, team_share_pct, coop_share_pct, supplier_name, payment_bank_name, payment_account_number, payment_account_holder, admin_pin, coop_pin, updated_at) VALUES ('default', 60, 40, 'Megah Sayur', 'BRI', '3888 0100 5597 504', 'Yoga Eko Setiawan', '1122', '3344', '2026-10-16T06:00:00.000Z');
+CREATE TABLE IF NOT EXISTS mutation_idempotency_log (
+  mutation_key TEXT PRIMARY KEY,
+  result_json TEXT NOT NULL,
+  expires_at_ms INTEGER NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_mutation_idempotency_expires ON mutation_idempotency_log(expires_at_ms);
+
+-- Seed role credentials (salted SHA-256 of `<ROLE>:mbg-pin-v1:<PIN>` for default PINs 1122 and 3344)
+INSERT OR REPLACE INTO role_credentials (role, pin_sha256, updated_at) VALUES ('OWNER_ADMIN', '65fbd296a1ae8adde6f7340794abb06caa642dc0623c12b8a199d70d4b6265aa', '2026-11-06T12:00:00.000Z');
+INSERT OR REPLACE INTO role_credentials (role, pin_sha256, updated_at) VALUES ('COOPERATIVE_VIEWER', '3679bb403222966183d744b3679589c8823dd3bdb739d8a15f85d5cd8d97db6a', '2026-11-06T12:00:00.000Z');
+
+-- Seed app_settings from production snapshot (plaintext PIN columns left blank)
+INSERT OR REPLACE INTO app_settings (id, team_share_pct, coop_share_pct, supplier_name, payment_bank_name, payment_account_number, payment_account_holder, admin_pin, coop_pin, updated_at) VALUES ('default', 60, 40, 'Megah Sayur', 'BRI', '3888 0100 5597 504', 'Yoga Eko Setiawan', '', '', '2026-10-16T06:00:00.000Z');
 
 -- Seed kitchens from production snapshot
 INSERT OR REPLACE INTO kitchens (id, code, name, address, pic_name, pic_phone, default_markup_per_kg, is_active, created_at) VALUES ('kitchen-dpr-01-1792237194215', 'DPR-01', 'Sppg katikan', 'Katikan Kedunggalar ngawi', 'Muklis', '+62 858-0100-6617', 0, 1, '2026-10-17T11:39:54.21+00:00');

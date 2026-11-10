@@ -4,6 +4,18 @@ Seluruh perubahan penting pada arsitektur, fitur, dan optimalisasi aplikasi dica
 
 ---
 
+## [2.1.0] — 2026-11-10 — Tahap 1 Audit Hardening (Keamanan, Presisi Sen `BigInt`, & Skala D1/R2)
+
+- **[Security] Autentikasi `GET /api/documents` (`src/worker.ts`):** Menutup akses publik tanpa autentikasi pada daftar dan unduhan dokumen BAST/bukti transfer dengan mewajibkan verifikasi PIN (`OWNER_ADMIN` atau `COOPERATIVE_VIEWER`).
+- **[Security] Salted SHA-256 PIN & Penghapusan Plaintext PIN (`src/lib/hyperdrive.ts`, `migrations/0002_security_hardening.sql`):** Menggunakan hash ber-*salt* (`<ROLE>:mbg-pin-v1:<PIN>`) pada `role_credentials` (dengan auto-upgrade transparan dari hash lama) serta mengosongkan kolom plaintext `admin_pin` dan `coop_pin` di `app_settings`.
+- **[Security & Scale] Persistensi Rate-Limit PIN & Idempotensi Mutasi di D1 (`src/lib/hyperdrive.ts`):** Mem-backup state pembatas percobaan PIN (`security_rate_limits`) dan deduplikasi `clientMutationId` (`mutation_idempotency_log`) ke tabel D1 agar konsisten lintas *isolate* Cloudflare Workers.
+- **[Bug & Precision] Penyatuan Perhitungan Bagi Hasil D1 ke `BigInt` Sen (`src/lib/hyperdrive.ts`, `src/lib/financial-engine.ts`):** Mengganti pembulatan `Math.round` floating-point pada `recalculateOrderFinancialsD1` dengan `calculateProfitSplitEntry` (`divideHalfUp` berbasis Sen `BigInt`) dan memanggil `reconcilePayoutBatchesD1` saat item dihapus melalui `update_order`.
+- **[Scale] Optimasi `update_app_settings` Menjadi `O(1)` Batch D1 (`src/lib/hyperdrive.ts`):** Mengganti loop `2 × N` query berurutan per order terbuka menjadi 1 batch baca + 1 batch tulis atomik (`db.batch`).
+- **[Cloudflare DO & R2] Deduplikasi Blob SQLite DO & Pembersihan Objek R2 (`src/worker.ts`):** Tidak menduplikasi string Base64 hingga 2 MB di SQLite Durable Object saat penyimpanan ke R2 (`MBG_STORAGE`) berhasil, serta menghapus objek di R2 saat `DELETE /api/documents` dipanggil.
+- **[Bug] Penanganan `action` Tidak Dikenal (`src/lib/hyperdrive.ts`):** Menambahkan cabang `default:` pada `executeD1Action` dan `executeHyperdriveAction` agar mengembalikan error terstruktur tanpa melempar `TypeError`.
+
+---
+
 ## [2.0.0] — 2026-11-06 — Migrasi Penuh ke 100% Full Cloudflare Stack (D1 + Workers + Durable Objects + R2)
 
 ### Tahapan Migrasi Bertahap

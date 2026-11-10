@@ -61,7 +61,7 @@ export function pctToBasisPoints(pct: number | string): bigint {
 /**
  * Half-up division for non-negative BigInt values: ROUND(numerator / denominator)
  */
-function divideHalfUp(numerator: bigint, denominator: bigint): bigint {
+export function divideHalfUp(numerator: bigint, denominator: bigint): bigint {
   if (denominator <= 0n) {
     throw new Error('Denominator must be positive');
   }

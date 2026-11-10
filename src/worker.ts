@@ -56,6 +56,7 @@ export interface R2ObjectBodyLike {
   body: ReadableStream | null;
   httpMetadata?: { contentType?: string };
   arrayBuffer(): Promise<ArrayBuffer>;
+  text?(): Promise<string>;
 }
 
 export interface R2BucketLike {
@@ -65,6 +66,7 @@ export interface R2BucketLike {
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string,
     options?: { httpMetadata?: { contentType?: string } }
   ): Promise<unknown>;
+  delete?(keys: string | string[]): Promise<void>;
 }
 
 export interface WorkerExecutionContext {
@@ -484,6 +486,16 @@ export class MbgSyncHub {
           .toArray();
         const doc = rows[0];
         if (!doc) return jsonResponse({ ok: false, error: 'Dokumen tidak ditemukan.' }, 404);
+        if (!doc.data_url && this.env.MBG_STORAGE) {
+          const r2Key = `documents/${doc.id}/${doc.file_name}`;
+          const r2Obj = await this.env.MBG_STORAGE.get(r2Key).catch(() => null);
+          if (r2Obj) {
+            doc.data_url =
+              typeof r2Obj.text === 'function'
+                ? await r2Obj.text()
+                : new TextDecoder().decode(await r2Obj.arrayBuffer());
+          }
+        }
         return jsonResponse({ ok: true, document: doc });
       }
 
@@ -544,6 +556,18 @@ export class MbgSyncHub {
         return jsonResponse({ ok: false, error: 'Ukuran dokumen melebihi batas 2MB.' }, 413);
       }
       const createdAt = new Date().toISOString();
+
+      let storedInR2 = false;
+      if (this.env.MBG_STORAGE) {
+        storedInR2 = await this.env.MBG_STORAGE.put(`documents/${id}/${fileName}`, dataUrl, {
+          httpMetadata: { contentType },
+        })
+          .then(() => true)
+          .catch(() => false);
+      }
+
+      // Avoid duplicating up to 2MB base64 payload in DO SQLite when R2 object storage succeeds
+      const sqliteDataUrl = storedInR2 ? '' : dataUrl;
       this.ctx.storage?.sql.exec(
         `INSERT INTO documents (id, doc_type, ref_id, file_name, content_type, data_url, size_bytes, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -560,16 +584,10 @@ export class MbgSyncHub {
         refId,
         fileName,
         contentType,
-        dataUrl,
+        sqliteDataUrl,
         sizeBytes,
         createdAt
       );
-
-      if (this.env.MBG_STORAGE) {
-        await this.env.MBG_STORAGE.put(`documents/${id}/${fileName}`, dataUrl, {
-          httpMetadata: { contentType },
-        }).catch(() => undefined);
-      }
 
       this.broadcastToSockets({
         type: 'document_uploaded',
@@ -587,7 +605,14 @@ export class MbgSyncHub {
       if (!id) {
         return jsonResponse({ ok: false, error: 'Parameter id wajib diisi.' }, 400);
       }
+      const existingRows = this.ctx.storage?.sql
+        .exec<{ file_name: string }>(`SELECT file_name FROM documents WHERE id = ? LIMIT 1`, id)
+        .toArray();
+      const fileName = existingRows?.[0]?.file_name;
       this.ctx.storage?.sql.exec(`DELETE FROM documents WHERE id = ?`, id);
+      if (fileName && this.env.MBG_STORAGE && typeof this.env.MBG_STORAGE.delete === 'function') {
+        await this.env.MBG_STORAGE.delete(`documents/${id}/${fileName}`).catch(() => undefined);
+      }
       return jsonResponse({ ok: true, deletedId: id });
     }
 
@@ -709,8 +734,41 @@ export default {
       }
 
       if (request.method === 'GET') {
+        const pin = String(
+          request.headers.get('x-admin-pin') ??
+            request.headers.get('x-role-pin') ??
+            url.searchParams.get('pin') ??
+            ''
+        ).trim();
+        if (!pin) {
+          return jsonResponse(
+            { ok: false, error: 'PIN wajib diisi untuk mengakses dokumen.' },
+            401
+          );
+        }
+        const clientIp = extractClientIp(request);
+        const adminCheck = await executeHyperdriveAction(
+          { action: 'verify_role_pin', role: 'OWNER_ADMIN', pin, clientIp },
+          env
+        );
+        if (!adminCheck.ok) {
+          if (adminCheck.error) {
+            return jsonResponse({ ok: false, error: String(adminCheck.error) }, 403);
+          }
+          const coopCheck = await executeHyperdriveAction(
+            { action: 'verify_role_pin', role: 'COOPERATIVE_VIEWER', pin, clientIp },
+            env
+          );
+          if (!coopCheck.ok) {
+            return jsonResponse(
+              { ok: false, error: String(coopCheck.error ?? 'PIN tidak valid untuk mengakses dokumen.') },
+              403
+            );
+          }
+        }
         const target = new URL('https://mbg-sync-hub.internal/documents');
         target.search = url.search;
+        target.searchParams.delete('pin');
         return stub.fetch(target.toString(), { method: 'GET' });
       }
 

@@ -8,10 +8,13 @@
  */
 import type { BeneficiaryType, Item, Kitchen } from '../types/mbg';
 import {
+  calculateProfitSplitEntry,
   DEFAULT_PAYMENT_INFO,
+  divideHalfUp,
   idrToSen,
   kgToGrams,
   multiplyWeightGramsByPriceSen,
+  pctToBasisPoints,
   roundKg,
   senToIdr,
 } from './financial-engine';
@@ -413,6 +416,107 @@ function addDaysYmd(isoDate: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
+export async function hashRolePin(role: string, pin: string): Promise<string> {
+  const normalizedRole = String(role ?? '').trim().toUpperCase();
+  const cleanPin = String(pin ?? '').trim();
+  return (await sha256Hex(`${normalizedRole}:mbg-pin-v1:${cleanPin}`)).toLowerCase();
+}
+
+async function isClientPinLockedD1(db: D1DatabaseLike, clientKey: string): Promise<boolean> {
+  if (isClientPinLocked(clientKey)) return true;
+  try {
+    const row = await db
+      .prepare('SELECT fail_count, reset_at_ms FROM security_rate_limits WHERE client_key = ? LIMIT 1')
+      .bind(clientKey)
+      .first<{ fail_count?: number; reset_at_ms?: number }>();
+    if (!row) return false;
+    const now = Date.now();
+    const resetAt = num(row.reset_at_ms);
+    const count = num(row.fail_count);
+    if (now > resetAt) return false;
+    pinFailuresByClient.set(clientKey, { count, resetAt });
+    return count >= MAX_PIN_FAILURES;
+  } catch {
+    return false;
+  }
+}
+
+async function recordPinFailureD1(db: D1DatabaseLike, clientKey: string): Promise<void> {
+  recordPinFailure(clientKey);
+  const entry = pinFailuresByClient.get(clientKey);
+  if (!entry) return;
+  try {
+    await db
+      .prepare(
+        `INSERT INTO security_rate_limits (client_key, fail_count, reset_at_ms, updated_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(client_key) DO UPDATE SET
+           fail_count = excluded.fail_count,
+           reset_at_ms = excluded.reset_at_ms,
+           updated_at = excluded.updated_at`
+      )
+      .bind(clientKey, entry.count, entry.resetAt, new Date().toISOString())
+      .run();
+  } catch {
+    // Fallback to in-memory map when table is absent in lightweight test mocks
+  }
+}
+
+async function clearPinFailureD1(db: D1DatabaseLike, clientKey: string): Promise<void> {
+  pinFailuresByClient.delete(clientKey);
+  try {
+    await db.prepare('DELETE FROM security_rate_limits WHERE client_key = ?').bind(clientKey).run();
+  } catch {
+    // Ignore when table is absent in test mocks
+  }
+}
+
+async function getCachedMutationResultD1(
+  db: D1DatabaseLike,
+  mutationKey: string
+): Promise<Record<string, unknown> | null> {
+  const local = getCachedMutationResult(mutationKey);
+  if (local) return local;
+  try {
+    const row = await db
+      .prepare(
+        'SELECT result_json, expires_at_ms FROM mutation_idempotency_log WHERE mutation_key = ? LIMIT 1'
+      )
+      .bind(mutationKey)
+      .first<{ result_json?: string; expires_at_ms?: number }>();
+    if (!row || !row.result_json) return null;
+    if (Date.now() > num(row.expires_at_ms)) return null;
+    const parsed = JSON.parse(row.result_json) as Record<string, unknown>;
+    recordCompletedMutation(mutationKey, parsed);
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+async function recordCompletedMutationD1(
+  db: D1DatabaseLike,
+  mutationKey: string,
+  result: Record<string, unknown>
+): Promise<void> {
+  recordCompletedMutation(mutationKey, result);
+  const expiresAt = Date.now() + MUTATION_IDEMPOTENCY_TTL_MS;
+  try {
+    await db
+      .prepare(
+        `INSERT INTO mutation_idempotency_log (mutation_key, result_json, expires_at_ms, created_at)
+         VALUES (?, ?, ?, ?)
+         ON CONFLICT(mutation_key) DO UPDATE SET
+           result_json = excluded.result_json,
+           expires_at_ms = excluded.expires_at_ms`
+      )
+      .bind(mutationKey, JSON.stringify(result), expiresAt, new Date().toISOString())
+      .run();
+  } catch {
+    // Fallback to in-memory map when table is absent in lightweight test mocks
+  }
+}
+
 async function verifyPinOnD1(db: D1DatabaseLike, role: string, pin: string): Promise<boolean> {
   const normalizedRole = String(role ?? '').trim().toUpperCase();
   const cleanPin = String(pin ?? '').trim();
@@ -425,26 +529,58 @@ async function verifyPinOnD1(db: D1DatabaseLike, role: string, pin: string): Pro
     .bind(normalizedRole)
     .first<{ pin_sha256?: string }>();
   if (credRow?.pin_sha256) {
-    const storedHex = credRow.pin_sha256.trim().toLowerCase();
-    const candidateHex = (await sha256Hex(cleanPin)).toLowerCase();
-    return timingSafeEqualBytes(
-      new TextEncoder().encode(storedHex),
-      new TextEncoder().encode(candidateHex)
-    );
+    const storedBytes = new TextEncoder().encode(credRow.pin_sha256.trim().toLowerCase());
+    const [saltedHex, legacyUnsaltedHex] = await Promise.all([
+      hashRolePin(normalizedRole, cleanPin),
+      sha256Hex(cleanPin),
+    ]);
+    if (timingSafeEqualBytes(storedBytes, new TextEncoder().encode(saltedHex))) {
+      return true;
+    }
+    if (timingSafeEqualBytes(storedBytes, new TextEncoder().encode(legacyUnsaltedHex.toLowerCase()))) {
+      // Auto-upgrade legacy unsalted hash to role-salted hash and purge plaintext PINs
+      const nowIso = new Date().toISOString();
+      await db
+        .batch([
+          db
+            .prepare('UPDATE role_credentials SET pin_sha256 = ?, updated_at = ? WHERE role = ?')
+            .bind(saltedHex, nowIso, normalizedRole),
+          db.prepare("UPDATE app_settings SET admin_pin = '', coop_pin = '' WHERE id = 'default'"),
+        ])
+        .catch(() => undefined);
+      return true;
+    }
+    return false;
   }
 
   const settingsRow = await db
     .prepare("SELECT admin_pin, coop_pin FROM app_settings WHERE id = 'default' LIMIT 1")
     .first<{ admin_pin?: string; coop_pin?: string }>();
-  const expectedPlain =
+  const rawFallback =
     normalizedRole === 'OWNER_ADMIN'
-      ? String(settingsRow?.admin_pin ?? '1122').trim()
-      : String(settingsRow?.coop_pin ?? '3344').trim();
+      ? String(settingsRow?.admin_pin ?? '').trim()
+      : String(settingsRow?.coop_pin ?? '').trim();
+  if (!rawFallback) return false;
   const [expectedDigest, candidateDigest] = await Promise.all([
-    sha256Bytes(expectedPlain),
+    sha256Bytes(rawFallback),
     sha256Bytes(cleanPin),
   ]);
-  return timingSafeEqualBytes(expectedDigest, candidateDigest);
+  const matched = timingSafeEqualBytes(expectedDigest, candidateDigest);
+  if (matched) {
+    const saltedHex = await hashRolePin(normalizedRole, cleanPin);
+    const nowIso = new Date().toISOString();
+    await db
+      .batch([
+        db
+          .prepare(
+            'INSERT OR REPLACE INTO role_credentials (role, pin_sha256, updated_at) VALUES (?, ?, ?)'
+          )
+          .bind(normalizedRole, saltedHex, nowIso),
+        db.prepare("UPDATE app_settings SET admin_pin = '', coop_pin = '' WHERE id = 'default'"),
+      ])
+      .catch(() => undefined);
+  }
+  return matched;
 }
 
 /**
@@ -507,6 +643,7 @@ export async function recalculateOrderFinancialsD1(db: D1DatabaseLike, orderId: 
       db.prepare('DELETE FROM kitchen_invoices WHERE order_id = ?').bind(orderId),
       db.prepare('DELETE FROM kitchen_orders WHERE id = ?').bind(orderId),
     ]);
+    await reconcilePayoutBatchesD1(db);
     return;
   }
 
@@ -625,6 +762,7 @@ export async function recalculateOrderFinancialsD1(db: D1DatabaseLike, orderId: 
   }
 
   const activeItemIds = new Set(items.map((it) => it.id));
+  let deletedAnyLedger = false;
   for (const oldLe of existingLedgers) {
     if (
       oldLe.order_item_id &&
@@ -633,17 +771,31 @@ export async function recalculateOrderFinancialsD1(db: D1DatabaseLike, orderId: 
       !Boolean(oldLe.coop_paid_out)
     ) {
       stmts.push(db.prepare('DELETE FROM profit_ledger_entries WHERE id = ?').bind(oldLe.id));
+      deletedAnyLedger = true;
     }
+  }
+
+  if (pctToBasisPoints(teamPct) + pctToBasisPoints(coopPct) !== 10000n) {
+    coopPct = Math.round((100 - teamPct) * 100) / 100;
   }
 
   for (const item of items) {
     const isWeighed = Boolean(item.is_weighed);
-    const effKg = isWeighed && item.qty_accepted_kg != null ? roundKg(item.qty_accepted_kg) : roundKg(item.qty_ordered_kg);
-    const itemGrossSen = multiplyWeightGramsByPriceSen(kgToGrams(effKg), idrToSen(num(item.margin_per_kg_rp)));
-    const itemGrossRp = senToIdr(itemGrossSen);
-    const coopAmountRp = Math.round(itemGrossRp * (coopPct / 100) * 100) / 100;
-    const teamAmountRp = Math.round((itemGrossRp - coopAmountRp) * 100) / 100;
-    const pleStatus = invoiceStatus === 'PAID' ? 'AVAILABLE_FOR_PAYOUT' : 'LOCKED_UNPAID';
+    const effKg = Math.max(
+      0,
+      isWeighed && item.qty_accepted_kg != null ? roundKg(item.qty_accepted_kg) : roundKg(item.qty_ordered_kg)
+    );
+    const split = calculateProfitSplitEntry({
+      qty_accepted_kg: effKg,
+      margin_per_kg_rp: Math.max(0, num(item.margin_per_kg_rp)),
+      team_share_pct: teamPct,
+      cooperative_share_pct: coopPct,
+      invoice_payment_status: invoiceStatus,
+    });
+    const itemGrossRp = split.total_margin;
+    const coopAmountRp = split.koperasi_share_amount;
+    const teamAmountRp = split.team_share_amount;
+    const pleStatus = split.payout_status;
 
     const existingPle = existingLedgers.find(
       (le) => le.id === `ple-${item.id}` || le.order_item_id === item.id
@@ -710,6 +862,9 @@ export async function recalculateOrderFinancialsD1(db: D1DatabaseLike, orderId: 
   }
 
   await db.batch(stmts);
+  if (deletedAnyLedger) {
+    await reconcilePayoutBatchesD1(db);
+  }
 }
 
 async function executeD1Action(
@@ -722,16 +877,16 @@ async function executeD1Action(
     if (!pin) {
       return { ok: false, error: 'PIN Admin wajib diisi untuk mengubah data.' };
     }
-    if (isClientPinLocked(clientKey)) {
+    if (await isClientPinLockedD1(db, clientKey)) {
       return { ok: false, error: PIN_LOCKOUT_ERROR };
     }
     if (!(await isAdminPinCached(pin))) {
       const valid = await verifyPinOnD1(db, 'OWNER_ADMIN', pin);
       if (!valid) {
-        recordPinFailure(clientKey);
+        await recordPinFailureD1(db, clientKey);
         return { ok: false, error: 'PIN Admin tidak valid atau sesi telah berakhir.' };
       }
-      pinFailuresByClient.delete(clientKey);
+      await clearPinFailureD1(db, clientKey);
       await cacheVerifiedAdminPin(pin);
     }
   }
@@ -740,7 +895,7 @@ async function executeD1Action(
   const mutationKey =
     payload.action !== 'verify_role_pin' && rawMutationId ? `${payload.action}:${rawMutationId}` : '';
   if (mutationKey) {
-    const cachedMutation = getCachedMutationResult(mutationKey);
+    const cachedMutation = await getCachedMutationResultD1(db, mutationKey);
     if (cachedMutation) {
       return { ...cachedMutation, deduplicated: true };
     }
@@ -753,7 +908,7 @@ async function executeD1Action(
       finalRes = { ...res, snapshot };
     }
     if (finalRes.ok && mutationKey) {
-      recordCompletedMutation(mutationKey, finalRes);
+      await recordCompletedMutationD1(db, mutationKey, finalRes);
     }
     return finalRes;
   };
@@ -761,15 +916,15 @@ async function executeD1Action(
   try {
     switch (payload.action) {
       case 'verify_role_pin': {
-        if (isClientPinLocked(clientKey)) {
+        if (await isClientPinLockedD1(db, clientKey)) {
           return { ok: false, error: PIN_LOCKOUT_ERROR };
         }
         const ok = await verifyPinOnD1(db, payload.role, payload.pin);
         if (!ok) {
-          recordPinFailure(clientKey);
+          await recordPinFailureD1(db, clientKey);
           return { ok: false };
         }
-        pinFailuresByClient.delete(clientKey);
+        await clearPinFailureD1(db, clientKey);
         if (payload.role === 'OWNER_ADMIN') {
           await cacheVerifiedAdminPin(String(payload.pin ?? '').trim());
         }
@@ -1310,13 +1465,29 @@ async function executeD1Action(
         const p = payload.params;
         const teamPct = Math.round(num(p.teamSharePct) * 100) / 100;
         const coopPct = Math.round(num(p.coopSharePct) * 100) / 100;
-        if (teamPct < 0 || coopPct < 0 || Math.round((teamPct + coopPct) * 100) !== 10000) {
+        const teamBp = pctToBasisPoints(teamPct);
+        const coopBp = pctToBasisPoints(coopPct);
+        if (teamBp < 0n || coopBp < 0n || teamBp + coopBp !== 10000n) {
           return { ok: false, error: 'Total persentase bagi hasil Tim + Koperasi harus tepat 100%.' };
         }
 
-        const current = await db
-          .prepare("SELECT * FROM app_settings WHERE id = 'default' LIMIT 1")
-          .first<AppSettingsRow>();
+        const [currentRes, openLedgersRes] = await db.batch([
+          db.prepare("SELECT * FROM app_settings WHERE id = 'default' LIMIT 1"),
+          db.prepare(
+            `SELECT id, gross_margin_rp FROM profit_ledger_entries ple
+             WHERE ple.team_paid_out = 0 AND ple.coop_paid_out = 0
+               AND NOT EXISTS (
+                 SELECT 1 FROM profit_ledger_entries p2
+                 WHERE p2.order_id = ple.order_id AND (p2.team_paid_out = 1 OR p2.coop_paid_out = 1)
+               )`
+          ),
+        ]);
+
+        const current = (currentRes?.results?.[0] ?? null) as AppSettingsRow | null;
+        const openLedgers = (openLedgersRes?.results ?? []) as Array<{
+          id: string;
+          gross_margin_rp: number;
+        }>;
 
         const supplierName = (p.supplierName ?? current?.supplier_name ?? '').trim() || DEFAULT_PAYMENT_INFO.supplier_name;
         const bankName = (p.bankName ?? current?.payment_bank_name ?? '').trim() || DEFAULT_PAYMENT_INFO.payment_bank_name;
@@ -1328,13 +1499,14 @@ async function executeD1Action(
           DEFAULT_PAYMENT_INFO.payment_account_holder;
         const nowIso = new Date().toISOString();
 
-        await db.batch([
+        const stmts: D1PreparedStatementLike[] = [
           db
             .prepare(
               `INSERT INTO app_settings (
                 id, team_share_pct, coop_share_pct, supplier_name,
-                payment_bank_name, payment_account_number, payment_account_holder, updated_at
-              ) VALUES ('default', ?, ?, ?, ?, ?, ?, ?)
+                payment_bank_name, payment_account_number, payment_account_holder,
+                admin_pin, coop_pin, updated_at
+              ) VALUES ('default', ?, ?, ?, ?, ?, ?, '', '', ?)
               ON CONFLICT (id) DO UPDATE SET
                 team_share_pct = excluded.team_share_pct,
                 coop_share_pct = excluded.coop_share_pct,
@@ -1342,6 +1514,8 @@ async function executeD1Action(
                 payment_bank_name = excluded.payment_bank_name,
                 payment_account_number = excluded.payment_account_number,
                 payment_account_holder = excluded.payment_account_holder,
+                admin_pin = '',
+                coop_pin = '',
                 updated_at = excluded.updated_at`
             )
             .bind(teamPct, coopPct, supplierName, bankName, accountNumber, accountHolder, nowIso),
@@ -1352,22 +1526,25 @@ async function executeD1Action(
                WHERE status <> 'PAID'`
             )
             .bind(supplierName, bankName, accountNumber, accountHolder, nowIso),
-        ]);
+        ];
 
-        const openOrdersRes = await db
-          .prepare(
-            `SELECT id FROM kitchen_orders ko
-             WHERE NOT EXISTS (
-               SELECT 1 FROM profit_ledger_entries ple
-               WHERE ple.order_id = ko.id AND (ple.team_paid_out = 1 OR ple.coop_paid_out = 1)
-             )`
-          )
-          .all<{ id: string }>();
-
-        for (const row of openOrdersRes.results ?? []) {
-          await recalculateOrderFinancialsD1(db, row.id);
+        for (const le of openLedgers) {
+          const grossSen = idrToSen(Math.max(0, num(le.gross_margin_rp)));
+          const coopSen = divideHalfUp(grossSen * coopBp, 10000n);
+          const teamSen = grossSen - coopSen;
+          stmts.push(
+            db
+              .prepare(
+                `UPDATE profit_ledger_entries
+                 SET team_share_pct = ?, coop_share_pct = ?,
+                     team_amount_rp = ?, coop_amount_rp = ?, updated_at = ?
+                 WHERE id = ?`
+              )
+              .bind(teamPct, coopPct, senToIdr(teamSen), senToIdr(coopSen), nowIso, le.id)
+          );
         }
 
+        await db.batch(stmts);
         return attachSnapshot({ ok: true });
       }
 
@@ -1517,6 +1694,11 @@ async function executeD1Action(
         }
         await db.prepare('DELETE FROM products WHERE id = ?').bind(payload.productId).run();
         return attachSnapshot({ ok: true });
+      }
+
+      default: {
+        const unknownAction = String((payload as { action?: unknown }).action ?? '');
+        return { ok: false, error: `Aksi tidak dikenal: ${unknownAction}` };
       }
     }
   } catch (err) {
@@ -1771,6 +1953,11 @@ export async function executeHyperdriveAction(
             await cacheVerifiedAdminPin(String(payload.pin ?? '').trim());
           }
           return { ok: true };
+        }
+
+        default: {
+          const unknownAction = String((payload as { action?: unknown }).action ?? '');
+          return { ok: false, error: `Aksi tidak dikenal: ${unknownAction}` };
         }
       }
     },
