@@ -4,6 +4,14 @@ Seluruh perubahan penting pada arsitektur, fitur, dan optimalisasi aplikasi dica
 
 ---
 
+## [2.3.0] — 2026-11-12 — Tahap 3 Audit Hardening (Pengamanan UX, Target Sentuh Mobile, & Pemangkasan Kode Mati)
+
+- **[UX Safety — Hallmark & Impeccable] Konfirmasi 2-Langkah Inline untuk Aksi Destruktif (`src/components/Tab1KitchenOrders.tsx`, `src/components/Tab3KitchenInvoices.tsx`):** Menambahkan bar konfirmasi 2-langkah inline (`Ya, Hapus` / `Batal`) sebelum mengeksekusi `Hapus Order` di Tab 1 dan `Hapus Invoice` di Tab 3 agar tidak terpicu tidak sengaja saat menggulir di layar sentuh.
+- **[Mobile Touch Targets & Reduced Motion] Target Sentuh Nyaman & `prefers-reduced-motion` (`src/components/AppShell.tsx`, `src/components/Tab1KitchenOrders.tsx`, `src/components/ui.tsx`, `src/app/base.css`, `src/app/globals.css`):** Memperbesar area sentuh tombol aksi sekunder/tutup (`min-h-[38px]`–`40px`) serta membatasi transformasi tekan tombol (`translateY(1px)`) hanya pada `@media (prefers-reduced-motion: no-preference)`.
+- **[Lean Code — Ponytail] Pemangkasan Fallback Dead Code & Penyelarasan Teks UI (`src/lib/supabase-sync.ts`, `src/components/MasterDataSheet.tsx`, `src/lib/__tests__/hyperdrive.test.ts`):** Menghapus ~180 baris cabang fallback mati `supabase.rpc` / `supabase.from` / `supabase.channel` di `src/lib/supabase-sync.ts`, memperbarui pesan notifikasi UI dari `"Supabase"` menjadi `"Cloudflare D1"`, serta menambahkan pengujian unit D1 untuk `delete_order_item`.
+
+---
+
 ## [2.2.0] — 2026-11-10 — Tahap 2 Audit Hardening (Performa Edge, Caching Immutable, Tipografi Geist, & Smart Placement)
 
 - **[Web-Perf & Cloudflare] Immutable Caching untuk Aset Statis (`public/_headers`):** Menambahkan aturan `Cache-Control: public, max-age=31536000, immutable` pada `/_next/static/*` dan `/fonts/*` serta `stale-while-revalidate` pada ikon PWA agar tidak memicu revalidasi jaringan pada pemuatan berulang.

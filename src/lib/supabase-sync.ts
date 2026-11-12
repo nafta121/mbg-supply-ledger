@@ -588,7 +588,7 @@ async function postHyperdriveAction(
  * `fn_recalculate_order_financials` to compute `kitchen_invoices` & `profit_ledger_entries`.
  */
 export async function upsertKitchenOrderRpc(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   input: CreateOrderInput & { notes?: string | null },
   orderDate: string
 ): Promise<{ ok: true; order_id: string; order_code: string; merged: boolean; count: number } | { ok: false; error: string }> {
@@ -603,34 +603,7 @@ export async function upsertKitchenOrderRpc(
       count: Number(hd.data.count ?? input.lines.length),
     };
   }
-  try {
-    const payload = input.lines.map((l) => ({
-      product_id: l.item_id,
-      item_id: l.item_id,
-      qty_ordered_kg: roundKg(l.qty_ordered_kg),
-      kitchen_unit_price_rp: l.kitchen_unit_price_rp,
-      margin_per_kg_rp: l.margin_per_kg_rp,
-    }));
-    const { data, error } = await supabase.rpc('rpc_upsert_kitchen_order', {
-      p_kitchen_id: input.kitchen_id,
-      p_order_date: orderDate,
-      p_items: payload,
-      p_notes: input.notes ?? null,
-    });
-    if (error) {
-      return { ok: false, error: error.message };
-    }
-    const res = (data ?? {}) as Record<string, unknown>;
-    return {
-      ok: true,
-      order_id: String(res.order_id ?? ''),
-      order_code: String(res.order_code ?? ''),
-      merged: Boolean(res.merged),
-      count: Number(res.count ?? payload.length),
-    };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan order ke Supabase.' };
-  }
+  return { ok: false, error: 'Gagal menyimpan order ke Cloudflare D1.' };
 }
 
 /**
@@ -680,39 +653,19 @@ export async function updateKitchenOrderRpc(
   }
 }
 
-/**
- * RPC #2: Invokes `rpc_mark_invoice_paid(p_invoice_id)` in PostgreSQL.
- * Validates all items are weighed, marks invoice PAID, and unlocks `profit_ledger_entries`
- * from `LOCKED_UNPAID` to `AVAILABLE_FOR_PAYOUT`.
- */
 export async function markInvoicePaidRpc(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   invoiceId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const hd = await postHyperdriveAction({ action: 'mark_invoice_paid', invoiceId });
   if (hd.handled) {
     return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menandai invoice lunas.') };
   }
-  try {
-    const { error } = await supabase.rpc('rpc_mark_invoice_paid', {
-      p_invoice_id: invoiceId,
-    });
-    if (error) {
-      return { ok: false, error: error.message };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menandai invoice lunas di Supabase.' };
-  }
+  return { ok: false, error: 'Gagal menandai invoice lunas di Cloudflare D1.' };
 }
 
-/**
- * RPC #4: Invokes `rpc_execute_profit_payout(p_target, p_entry_ids)` in PostgreSQL.
- * Disburses `TEAM`, `COOPERATIVE`, or `BOTH` on `AVAILABLE_FOR_PAYOUT` entries,
- * records separate `team_paid_out_at` / `coop_paid_out_at`, and transitions to `PAID_OUT` when both are paid.
- */
 export async function executeProfitPayoutRpc(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   target: BeneficiaryType | 'BOTH',
   entryIds?: string[] | null
 ): Promise<{ ok: true; count: number; total_payout_rp: number } | { ok: false; error: string }> {
@@ -725,32 +678,11 @@ export async function executeProfitPayoutRpc(
       total_payout_rp: Number(hd.data.total_payout_rp ?? 0),
     };
   }
-  try {
-    const { data, error } = await supabase.rpc('rpc_execute_profit_payout', {
-      p_target: target,
-      p_entry_ids: entryIds && entryIds.length > 0 ? entryIds : null,
-    });
-    if (error) {
-      return { ok: false, error: error.message };
-    }
-    const res = (data ?? {}) as Record<string, unknown>;
-    return {
-      ok: true,
-      count: Number(res.count ?? 0),
-      total_payout_rp: Number(res.total_payout_rp ?? 0),
-    };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal mencairkan bagi hasil di Supabase.' };
-  }
+  return { ok: false, error: 'Gagal mencairkan bagi hasil di Cloudflare D1.' };
 }
 
-/**
- * RPC #5: Invokes `rpc_update_app_settings(p_team_pct, p_coop_pct, p_bank_name, p_account_number, p_account_holder, p_supplier_name)`.
- * Validates `team + coop = 100`, updates `app_settings` + UNPAID invoice bank snapshots,
- * and recalculates all orders without payouts via `fn_recalculate_order_financials`.
- */
 export async function updateAppSettingsRpc(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   params: {
     teamSharePct: number;
     coopSharePct: number;
@@ -764,115 +696,51 @@ export async function updateAppSettingsRpc(
   if (hd.handled) {
     return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menyimpan pengaturan.') };
   }
-  try {
-    const { error } = await supabase.rpc('rpc_update_app_settings', {
-      p_team_pct: params.teamSharePct,
-      p_coop_pct: params.coopSharePct,
-      p_bank_name: params.bankName ?? null,
-      p_account_number: params.accountNumber ?? null,
-      p_account_holder: params.accountHolder ?? null,
-      p_supplier_name: params.supplierName ?? null,
-    });
-    if (error) {
-      return { ok: false, error: error.message };
-    }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan pengaturan ke Supabase.' };
-  }
+  return { ok: false, error: 'Gagal menyimpan pengaturan ke Cloudflare D1.' };
 }
 
-/**
- * Targeted deletion of a single order item.
- * Database trigger `trg_kitchen_order_items_recalc` automatically runs `fn_recalculate_order_financials`.
- */
 export async function deleteOrderItemFromSupabase(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   itemId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const hd = await postHyperdriveAction({ action: 'delete_order_item', itemId });
   if (hd.handled) {
     return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menghapus baris order.') };
   }
-  try {
-    const { error } = await supabase.from('kitchen_order_items').delete().eq('id', itemId);
-    if (error) return { ok: false, error: error.message };
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menghapus baris order di Supabase.' };
-  }
+  return { ok: false, error: 'Gagal menghapus baris order di Cloudflare D1.' };
 }
 
 export async function deleteKitchenOrderFromSupabase(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   orderId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const hd = await postHyperdriveAction({ action: 'delete_order', orderId });
   if (hd.handled) {
     return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menghapus order.') };
   }
-  try {
-    const { error } = await supabase.from('kitchen_orders').delete().eq('id', orderId);
-    if (error) return { ok: false, error: error.message };
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menghapus order di Supabase.' };
-  }
+  return { ok: false, error: 'Gagal menghapus order di Cloudflare D1.' };
 }
 
 export async function upsertKitchenInSupabase(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   kitchen: Kitchen
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const hd = await postHyperdriveAction({ action: 'upsert_kitchen', kitchen });
   if (hd.handled) {
     return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menyimpan dapur.') };
   }
-  try {
-    const row: KitchenRow = {
-      id: kitchen.id,
-      code: kitchen.kitchen_code,
-      name: kitchen.name,
-      address: kitchen.address,
-      pic_name: kitchen.pic_name,
-      pic_phone: kitchen.pic_phone,
-      default_markup_per_kg: kitchen.default_markup_per_kg,
-      is_active: kitchen.is_active,
-      created_at: kitchen.created_at,
-    };
-    const { error } = await supabase.from('kitchens').upsert(row, { onConflict: 'id' });
-    if (error) return { ok: false, error: error.message };
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan dapur ke Supabase.' };
-  }
+  return { ok: false, error: 'Gagal menyimpan dapur ke Cloudflare D1.' };
 }
 
 export async function upsertProductInSupabase(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   item: Item
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const hd = await postHyperdriveAction({ action: 'upsert_product', item });
   if (hd.handled) {
     return hd.data.ok ? { ok: true } : { ok: false, error: String(hd.data.error ?? 'Gagal menyimpan barang.') };
   }
-  try {
-    const row: ProductRow = {
-      id: item.id,
-      code: item.sku,
-      name: item.name,
-      category: item.category,
-      default_kitchen_price_rp: item.default_kitchen_price_per_kg,
-      default_margin_per_kg_rp: item.default_margin_per_kg,
-      is_active: item.is_active,
-      created_at: item.created_at,
-    };
-    const { error } = await supabase.from('products').upsert(row, { onConflict: 'id' });
-    if (error) return { ok: false, error: error.message };
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: e instanceof Error ? e.message : 'Gagal menyimpan barang ke Supabase.' };
-  }
+  return { ok: false, error: 'Gagal menyimpan barang ke Cloudflare D1.' };
 }
 
 /**
@@ -904,7 +772,7 @@ async function selectPagedRows<T>(
 }
 
 export async function verifyRolePinRpc(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   role: string,
   pin: string
 ): Promise<boolean> {
@@ -914,15 +782,7 @@ export async function verifyRolePinRpc(
     if (ok && role === 'OWNER_ADMIN') verifiedAdminPin = pin;
     return ok;
   }
-  try {
-    const { data, error } = await supabase.rpc('rpc_verify_role_pin', { p_role: role, p_pin: pin });
-    if (error || !data || typeof data !== 'object') return false;
-    const ok = Boolean((data as { ok?: boolean }).ok);
-    if (ok && role === 'OWNER_ADMIN') verifiedAdminPin = pin;
-    return ok;
-  } catch {
-    return false;
-  }
+  return false;
 }
 
 export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promise<MbgData | null> {
@@ -1026,7 +886,7 @@ export async function fetchMbgDataFromSupabase(supabase: SupabaseClient): Promis
 }
 
 export async function deleteKitchenFromSupabase(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   kitchenId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const hd = await postHyperdriveAction({ action: 'delete_kitchen', kitchenId });
@@ -1035,13 +895,11 @@ export async function deleteKitchenFromSupabase(
       ? { ok: true }
       : { ok: false, error: String(hd.data.error ?? 'Dapur tidak dapat dihapus karena masih memiliki histori order.') };
   }
-  const { error } = await supabase.from('kitchens').delete().eq('id', kitchenId);
-  if (error) return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki histori order.' };
-  return { ok: true };
+  return { ok: false, error: 'Dapur tidak dapat dihapus karena masih memiliki histori order.' };
 }
 
 export async function deleteProductFromSupabase(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   productId: string
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const hd = await postHyperdriveAction({ action: 'delete_product', productId });
@@ -1050,13 +908,11 @@ export async function deleteProductFromSupabase(
       ? { ok: true }
       : { ok: false, error: String(hd.data.error ?? 'Barang tidak dapat dihapus karena masih digunakan di order dapur.') };
   }
-  const { error } = await supabase.from('products').delete().eq('id', productId);
-  if (error) return { ok: false, error: 'Barang tidak dapat dihapus karena masih digunakan di order dapur.' };
-  return { ok: true };
+  return { ok: false, error: 'Barang tidak dapat dihapus karena masih digunakan di order dapur.' };
 }
 
 export function subscribeToMbgRealtime(
-  supabase: SupabaseClient,
+  _supabase: SupabaseClient,
   onRemoteChange: (pushedSnapshot?: MbgData) => void,
   onStatusChange?: (connected: boolean) => void
 ): () => void {
@@ -1065,24 +921,12 @@ export function subscribeToMbgRealtime(
   let edgeReconnectTimer: ReturnType<typeof setTimeout> | null = null;
   let edgePingInterval: ReturnType<typeof setInterval> | null = null;
   let disposed = false;
-  let supabaseConnected = false;
   let edgeConnected = false;
-  let lastEdgePushAt = 0;
 
   const notifyStatus = () => {
     if (onStatusChange) {
-      onStatusChange(supabaseConnected || edgeConnected);
+      onStatusChange(edgeConnected);
     }
-  };
-
-  const debouncedChange = () => {
-    if (Date.now() - lastEdgePushAt < 2000) return;
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(() => {
-      debounceTimer = null;
-      if (Date.now() - lastEdgePushAt < 2000) return;
-      onRemoteChange();
-    }, 200);
   };
 
   const handleOnline = () => {
@@ -1133,7 +977,6 @@ export function subscribeToMbgRealtime(
               Array.isArray(msg.snapshot.kitchens) &&
               Array.isArray(msg.snapshot.deliveries)
             ) {
-              lastEdgePushAt = Date.now();
               if (debounceTimer) {
                 clearTimeout(debounceTimer);
                 debounceTimer = null;
@@ -1188,24 +1031,6 @@ export function subscribeToMbgRealtime(
     }, 45000);
   }
 
-  const channel =
-    typeof supabase?.channel === 'function'
-      ? supabase
-          .channel('mbg-order-driven-realtime')
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchens' }, debouncedChange)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'products' }, debouncedChange)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_orders' }, debouncedChange)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_order_items' }, debouncedChange)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'kitchen_invoices' }, debouncedChange)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_ledger_entries' }, debouncedChange)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'app_settings' }, debouncedChange)
-          .on('postgres_changes', { event: '*', schema: 'public', table: 'profit_payout_batches' }, debouncedChange)
-          .subscribe((status) => {
-            supabaseConnected = status === 'SUBSCRIBED';
-            notifyStatus();
-          })
-      : null;
-
   return () => {
     disposed = true;
     if (debounceTimer) clearTimeout(debounceTimer);
@@ -1221,9 +1046,6 @@ export function subscribeToMbgRealtime(
         // Ignore close error
       }
       edgeWs = null;
-    }
-    if (channel && typeof supabase?.removeChannel === 'function') {
-      void supabase.removeChannel(channel);
     }
   };
 }

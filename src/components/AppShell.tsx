@@ -204,7 +204,7 @@ export function AppShell() {
                 onClick={() => void handleInstallClick()}
                 aria-label="Instal aplikasi MBG Ledger"
                 title="Instal aplikasi di perangkat ini"
-                className="inline-flex h-[34px] items-center gap-1 rounded-[6px] border border-signal bg-white px-2.5 text-[12px] font-medium text-signal transition-colors hover:bg-paper active:translate-y-px disabled:opacity-50"
+                className="inline-flex min-h-[38px] items-center gap-1 rounded-[6px] border border-signal bg-white px-2.5 text-[12px] font-medium text-signal transition-colors hover:bg-paper active:translate-y-px disabled:opacity-50"
               >
                 Instal
               </button>
@@ -222,7 +222,7 @@ export function AppShell() {
                     type="button"
                     aria-pressed={active}
                     onClick={() => handleRolePillClick(opt.role)}
-                    className={`min-h-[34px] rounded-[4px] border px-2.5 text-[12px] font-medium transition-colors ${
+                    className={`min-h-[38px] rounded-[4px] border px-3 text-[12px] font-medium transition-colors ${
                       active
                         ? 'border-rule bg-white text-ink'
                         : 'border-transparent text-muted hover:text-ink'
@@ -242,7 +242,7 @@ export function AppShell() {
                   onClick={() => setMasterOpen(true)}
                   aria-label="Pengaturan & Data Master"
                   title="Pengaturan & Data Master"
-                  className="flex min-h-[38px] min-w-[38px] items-center justify-center rounded-[6px] border border-control bg-white text-ink-2 transition-colors hover:bg-paper-2 hover:text-ink"
+                  className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-[6px] border border-control bg-white text-ink-2 transition-colors hover:bg-paper-2 hover:text-ink"
                 >
                   <SettingsGearIcon className="h-4 w-4" />
                 </button>

@@ -319,7 +319,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               initial={EMPTY_KITCHEN}
               disabled={isSyncing}
               onCancel={() => setEditing(null)}
-              onSave={(v) => done(saveKitchen(v), `Dapur "${v.name.trim()}" disimpan ke Supabase.`)}
+              onSave={(v) => done(saveKitchen(v), `Dapur "${v.name.trim()}" disimpan ke Cloudflare D1.`)}
             />
           ) : (
             <MasterForm<ItemMasterInput>
@@ -328,7 +328,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
               initial={EMPTY_ITEM}
               disabled={isSyncing}
               onCancel={() => setEditing(null)}
-              onSave={(v) => done(saveItem(v), `Barang "${v.name.trim()}" disimpan ke Supabase.`)}
+              onSave={(v) => done(saveItem(v), `Barang "${v.name.trim()}" disimpan ke Cloudflare D1.`)}
               extra={<UnitLockedField id="md-i-new-unit" />}
             />
           )
@@ -355,7 +355,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                     }}
                     disabled={isSyncing}
                     onCancel={() => setEditing(null)}
-                    onSave={(v) => done(saveKitchen(v), `Dapur ${k.kitchen_code} diperbarui di Supabase.`)}
+                    onSave={(v) => done(saveKitchen(v), `Dapur ${k.kitchen_code} diperbarui di Cloudflare D1.`)}
                   />
                 </li>
               ) : (
@@ -409,7 +409,7 @@ export function MasterDataSheet({ open, onClose }: { open: boolean; onClose: () 
                     }}
                     disabled={isSyncing}
                     onCancel={() => setEditing(null)}
-                    onSave={(v) => done(saveItem(v), `Barang ${it.name} diperbarui di Supabase.`)}
+                    onSave={(v) => done(saveItem(v), `Barang ${it.name} diperbarui di Cloudflare D1.`)}
                     extra={<UnitLockedField id={`md-i-${it.id}-unit`} />}
                   />
                 </li>

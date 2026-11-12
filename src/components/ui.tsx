@@ -102,7 +102,7 @@ export function Toast({ toast, onClose }: { toast: ToastState; onClose: () => vo
         type="button"
         aria-label="Tutup"
         onClick={onClose}
-        className="shrink-0 rounded-[4px] px-1.5 text-base leading-none opacity-70 hover:opacity-100"
+        className="flex min-h-[36px] min-w-[36px] shrink-0 items-center justify-center rounded-[6px] text-base leading-none opacity-70 hover:opacity-100"
       >
         ×
       </button>
@@ -212,7 +212,7 @@ export function BottomSheet({
               type="button"
               onClick={onClose}
               aria-label="Tutup dialog"
-              className="flex min-h-[36px] min-w-[36px] items-center justify-center rounded-[6px] border border-control bg-white text-base text-muted hover:bg-paper hover:text-ink"
+              className="flex min-h-[40px] min-w-[40px] items-center justify-center rounded-[6px] border border-control bg-white text-base text-muted hover:bg-paper hover:text-ink"
             >
               ×
             </button>

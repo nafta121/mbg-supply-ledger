@@ -425,6 +425,9 @@ describe('Cloudflare Hyperdrive Security & Scale Hardening', () => {
           const key = String(values[0] ?? '');
           return (idempotencyLog.get(key) ?? null) as unknown as T;
         }
+        if (query.includes('SELECT * FROM kitchen_order_items WHERE id = ?')) {
+          return { id: 'ditem-1', order_id: 'deliv-1' } as unknown as T;
+        }
         return null;
       },
       all: async <T = Record<string, unknown>>() => ({ results: [] as T[] }),
@@ -590,6 +593,19 @@ describe('Cloudflare Hyperdrive Security & Scale Hardening', () => {
     );
     expect(settingsRes.ok).toBe(true);
     expect(batchedQueries).toHaveLength(2);
+
+    // 3b. delete_order_item deletes line, recalculates order financials, and reconciles payout batches on D1
+    batchedQueries.length = 0;
+    const delItemRes = await executeHyperdriveAction(
+      {
+        action: 'delete_order_item',
+        adminPin: '1122',
+        itemId: 'ditem-1',
+      },
+      env
+    );
+    expect(delItemRes).toEqual({ ok: true });
+    expect(batchedQueries.flat().join('\n')).toContain('UPDATE profit_payout_batches');
 
     // 4. /api/documents requires PIN on GET, stores empty data_url in DO SQLite when R2 succeeds, and deletes from R2 on DELETE
     const r2Objects = new Map<string, string>();

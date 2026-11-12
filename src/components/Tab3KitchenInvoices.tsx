@@ -28,6 +28,7 @@ export function Tab3KitchenInvoices() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const [editingDeliveryId, setEditingDeliveryId] = useState<string | null>(null);
   const [confirmPaidId, setConfirmPaidId] = useState<string | null>(null);
+  const [confirmDeleteInvId, setConfirmDeleteInvId] = useState<string | null>(null);
   const [printDoc, setPrintDoc] = useState<PrintDocMode | null>(null);
   const [toast, setToast] = useState<ToastState>(null);
 
@@ -330,71 +331,98 @@ export function Tab3KitchenInvoices() {
                                         Tandai Lunas
                                       </button>
                                     ))}
-                                  <div className={`grid gap-2 ${!hasPaidOut ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
-                                    {!hasPaidOut && (
+                                  {confirmDeleteInvId === inv.id ? (
+                                    <div className="flex items-center justify-between gap-2 rounded-[6px] border border-error-border bg-error-bg px-3 py-2">
+                                      <span className="text-[12px] font-medium text-error-ink">
+                                        Hapus invoice &amp; order terkait?
+                                      </span>
+                                      <div className="flex shrink-0 items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          disabled={isSyncing}
+                                          onClick={async () => {
+                                            setConfirmDeleteInvId(null);
+                                            setExpandedIds((prev) => {
+                                              if (!prev.has(inv.id)) return prev;
+                                              const next = new Set(prev);
+                                              next.delete(inv.id);
+                                              return next;
+                                            });
+                                            const res = await deleteOrder(inv.delivery_id);
+                                            if (!res.ok) {
+                                              setToast({ kind: 'error', text: res.error });
+                                              return;
+                                            }
+                                            setToast({
+                                              kind: 'ok',
+                                              text: `Invoice ${inv.invoice_number} (${title}) dihapus.`,
+                                            });
+                                          }}
+                                          className="btn-secondary min-h-[40px] border-error-border bg-white px-3 text-[12px] !text-error hover:!bg-error-bg"
+                                        >
+                                          Ya, Hapus
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={isSyncing}
+                                          onClick={() => setConfirmDeleteInvId(null)}
+                                          className="btn-secondary min-h-[40px] bg-white px-3 text-[12px]"
+                                        >
+                                          Batal
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className={`grid gap-2 ${!hasPaidOut ? 'grid-cols-2 sm:grid-cols-4' : 'grid-cols-3'}`}>
+                                      {!hasPaidOut && (
+                                        <button
+                                          type="button"
+                                          onClick={() => setEditingDeliveryId(inv.delivery_id)}
+                                          className="btn-secondary min-h-[40px] px-2 text-[12px]"
+                                        >
+                                          Edit Invoice
+                                        </button>
+                                      )}
                                       <button
                                         type="button"
-                                        onClick={() => setEditingDeliveryId(inv.delivery_id)}
+                                        onClick={() => setPrintDoc({ type: 'INVOICE', invoiceId: inv.id })}
                                         className="btn-secondary min-h-[40px] px-2 text-[12px]"
                                       >
-                                        Edit Invoice
+                                        Cetak / PDF
                                       </button>
-                                    )}
-                                    <button
-                                      type="button"
-                                      onClick={() => setPrintDoc({ type: 'INVOICE', invoiceId: inv.id })}
-                                      className="btn-secondary min-h-[40px] px-2 text-[12px]"
-                                    >
-                                      Cetak / PDF
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={() =>
-                                        void shareToWhatsApp(kitchen?.pic_phone, buildInvoiceWaText(store, inv)).then(
-                                          (ok) =>
-                                            setToast(
-                                              ok
-                                                ? { kind: 'ok', text: 'Tagihan disalin & WhatsApp dibuka.' }
-                                                : {
-                                                    kind: 'error',
-                                                    text: 'Gagal menyalin otomatis. WhatsApp tetap dibuka.',
-                                                  }
-                                            )
-                                        )
-                                      }
-                                      className="btn-secondary min-h-[40px] px-2 text-[12px]"
-                                    >
-                                      Salin &amp; WA
-                                    </button>
-                                    <button
-                                      type="button"
-                                      onClick={async () => {
-                                        setExpandedIds((prev) => {
-                                          if (!prev.has(inv.id)) return prev;
-                                          const next = new Set(prev);
-                                          next.delete(inv.id);
-                                          return next;
-                                        });
-                                        const res = await deleteOrder(inv.delivery_id);
-                                        if (!res.ok) {
-                                          setToast({ kind: 'error', text: res.error });
-                                          return;
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          void shareToWhatsApp(kitchen?.pic_phone, buildInvoiceWaText(store, inv)).then(
+                                            (ok) =>
+                                              setToast(
+                                                ok
+                                                  ? { kind: 'ok', text: 'Tagihan disalin & WhatsApp dibuka.' }
+                                                  : {
+                                                      kind: 'error',
+                                                      text: 'Gagal menyalin otomatis. WhatsApp tetap dibuka.',
+                                                    }
+                                              )
+                                          )
                                         }
-                                        setToast({
-                                          kind: 'ok',
-                                          text: `Invoice ${inv.invoice_number} (${title}) dihapus.`,
-                                        });
-                                      }}
-                                      className="btn-secondary min-h-[40px] border-error-border px-2 text-[12px] !text-error hover:!bg-error-bg"
-                                    >
-                                      Hapus Invoice
-                                    </button>
-                                    {hasPaidOut && (
-                                      <p className="col-span-3 pt-0.5 text-[11px] text-muted">
-                                        Pengeditan invoice dikunci karena bagi hasil sudah dicairkan.
-                                      </p>
-                                    )}
-                                  </div>
+                                        className="btn-secondary min-h-[40px] px-2 text-[12px]"
+                                      >
+                                        Salin &amp; WA
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => setConfirmDeleteInvId(inv.id)}
+                                        className="btn-secondary min-h-[40px] border-error-border px-2 text-[12px] !text-error hover:!bg-error-bg"
+                                      >
+                                        Hapus Invoice
+                                      </button>
+                                      {hasPaidOut && (
+                                        <p className="col-span-3 pt-0.5 text-[11px] text-muted">
+                                          Pengeditan invoice dikunci karena bagi hasil sudah dicairkan.
+                                        </p>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>

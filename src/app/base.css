@@ -4,7 +4,9 @@ html { scrollbar-color: var(--color-muted) var(--color-paper); scroll-padding-to
 body { margin: 0; background: var(--color-paper); color: var(--color-ink); font-family: var(--font-body); font-size: var(--text-md); line-height: 1.55; -webkit-font-smoothing: antialiased; caret-color: var(--color-accent); }
 ::selection { background: color-mix(in oklab, var(--color-accent) 22%, transparent); color: var(--color-ink); }
 :focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
-button:active:not(:disabled) { transform: translateY(1px); }
+@media (prefers-reduced-motion: no-preference) {
+  button:active:not(:disabled) { transform: translateY(1px); }
+}
 button:disabled { cursor: not-allowed; opacity: 0.55; }
 @media (prefers-reduced-motion: reduce) {
   *:not(.keep-motion), *:not(.keep-motion)::before, *:not(.keep-motion)::after {

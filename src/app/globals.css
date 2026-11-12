@@ -42,8 +42,10 @@
     @apply outline-none ring-2 ring-focus ring-offset-2 ring-offset-surface;
   }
 
-  button:active:not(:disabled) {
-    transform: translateY(1px);
+  @media (prefers-reduced-motion: no-preference) {
+    button:active:not(:disabled) {
+      transform: translateY(1px);
+    }
   }
 
   button:disabled {
